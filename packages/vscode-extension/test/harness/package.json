@@ -1,0 +1,2 @@
+{ "name": "research-panel-test-harness", "publisher": "research-local", "version": "0.0.1", "engines": { "vscode": "^1.85.0" },
+  "main": "./noop.js", "activationEvents": [] }

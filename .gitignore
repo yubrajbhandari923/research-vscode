@@ -1,0 +1,14 @@
+node_modules/
+packages/vscode-extension/dist/
+packages/vscode-extension/python/
+packages/vscode-extension/media/codicons/
+packages/vscode-extension/.vscode-test/
+packages/vscode-extension/out/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+.pytest_cache/
+examples/alpha-sweep/demo-project/
+dist/*
+!dist/.gitkeep

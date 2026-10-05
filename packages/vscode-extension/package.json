@@ -1,0 +1,863 @@
+{
+  "name": "research-panel",
+  "displayName": "Research Panel",
+  "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
+  "version": "0.1.0",
+  "publisher": "research-local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Data Science",
+    "Notebooks"
+  ],
+  "keywords": [
+    "research",
+    "experiments",
+    "provenance",
+    "hpc",
+    "slurm",
+    "agents"
+  ],
+  "icon": "media/icon.png",
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:.research/config.yaml",
+    "onStartupFinished"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yubrajbhandari/research-vscode"
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "node esbuild.mjs --production && node scripts/bundle-python.mjs && vsce package --no-dependencies --out ../../dist/",
+    "test:ext": "node test/run.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.85.0",
+    "@vscode/codicons": "^0.0.36",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.9.3"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "research",
+          "title": "Research",
+          "icon": "media/research.svg"
+        }
+      ]
+    },
+    "views": {
+      "research": [
+        {
+          "type": "webview",
+          "id": "research.overview",
+          "name": "Overview",
+          "icon": "media/research.svg",
+          "when": "research.initialized",
+          "initialSize": 3
+        },
+        {
+          "id": "research.questions",
+          "name": "Questions",
+          "icon": "media/research.svg",
+          "when": "research.initialized",
+          "initialSize": 2
+        },
+        {
+          "id": "research.experiments",
+          "name": "Experiments",
+          "icon": "media/research.svg",
+          "when": "research.initialized",
+          "initialSize": 2
+        },
+        {
+          "id": "research.findings",
+          "name": "Findings",
+          "icon": "media/research.svg",
+          "when": "research.initialized",
+          "initialSize": 2
+        },
+        {
+          "id": "research.decisions",
+          "name": "Decisions",
+          "icon": "media/research.svg",
+          "visibility": "collapsed",
+          "when": "research.initialized"
+        },
+        {
+          "id": "research.checkpoints",
+          "name": "Checkpoints",
+          "icon": "media/research.svg",
+          "visibility": "collapsed",
+          "when": "research.initialized"
+        },
+        {
+          "id": "research.notes",
+          "name": "Notes",
+          "icon": "media/research.svg",
+          "visibility": "collapsed",
+          "when": "research.initialized"
+        },
+        {
+          "id": "research.artifacts",
+          "name": "Artifacts",
+          "icon": "media/research.svg",
+          "visibility": "collapsed",
+          "when": "research.initialized"
+        },
+        {
+          "id": "research.agent",
+          "name": "Agent Context",
+          "icon": "media/research.svg",
+          "visibility": "collapsed",
+          "when": "research.initialized"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "research.overview",
+        "contents": "No research project in this workspace yet.\n[Initialize Project](command:research.init)\nCreates `.research/` and an `AGENTS.md` block. Nothing else in your repo is touched.",
+        "when": "!research.initialized && research.ready"
+      },
+      {
+        "view": "research.overview",
+        "contents": "Starting research core…",
+        "when": "!research.ready"
+      }
+    ],
+    "commands": [
+      {
+        "command": "research.init",
+        "title": "Initialize Project",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.resume",
+        "title": "Resume Project",
+        "category": "Research",
+        "icon": "$(history)"
+      },
+      {
+        "command": "research.refresh",
+        "title": "Refresh",
+        "category": "Research",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "research.checkpoint.create",
+        "title": "Create Research Checkpoint",
+        "category": "Research",
+        "icon": "$(bookmark)"
+      },
+      {
+        "command": "research.question.create",
+        "title": "New Question",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.experiment.create",
+        "title": "New Experiment",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.experiment.variant",
+        "title": "Create Variant",
+        "category": "Research",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "research.experiment.run",
+        "title": "Run…",
+        "category": "Research",
+        "icon": "$(play)"
+      },
+      {
+        "command": "research.experiment.synthesize",
+        "title": "Synthesize Experiment",
+        "category": "Research",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "research.experiment.complete",
+        "title": "Mark Experiment Complete",
+        "category": "Research",
+        "icon": "$(pass)"
+      },
+      {
+        "command": "research.experiment.fail",
+        "title": "Mark Experiment Failed",
+        "category": "Research",
+        "icon": "$(error)"
+      },
+      {
+        "command": "research.run.attach",
+        "title": "Attach Existing Run",
+        "category": "Research",
+        "icon": "$(link)"
+      },
+      {
+        "command": "research.run.cancel",
+        "title": "Cancel Run",
+        "category": "Research",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "research.run.logs",
+        "title": "Open Run Log",
+        "category": "Research",
+        "icon": "$(output)"
+      },
+      {
+        "command": "research.run.refresh",
+        "title": "Refresh Run Status",
+        "category": "Research",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "research.finding.create",
+        "title": "New Finding",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.decision.create",
+        "title": "New Decision",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.note.create",
+        "title": "New Note",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.note.pin",
+        "title": "Pin Note",
+        "category": "Research",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "research.note.unpin",
+        "title": "Unpin Note",
+        "category": "Research",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "research.note.link",
+        "title": "Link Note to…",
+        "category": "Research",
+        "icon": "$(link)"
+      },
+      {
+        "command": "research.artifact.register",
+        "title": "Register as Research Artifact",
+        "category": "Research",
+        "icon": "$(file-add)"
+      },
+      {
+        "command": "research.metric.add",
+        "title": "Add Metric",
+        "category": "Research",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "research.setStatus",
+        "title": "Change Status…",
+        "category": "Research",
+        "icon": "$(tag)"
+      },
+      {
+        "command": "research.setBaseline",
+        "title": "Set as Baseline",
+        "category": "Research",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "research.edit",
+        "title": "Edit…",
+        "category": "Research",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "research.open",
+        "title": "Open Details",
+        "category": "Research",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "research.openMirror",
+        "title": "Open Markdown File",
+        "category": "Research",
+        "icon": "$(markdown)"
+      },
+      {
+        "command": "research.openFile",
+        "title": "Open File",
+        "category": "Research",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "research.revealFile",
+        "title": "Reveal in Explorer",
+        "category": "Research",
+        "icon": "$(file-symlink-directory)"
+      },
+      {
+        "command": "research.copyId",
+        "title": "Copy ID",
+        "category": "Research",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "research.copyPath",
+        "title": "Copy Path",
+        "category": "Research",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "research.terminal.here",
+        "title": "Open Terminal Here",
+        "category": "Research",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "research.skill.create",
+        "title": "New Skill",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.skill.duplicate",
+        "title": "Duplicate Skill",
+        "category": "Research",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "research.context.regenerate",
+        "title": "Regenerate Agent Context (current.md)",
+        "category": "Research",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "research.agents.open",
+        "title": "Open AGENTS.md",
+        "category": "Research",
+        "icon": "$(book)"
+      },
+      {
+        "command": "research.config.open",
+        "title": "Open Project Config",
+        "category": "Research",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "research.project.setGoal",
+        "title": "Set Project Goal",
+        "category": "Research",
+        "icon": "$(target)"
+      },
+      {
+        "command": "research.rebuild",
+        "title": "Rebuild Index from Files",
+        "category": "Research",
+        "icon": "$(database)"
+      },
+      {
+        "command": "research.showOutput",
+        "title": "Show Log",
+        "category": "Research",
+        "icon": "$(output)"
+      },
+      {
+        "command": "research.finding.supersede",
+        "title": "Supersede Finding",
+        "category": "Research",
+        "icon": "$(history)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "research.run.cancel",
+          "when": "false"
+        },
+        {
+          "command": "research.run.logs",
+          "when": "false"
+        },
+        {
+          "command": "research.run.refresh",
+          "when": "false"
+        },
+        {
+          "command": "research.note.pin",
+          "when": "false"
+        },
+        {
+          "command": "research.note.unpin",
+          "when": "false"
+        },
+        {
+          "command": "research.open",
+          "when": "false"
+        },
+        {
+          "command": "research.openFile",
+          "when": "false"
+        },
+        {
+          "command": "research.revealFile",
+          "when": "false"
+        },
+        {
+          "command": "research.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "research.skill.duplicate",
+          "when": "false"
+        },
+        {
+          "command": "research.finding.supersede",
+          "when": "false"
+        },
+        {
+          "command": "research.resume",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.refresh",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.checkpoint.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.question.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.variant",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.run",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.synthesize",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.complete",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.experiment.fail",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.run.attach",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.finding.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.decision.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.note.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.note.link",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.artifact.register",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.metric.add",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.setStatus",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.setBaseline",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.edit",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.openMirror",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.copyId",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.terminal.here",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.context.regenerate",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.agents.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.config.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.project.setGoal",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.rebuild",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.init",
+          "when": "!research.initialized"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "research.resume",
+          "when": "view == research.overview",
+          "group": "navigation@1"
+        },
+        {
+          "command": "research.checkpoint.create",
+          "when": "view == research.overview",
+          "group": "navigation@2"
+        },
+        {
+          "command": "research.refresh",
+          "when": "view == research.overview",
+          "group": "navigation@3"
+        },
+        {
+          "command": "research.question.create",
+          "when": "view == research.questions",
+          "group": "navigation"
+        },
+        {
+          "command": "research.experiment.create",
+          "when": "view == research.experiments",
+          "group": "navigation"
+        },
+        {
+          "command": "research.finding.create",
+          "when": "view == research.findings",
+          "group": "navigation"
+        },
+        {
+          "command": "research.decision.create",
+          "when": "view == research.decisions",
+          "group": "navigation"
+        },
+        {
+          "command": "research.checkpoint.create",
+          "when": "view == research.checkpoints",
+          "group": "navigation"
+        },
+        {
+          "command": "research.note.create",
+          "when": "view == research.notes",
+          "group": "navigation"
+        },
+        {
+          "command": "research.skill.create",
+          "when": "view == research.agent",
+          "group": "navigation@1"
+        },
+        {
+          "command": "research.context.regenerate",
+          "when": "view == research.agent",
+          "group": "navigation@2"
+        },
+        {
+          "command": "research.agents.open",
+          "when": "view == research.agent",
+          "group": "navigation@3"
+        },
+        {
+          "command": "research.rebuild",
+          "when": "view =~ /^research\\./",
+          "group": "zz@1"
+        },
+        {
+          "command": "research.config.open",
+          "when": "view =~ /^research\\./",
+          "group": "zz@2"
+        },
+        {
+          "command": "research.showOutput",
+          "when": "view =~ /^research\\./",
+          "group": "zz@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "research.experiment.run",
+          "when": "viewItem =~ /^experiment/",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.experiment.synthesize",
+          "when": "viewItem =~ /^experiment.*synth/",
+          "group": "inline@0"
+        },
+        {
+          "command": "research.experiment.run",
+          "when": "viewItem =~ /^experiment/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.run.attach",
+          "when": "viewItem =~ /^experiment/",
+          "group": "1_act@2"
+        },
+        {
+          "command": "research.experiment.synthesize",
+          "when": "viewItem =~ /^experiment/",
+          "group": "1_act@3"
+        },
+        {
+          "command": "research.experiment.variant",
+          "when": "viewItem =~ /^experiment/",
+          "group": "1_act@4"
+        },
+        {
+          "command": "research.finding.create",
+          "when": "viewItem =~ /^experiment/",
+          "group": "1_act@5"
+        },
+        {
+          "command": "research.setBaseline",
+          "when": "viewItem =~ /^experiment/",
+          "group": "2_state@1"
+        },
+        {
+          "command": "research.experiment.complete",
+          "when": "viewItem =~ /^experiment/",
+          "group": "2_state@2"
+        },
+        {
+          "command": "research.experiment.fail",
+          "when": "viewItem =~ /^experiment/",
+          "group": "2_state@3"
+        },
+        {
+          "command": "research.setStatus",
+          "when": "viewItem =~ /^(experiment|question|finding|decision|run)/",
+          "group": "2_state@9"
+        },
+        {
+          "command": "research.edit",
+          "when": "viewItem =~ /^(experiment|question|finding|decision)/",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "research.openMirror",
+          "when": "viewItem =~ /^(experiment|question|finding|decision|checkpoint)/",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "research.copyId",
+          "when": "viewItem =~ /^(experiment|question|finding|decision|checkpoint|run|artifact)/",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "research.experiment.create",
+          "when": "viewItem =~ /^question/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.question.create",
+          "when": "viewItem =~ /^question/",
+          "group": "1_act@2"
+        },
+        {
+          "command": "research.run.logs",
+          "when": "viewItem =~ /^run/",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.run.cancel",
+          "when": "viewItem =~ /^run.*active/",
+          "group": "inline@2"
+        },
+        {
+          "command": "research.run.logs",
+          "when": "viewItem =~ /^run/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.run.refresh",
+          "when": "viewItem =~ /^run/",
+          "group": "1_act@2"
+        },
+        {
+          "command": "research.run.cancel",
+          "when": "viewItem =~ /^run.*active/",
+          "group": "1_act@3"
+        },
+        {
+          "command": "research.terminal.here",
+          "when": "viewItem =~ /^run/",
+          "group": "1_act@4"
+        },
+        {
+          "command": "research.metric.add",
+          "when": "viewItem =~ /^run/",
+          "group": "1_act@5"
+        },
+        {
+          "command": "research.revealFile",
+          "when": "viewItem =~ /^(artifact|note|agentfile|skill)/",
+          "group": "1_act@8"
+        },
+        {
+          "command": "research.copyPath",
+          "when": "viewItem =~ /^(artifact|note|agentfile|skill)/",
+          "group": "9_copy@2"
+        },
+        {
+          "command": "research.decision.create",
+          "when": "viewItem =~ /^finding/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.finding.supersede",
+          "when": "viewItem =~ /^finding/",
+          "group": "2_state@2"
+        },
+        {
+          "command": "research.note.pin",
+          "when": "viewItem == ^note$",
+          "group": "inline"
+        },
+        {
+          "command": "research.note.unpin",
+          "when": "viewItem =~ /^note.pinned/",
+          "group": "inline"
+        },
+        {
+          "command": "research.note.link",
+          "when": "viewItem =~ /^note/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.skill.duplicate",
+          "when": "viewItem =~ /^skill/",
+          "group": "1_act@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "research.artifact.register",
+          "when": "research.initialized",
+          "group": "7_research@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "research.artifact.register",
+          "when": "research.initialized && resourceScheme == file",
+          "group": "7_research"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Research Panel",
+      "properties": {
+        "research.pythonPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Python ≥ 3.8 used to run the bundled research core **on the machine where the workspace lives** (the remote host under Remote SSH). Empty = auto-detect `python3`."
+        },
+        "research.terminalCommand": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Put a `research` command on `PATH` in VS Code terminals (so you and coding agents can use the CLI without installing it)."
+        },
+        "research.pollIntervalSeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 3,
+          "description": "How often to refresh status while runs are active."
+        },
+        "research.defaultRunMode": {
+          "type": "string",
+          "enum": [
+            "terminal",
+            "background",
+            "slurm"
+          ],
+          "default": "terminal",
+          "enumDescriptions": [
+            "Run in an integrated terminal (live output)",
+            "Detached background process",
+            "Submit to SLURM"
+          ],
+          "description": "Default execution mode for 'Run…'."
+        },
+        "research.projectRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Override the project root (defaults to the first workspace folder containing .research/, else the first folder)."
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "research.resume",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "research.initialized"
+      }
+    ]
+  }
+}

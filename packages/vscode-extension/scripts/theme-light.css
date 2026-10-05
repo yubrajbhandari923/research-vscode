@@ -1,0 +1,8 @@
+:root{--vscode-font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;--vscode-editor-font-family:Menlo,Monaco,"Courier New",monospace;
+--vscode-foreground:#3b3b3b;--vscode-descriptionForeground:#6f6f6f;--vscode-editor-background:#ffffff;--vscode-sideBar-background:#f8f8f8;
+--vscode-widget-border:#e5e5e5;--vscode-panel-border:#e5e5e5;--vscode-textLink-foreground:#005fb8;--vscode-focusBorder:#005fb8;
+--vscode-charts-green:#388a34;--vscode-charts-yellow:#bf8803;--vscode-charts-red:#e51400;--vscode-charts-orange:#d18616;--vscode-charts-blue:#1a85ff;--vscode-charts-purple:#652d90;
+--vscode-disabledForeground:#8b8b8b;--vscode-button-background:#005fb8;--vscode-button-foreground:#ffffff;--vscode-button-hoverBackground:#0258a8;
+--vscode-button-secondaryBackground:#e5e5e5;--vscode-button-secondaryForeground:#3b3b3b;--vscode-button-secondaryHoverBackground:#cccccc;
+--vscode-input-background:#ffffff;--vscode-input-foreground:#3b3b3b;--vscode-input-border:#cecece;--vscode-input-placeholderForeground:#767676;
+--vscode-menu-background:#ffffff;--vscode-terminal-background:#f8f8f8;--vscode-editorSuggestWidget-background:#f8f8f8;}

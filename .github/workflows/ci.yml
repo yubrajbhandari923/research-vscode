@@ -1,0 +1,23 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.8", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: pip install -e ".[dev]" build
+      - run: python -m pytest -q
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run package
+      - run: bash scripts/clean_install_test.sh
+      - uses: actions/upload-artifact@v4
+        if: matrix.python == '3.12'
+        with: { name: dist, path: dist/* }
