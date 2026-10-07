@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .util import ResearchError
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 AUTHOR_COLS = [("author_type", "text"), ("author_name", "text"), ("author_model", "text")]
 TIME_COLS = [("created_at", "text"), ("updated_at", "text")]
@@ -18,10 +18,17 @@ STATUSES = {
     "run": ["queued", "running", "completed", "failed", "cancelled", "unknown"],
     "finding": ["preliminary", "supported", "contradicted", "superseded"],
     "decision": ["active", "reversed", "superseded"],
+    "plan": ["active", "completed", "blocked", "abandoned"],
+    "task": ["todo", "running", "verify", "done", "blocked"],  # 'ready' is derived, not stored
 }
 FINDING_KINDS = ["result", "failure"]
 CONFIDENCE = ["low", "medium", "high"]
 RUN_TERMINAL = {"completed", "failed", "cancelled", "unknown"}
+
+# Task types: recommended canonical values (extensible - custom values allowed)
+TASK_TYPES = ["research", "implementation", "experiment", "analysis", "verification", "synthesis", "debug", "data"]
+# Task roles: defaults for agent routing (extensible)
+TASK_ROLES = ["planner", "implementer", "verifier", "analyst", "human"]
 
 # Entities that are mirrored as Markdown files.
 #   columns: (column, kind)          kind ∈ text | json | bool | int
@@ -98,14 +105,48 @@ ENTITIES: Dict[str, dict] = {
                      ("next_experiment", "Next step"), ("notes", "Notes")],
         "links": [],
     },
+    "plan": {
+        "table": "plans", "prefix": "PLAN", "width": 3, "dir": "plans",
+        "columns": [
+            ("title", "text"), ("status", "text"), ("root_question_id", "text"),
+        ] + AUTHOR_COLS + TIME_COLS + [
+            ("completed_at", "text"),
+            ("objective", "text"), ("success_criteria", "text"), ("context", "text"),
+        ],
+        "fm": {"root_question_id": "question"},
+        "sections": [("objective", "Objective"), ("success_criteria", "Success Criteria"), ("context", "Context")],
+        "links": [],
+    },
+    "task": {
+        "table": "tasks", "prefix": "T", "width": 3, "dir": "tasks",
+        "columns": [
+            ("plan_id", "text"), ("title", "text"), ("task_type", "text"), ("status", "text"),
+            ("assigned_role", "text"), ("depends_on", "json"),
+            ("related_question_id", "text"), ("related_experiment_id", "text"),
+            ("artifacts", "json"),
+        ] + AUTHOR_COLS + TIME_COLS + [
+            ("completed_by", "text"),  # who completed this task (agent name or human)
+            ("started_at", "text"), ("completed_at", "text"),
+            ("goal", "text"), ("inputs", "text"), ("expected_outputs", "text"),
+            ("acceptance_criteria", "text"), ("verification", "text"),
+            ("result", "text"), ("blockers", "text"), ("notes", "text"),
+        ],
+        "fm": {"plan_id": "plan", "related_question_id": "question", "related_experiment_id": "experiment"},
+        "sections": [
+            ("goal", "Goal"), ("inputs", "Inputs"), ("expected_outputs", "Expected Outputs"),
+            ("acceptance_criteria", "Acceptance Criteria"), ("verification", "Verification"),
+            ("result", "Result"), ("blockers", "Blockers"), ("notes", "Notes"),
+        ],
+        "links": [],
+    },
 }
 
 PREFIX_TO_TYPE = {"Q": "question", "EXP": "experiment", "RUN": "run", "F": "finding",
-                  "D": "decision", "CP": "checkpoint", "A": "artifact"}
+                  "D": "decision", "CP": "checkpoint", "A": "artifact", "PLAN": "plan", "T": "task"}
 TYPE_TO_PREFIX = {v: k for k, v in PREFIX_TO_TYPE.items()}
-WIDTH = {"Q": 3, "EXP": 3, "RUN": 4, "F": 3, "D": 3, "CP": 3, "A": 4}
+WIDTH = {"Q": 3, "EXP": 3, "RUN": 4, "F": 3, "D": 3, "CP": 3, "A": 4, "PLAN": 3, "T": 3}
 
-_ID_RE = re.compile(r"^\s*(EXP|RUN|CP|Q|F|D|A)[-_ ]?0*(\d+)\s*$", re.I)
+_ID_RE = re.compile(r"^\s*(EXP|RUN|CP|Q|F|D|A|PLAN|T)[-_ ]?0*(\d+)\s*$", re.I)
 
 
 def format_id(prefix: str, n: int) -> str:
@@ -206,7 +247,66 @@ DDL_V1 = _entity_ddl() + [
 ]
 
 # Ordered migrations: version -> list of statements. Add new versions at the end only.
-MIGRATIONS: Dict[int, List[str]] = {1: DDL_V1}
+DDL_V2 = [
+    # Add Plan table
+    """CREATE TABLE IF NOT EXISTS plans (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        status TEXT DEFAULT 'active',
+        root_question_id TEXT,
+        author_type TEXT,
+        author_name TEXT,
+        author_model TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        completed_at TEXT,
+        objective TEXT,
+        success_criteria TEXT,
+        context TEXT,
+        FOREIGN KEY (root_question_id) REFERENCES questions(id)
+    )""",
+    # Add Task table (simplified: removed redundant created_by, removed ready status)
+    """CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        task_type TEXT,
+        status TEXT DEFAULT 'todo',
+        assigned_role TEXT,
+        depends_on TEXT,
+        related_question_id TEXT,
+        related_experiment_id TEXT,
+        artifacts TEXT,
+        author_type TEXT,
+        author_name TEXT,
+        author_model TEXT,
+        created_at TEXT,
+        updated_at TEXT,
+        completed_by TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        goal TEXT,
+        inputs TEXT,
+        expected_outputs TEXT,
+        acceptance_criteria TEXT,
+        verification TEXT,
+        result TEXT,
+        blockers TEXT,
+        notes TEXT,
+        FOREIGN KEY (plan_id) REFERENCES plans(id),
+        FOREIGN KEY (related_question_id) REFERENCES questions(id),
+        FOREIGN KEY (related_experiment_id) REFERENCES experiments(id)
+    )""",
+    # Indices
+    "CREATE INDEX IF NOT EXISTS idx_tasks_plan ON tasks(plan_id)",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)",
+    "CREATE INDEX IF NOT EXISTS idx_plans_status ON plans(status)",
+    # Counters for new prefixes
+    "INSERT OR IGNORE INTO counters (prefix, next) VALUES ('PLAN', 1)",
+    "INSERT OR IGNORE INTO counters (prefix, next) VALUES ('T', 1)",
+]
+
+MIGRATIONS: Dict[int, List[str]] = {1: DDL_V1, 2: DDL_V2}
 
 
 def connect(path: str) -> sqlite3.Connection:

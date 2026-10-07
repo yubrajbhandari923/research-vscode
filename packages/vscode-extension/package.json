@@ -71,6 +71,13 @@
           "initialSize": 3
         },
         {
+          "id": "research.plans",
+          "name": "Plans",
+          "icon": "media/research.svg",
+          "when": "research.initialized",
+          "initialSize": 2
+        },
+        {
           "id": "research.questions",
           "name": "Questions",
           "icon": "media/research.svg",
@@ -392,6 +399,36 @@
         "title": "Supersede Finding",
         "category": "Research",
         "icon": "$(history)"
+      },
+      {
+        "command": "research.plan.create",
+        "title": "New Plan",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.task.create",
+        "title": "Add Task",
+        "category": "Research",
+        "icon": "$(add)"
+      },
+      {
+        "command": "research.task.start",
+        "title": "Start Task",
+        "category": "Research",
+        "icon": "$(play)"
+      },
+      {
+        "command": "research.task.complete",
+        "title": "Complete Task",
+        "category": "Research",
+        "icon": "$(check)"
+      },
+      {
+        "command": "research.task.block",
+        "title": "Block Task",
+        "category": "Research",
+        "icon": "$(error)"
       }
     ],
     "menus": {
@@ -559,6 +596,26 @@
         {
           "command": "research.init",
           "when": "!research.initialized"
+        },
+        {
+          "command": "research.plan.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.task.create",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.task.start",
+          "when": "false"
+        },
+        {
+          "command": "research.task.complete",
+          "when": "false"
+        },
+        {
+          "command": "research.task.block",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -576,6 +633,11 @@
           "command": "research.refresh",
           "when": "view == research.overview",
           "group": "navigation@3"
+        },
+        {
+          "command": "research.plan.create",
+          "when": "view == research.plans",
+          "group": "navigation"
         },
         {
           "command": "research.question.create",
@@ -793,6 +855,51 @@
           "command": "research.skill.duplicate",
           "when": "viewItem =~ /^skill/",
           "group": "1_act@1"
+        },
+        {
+          "command": "research.task.create",
+          "when": "viewItem =~ /^plan/",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.task.create",
+          "when": "viewItem =~ /^plan/",
+          "group": "1_act@1"
+        },
+        {
+          "command": "research.setStatus",
+          "when": "viewItem =~ /^(plan|task)/",
+          "group": "2_state@1"
+        },
+        {
+          "command": "research.edit",
+          "when": "viewItem =~ /^(plan|task)/",
+          "group": "3_edit@1"
+        },
+        {
+          "command": "research.openMirror",
+          "when": "viewItem =~ /^(plan|task)/",
+          "group": "3_edit@2"
+        },
+        {
+          "command": "research.copyId",
+          "when": "viewItem =~ /^(plan|task)/",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "research.task.start",
+          "when": "viewItem == task",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.task.complete",
+          "when": "viewItem == task.running",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.task.block",
+          "when": "viewItem == task.running",
+          "group": "1_act@2"
         }
       ],
       "explorer/context": [

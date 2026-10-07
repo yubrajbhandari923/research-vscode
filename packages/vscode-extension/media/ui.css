@@ -318,3 +318,146 @@ details > summary::-webkit-details-marker { display: none; }
 details > summary .chev { transition: transform .15s; display: inline-block; }
 details[open] > summary .chev { transform: rotate(90deg); }
 hr.sep { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+
+/* ================================================================ Research Home */
+.home { padding: 26px 32px 60px; max-width: 1100px; margin: 0 auto; }
+
+/* Home header - dominant */
+.home-header { margin-bottom: 32px; }
+.home-project { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.home-goal { font-size: 28px; line-height: 1.3; font-weight: 600; margin: 0 0 12px; letter-spacing: -0.02em; color: var(--fg); max-width: 800px; }
+.home-goal .muted { color: var(--muted); font-weight: 400; font-size: 22px; }
+.home-meta { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-size: 12px; align-items: center; }
+.home-meta .mono { font-size: 11.5px; }
+.home-meta .uncommitted { color: var(--orange); }
+.home-meta b { font-weight: 500; color: var(--fg); }
+
+/* Section labels - small caps */
+.section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); font-weight: 700; margin: 0 0 10px; }
+
+/* Current Focus - prominent */
+.focus-section { margin-bottom: 28px; }
+.focus-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 22px; }
+.focus-question { font-size: 18px; line-height: 1.45; font-weight: 500; margin-bottom: 14px; color: var(--fg); }
+.focus-field { margin-bottom: 10px; }
+.focus-field:last-child { margin-bottom: 0; }
+.focus-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; margin-bottom: 3px; display: block; }
+.focus-value { font-size: 13px; line-height: 1.55; color: var(--fg); }
+.focus-blocker { border-left: 3px solid var(--red); padding-left: 12px; margin-left: -12px; }
+.focus-blocker .focus-label { color: var(--red); }
+.focus-no-blocker { font-size: 12px; color: var(--green); display: flex; align-items: center; gap: 5px; margin-top: 6px; }
+
+/* Plan section */
+.plan-section { margin-bottom: 28px; }
+.plan-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.plan-progress { font-size: 13px; font-weight: 600; color: var(--muted); }
+.plan-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; cursor: pointer; transition: border-color 0.15s; }
+.plan-card:hover { border-color: var(--focus); }
+.plan-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+.plan-bar { height: 4px; background: var(--subtle); border-radius: 2px; overflow: hidden; margin-bottom: 14px; }
+.plan-bar-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.3s ease; }
+.plan-tasks { display: flex; flex-direction: column; gap: 4px; }
+.plan-task { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 5px; font-size: 12.5px; cursor: pointer; }
+.plan-task:hover { background: var(--card-hover); }
+.plan-task.done { color: var(--muted); }
+.plan-task.done .task-title { text-decoration: line-through; }
+.plan-task.active { background: color-mix(in srgb, var(--yellow) 12%, transparent); }
+.task-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-role { font-size: 10px; color: var(--muted); background: var(--subtle); padding: 1px 6px; border-radius: 4px; }
+.plan-actions { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+.plan-link { font-size: 12px; color: var(--accent); display: inline-flex; align-items: center; gap: 4px; }
+.empty-plan { background: var(--subtle); border: 1px dashed var(--border); border-radius: var(--radius); padding: 20px; color: var(--muted); text-align: center; }
+.empty-plan p { margin: 0 0 12px; }
+
+/* Two-column grid */
+.home-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 28px; }
+@media (max-width: 800px) { .home-grid { grid-template-columns: 1fr; } }
+
+/* Insights section */
+.insights-section { min-width: 0; }
+.insight-group { margin-bottom: 16px; }
+.insight-group:last-child { margin-bottom: 0; }
+.insight-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+.insight-group-label .codicon { font-size: 12px; }
+.insight-group-failed .insight-group-label { color: var(--red); }
+.insight-item { display: flex; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; transition: background 0.12s, border-color 0.12s; }
+.insight-item:hover { background: var(--card-hover); border-color: var(--border); }
+.insight-item > .codicon { margin-top: 2px; flex: none; }
+.insight-content { flex: 1; min-width: 0; }
+.insight-title { font-weight: 500; font-size: 13px; margin-bottom: 2px; }
+.insight-statement { font-size: 12px; color: var(--muted); line-height: 1.4; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.insight-meta { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 11px; color: var(--muted); }
+.insight-meta .id { font-size: 10.5px; }
+.empty-insights { font-size: 12px; color: var(--muted); font-style: italic; }
+
+/* Attention section */
+.attention-section { min-width: 0; }
+.attention-count { font-size: 10px; background: var(--subtle); border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px; margin-left: 6px; }
+.attention-list { display: flex; flex-direction: column; gap: 6px; }
+.attention-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--border); transition: border-color 0.15s; }
+.attention-item:hover { border-color: var(--focus); }
+.attention-item > .codicon { margin-top: 1px; flex: none; }
+.attention-content { flex: 1; min-width: 0; }
+.attention-title { font-weight: 500; font-size: 13px; }
+.attention-message { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.attention-id { font-size: 10.5px; flex: none; }
+.no-attention { font-size: 12px; color: var(--green); display: flex; align-items: center; gap: 6px; padding: 12px 0; }
+
+/* Key Outputs */
+.outputs-section { margin-bottom: 28px; }
+.outputs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.output-thumb { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; transition: border-color 0.15s; background: var(--card); }
+.output-thumb:hover { border-color: var(--focus); }
+.output-preview { height: 90px; display: flex; align-items: center; justify-content: center; background: repeating-conic-gradient(var(--subtle) 0% 25%, transparent 0% 50%) 50% / 12px 12px; }
+.output-preview img { max-width: 100%; max-height: 90px; object-fit: contain; }
+.output-preview .codicon { font-size: 28px; color: var(--muted); }
+.output-caption { padding: 6px 8px; border-top: 1px solid var(--border); }
+.output-name { font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.output-reason { font-size: 10px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Activity section */
+.activity-section { margin-bottom: 28px; }
+.activity-compact { font-size: 12px; }
+
+/* Home actions */
+.home-actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 16px; border-top: 1px solid var(--border); }
+
+/* ================================================================ Plan detail */
+.plan-progress-section { margin-top: 18px; }
+.plan-progress-bar { height: 6px; background: var(--subtle); border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+.plan-progress-fill { height: 100%; background: var(--green); border-radius: 3px; }
+.plan-progress-stats { display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+.plan-progress-stats .codicon { margin-right: 3px; }
+.stat-done { color: var(--green); }
+.stat-running { color: var(--yellow); }
+.stat-blocked { color: var(--red); }
+
+/* Task list in plan detail */
+.task-list { display: flex; flex-direction: column; gap: 2px; }
+.task-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent; transition: background 0.12s, border-color 0.12s; }
+.task-row:hover { background: var(--card-hover); border-color: var(--border); }
+.task-row.done { opacity: 0.65; }
+.task-row.done .task-title { text-decoration: line-through; }
+.task-icon { margin-top: 2px; flex: none; }
+.task-main { flex: 1; min-width: 0; }
+.task-main .task-title { font-weight: 500; font-size: 13px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.task-main .task-title .id { font-size: 10.5px; }
+.task-goal { font-size: 12px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-meta { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+.task-type { background: var(--subtle); padding: 1px 6px; border-radius: 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.task-role { font-size: 10px; display: flex; align-items: center; gap: 3px; }
+.task-deps { font-size: 10px; display: flex; align-items: center; gap: 3px; }
+.task-deps .id { font-size: 9.5px; }
+.task-status { flex: none; }
+
+/* ================================================================ Sidebar-specific Research Home adjustments */
+body.sidebar .home { padding: 10px 12px 24px; }
+body.sidebar .home-goal { font-size: 16px; }
+body.sidebar .focus-card { padding: 12px 14px; }
+body.sidebar .focus-question { font-size: 14px; margin-bottom: 10px; }
+body.sidebar .plan-card { padding: 12px 14px; }
+body.sidebar .home-grid { grid-template-columns: 1fr; gap: 16px; }
+body.sidebar .outputs-grid { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+body.sidebar .output-preview { height: 70px; }

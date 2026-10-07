@@ -31,6 +31,189 @@ def _findings(p: Project, where: str, args: tuple = (), limit: int = 50) -> List
     return out
 
 
+def research_home(p: Project) -> Dict[str, Any]:
+    """Primary aggregation for Research Home UI - answers the key research questions.
+
+    Designed to answer in 10-20 seconds:
+    1. What are we trying to understand? (active plan objective / current question)
+    2. What do we currently believe? (latest findings)
+    3. What changed recently? (activity)
+    4. What is being worked on right now? (active tasks, running experiments)
+    5. What failed? (failed directions)
+    6. Is anything blocked? (blockers)
+    7. What needs my attention? (verifier disagreements, blocked tasks, etc)
+    8. What happens next? (next task, proposed experiments)
+    9. Where are the most important results? (key outputs)
+    """
+    from . import plans as _plans
+
+    # Get base resume data
+    r = resume_context(p)
+
+    # --- Active Plan & Tasks ---
+    active_plans = _plans.list_plans(p, status="active")
+    active_plan = None
+    tasks = []
+    current_task = None
+    next_task = None
+    blocked_tasks = []
+
+    if active_plans:
+        active_plan = _plans.get_plan_with_tasks(p, active_plans[0]["id"])
+        tasks = active_plan.get("tasks", [])
+
+        # Find current (running) and next (ready) tasks
+        for t in tasks:
+            if t["status"] == "running":
+                current_task = _plans.get_task_with_deps(p, t["id"])
+            elif t["status"] == "blocked":
+                blocked_tasks.append(t)
+
+        # Get next ready task
+        next_task = _plans.get_next_ready_task(p, active_plan["id"])
+
+    # --- Current Focus (from plan or checkpoint) ---
+    current_focus = None
+    cp = r["latest_checkpoint"]
+
+    if active_plan:
+        current_focus = {
+            "question": active_plan.get("objective") or active_plan.get("title"),
+            "understanding": None,  # Populated from checkpoint if available
+            "next_step": next_task["title"] if next_task else None,
+            "blocker": blocked_tasks[0]["blockers"] if blocked_tasks and blocked_tasks[0].get("blockers") else None,
+            "source": "plan",
+            "source_id": active_plan["id"],
+        }
+        # Supplement with checkpoint understanding
+        if cp:
+            current_focus["understanding"] = cp.get("understanding")
+    elif cp:
+        current_focus = {
+            "question": cp.get("goal") or r["project"].get("goal"),
+            "understanding": cp.get("understanding"),
+            "next_step": cp.get("next_experiment"),
+            "blocker": cp.get("current_problem") if cp.get("current_problem") else None,
+            "source": "checkpoint",
+            "source_id": cp["id"],
+        }
+
+    # --- Needs Attention (strict - only things that genuinely need human thought) ---
+    attention_items = []
+
+    # Blocked tasks
+    for t in blocked_tasks:
+        attention_items.append({
+            "kind": "task_blocked",
+            "severity": "high",
+            "id": t["id"],
+            "title": t["title"],
+            "message": t.get("blockers") or "Task is blocked",
+        })
+
+    # Tasks needing verification
+    for t in tasks:
+        if t["status"] == "verify":
+            attention_items.append({
+                "kind": "verification_needed",
+                "severity": "medium",
+                "id": t["id"],
+                "title": t["title"],
+                "message": "Task completed, awaiting verification",
+            })
+
+    # Experiments needing synthesis (budget issues)
+    for n in r.get("needs_synthesis", []):
+        if n["state"].get("over_run_budget") or n["state"].get("over_failure_budget"):
+            attention_items.append({
+                "kind": "synthesis_required",
+                "severity": "high",
+                "id": n["id"],
+                "title": n["title"],
+                "message": f"{n['state'].get('unsynthesized', 0)} runs need synthesis",
+            })
+
+    # Failed runs that haven't been reviewed
+    for b in r.get("blockers", []):
+        if b["kind"] == "run":
+            attention_items.append({
+                "kind": "failed_run",
+                "severity": "medium",
+                "id": b["id"],
+                "title": b["text"],
+                "message": "Run failed - not yet reviewed",
+            })
+
+    # --- Key Outputs (important artifacts/plots) ---
+    key_outputs = []
+
+    # Get image artifacts from recent findings as evidence
+    for f in r.get("established_findings", [])[:5]:
+        for aid in (f.get("evidence") or [])[:2]:
+            if aid.startswith("A-"):
+                a = p.q1("SELECT id, name, path, type FROM artifacts WHERE id=?", (aid,))
+                if a and a["type"] in ("image", "table"):
+                    key_outputs.append({
+                        "id": a["id"],
+                        "name": a["name"],
+                        "path": a["path"],
+                        "type": a["type"],
+                        "reason": f"Evidence for {f['id']}",
+                    })
+
+    # Baseline experiment artifacts
+    base = r.get("baseline")
+    if base:
+        for a in p.q("SELECT id, name, path, type FROM artifacts WHERE experiment_id=? AND type IN ('image','table') "
+                     "ORDER BY created_at DESC LIMIT 3", (base["id"],)):
+            if not any(o["id"] == a["id"] for o in key_outputs):
+                key_outputs.append({
+                    "id": a["id"],
+                    "name": a["name"],
+                    "path": a["path"],
+                    "type": a["type"],
+                    "reason": f"Baseline {base['id']}",
+                })
+
+    # --- Latest Insights (top findings grouped by status) ---
+    findings_by_status = {
+        "supported": [],
+        "preliminary": [],
+        "failed": [],
+        "contradicted": [],
+    }
+
+    for f in r.get("established_findings", [])[:6]:
+        findings_by_status["supported" if f["status"] == "supported" else "preliminary"].append({
+            "id": f["id"],
+            "title": f["title"],
+            "statement": f.get("statement"),
+            "confidence": f.get("confidence"),
+            "evidence_count": len(f.get("evidence") or []),
+        })
+
+    for f in r.get("failed_directions", [])[:4]:
+        key = "contradicted" if f["status"] == "contradicted" else "failed"
+        findings_by_status[key].append({
+            "id": f["id"],
+            "title": f["title"],
+            "statement": f.get("statement"),
+        })
+
+    return {
+        **r,  # Include all resume data
+        "active_plan": active_plan,
+        "tasks": tasks,
+        "current_task": current_task,
+        "next_task": next_task,
+        "blocked_tasks": blocked_tasks,
+        "current_focus": current_focus,
+        "attention_items": attention_items,
+        "key_outputs": key_outputs[:6],
+        "findings_by_status": findings_by_status,
+    }
+
+
 def resume_context(p: Project) -> Dict[str, Any]:
     cfg = p.config["project"]
     g = gitinfo.info(p.root)

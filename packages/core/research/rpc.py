@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, Optional
 
 from . import __version__
 from . import context as C
+from . import plans as P
 from . import runs as R
 from . import services as S
 from . import views as V
@@ -60,6 +61,10 @@ class Server:
     def m_resume(self) -> Dict[str, Any]:
         return C.resume_context(self.project())
 
+    def m_home(self) -> Dict[str, Any]:
+        """Research Home aggregation - primary human landing page data."""
+        return C.research_home(self.project())
+
     def m_tree(self) -> Dict[str, Any]:
         """Everything the sidebar trees need, in one round-trip."""
         p = self.project()
@@ -86,6 +91,12 @@ class Server:
             for r in e["runs"]:
                 r["artifacts"] = arts_by_run.get(r["id"], [])
             e["artifacts"] = arts_by_exp.get(e["id"], [])
+
+        # Plans with their tasks (for sidebar)
+        plans = P.list_plans(p)
+        for plan in plans:
+            plan["tasks"] = P.list_tasks(p, plan_id=plan["id"])
+
         return {
             "project": {"name": p.name, "goal": p.config["project"].get("goal")},
             "questions": qs, "experiments": exps,
@@ -96,6 +107,7 @@ class Server:
             "skills": S.list_skills(p),
             "agent": {k: S.list_agent_files(p, k) for k in ("context", "prompts", "templates")},
             "needs_synthesis": [e["id"] for e in S.experiments_needing_synthesis(p)],
+            "plans": plans,
         }
 
     def m_index(self) -> Dict[str, Any]:
@@ -130,6 +142,7 @@ class Server:
             "question": S.create_question, "experiment": S.create_experiment, "variant": S.create_variant,
             "finding": S.create_finding, "decision": S.create_decision, "checkpoint": C.create_checkpoint,
             "note": S.create_note, "skill": S.create_skill,
+            "plan": P.create_plan, "task": P.create_task,
         }
         if type not in fn:
             raise ResearchError(f"cannot create {type!r}")
@@ -138,7 +151,7 @@ class Server:
     def m_update(self, type: str, id: str, **kw: Any) -> Dict[str, Any]:
         p = self.project()
         fn = {"question": S.update_question, "experiment": S.update_experiment, "finding": S.update_finding,
-              "decision": S.update_decision}.get(type)
+              "decision": S.update_decision, "plan": P.update_plan, "task": P.update_task}.get(type)
         if not fn:
             raise ResearchError(f"cannot update {type!r}")
         return fn(p, id, **kw)
@@ -230,10 +243,38 @@ class Server:
     def m_events(self, limit: int = 50) -> Any:
         return self.project(sync=False).q("SELECT * FROM events ORDER BY id DESC LIMIT ?", (int(limit),))
 
+    # plans / tasks ----------------------------------------------------------------------
+    def m_list_plans(self, status: Optional[str] = None) -> Any:
+        return P.list_plans(self.project(), status)
+
+    def m_list_tasks(self, plan_id: Optional[str] = None, status: Optional[str] = None) -> Any:
+        return P.list_tasks(self.project(), plan_id, status)
+
+    def m_get_plan(self, id: str) -> Dict[str, Any]:
+        return P.get_plan_with_tasks(self.project(), id)
+
+    def m_get_task(self, id: str) -> Dict[str, Any]:
+        return P.get_task_with_deps(self.project(), id)
+
+    def m_next_task(self, plan_id: Optional[str] = None) -> Any:
+        """Get the next ready task (dependencies satisfied, status=todo)."""
+        return P.get_next_ready_task(self.project(), plan_id)
+
+    def m_start_task(self, id: str, assigned_role: Optional[str] = None) -> Dict[str, Any]:
+        return P.start_task(self.project(), id, assigned_role)
+
+    def m_complete_task(self, id: str, result: Optional[str] = None,
+                        completed_by: Optional[str] = None, artifacts: Any = None) -> Dict[str, Any]:
+        return P.complete_task(self.project(), id, result, completed_by, artifacts)
+
+    def m_block_task(self, id: str, blockers: str) -> Dict[str, Any]:
+        return P.block_task(self.project(), id, blockers)
+
 
 MUTATING = {"create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
-            "update_project", "sync", "rebuild"}
+            "update_project", "sync", "rebuild",
+            "start_task", "complete_task", "block_task"}
 
 
 def serve(root: str, stdin=None, stdout=None) -> None:

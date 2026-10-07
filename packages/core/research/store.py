@@ -19,6 +19,7 @@ from .util import NotFound, NotInitialized, ResearchError, detect_author, jdump,
 
 RESEARCH_DIR = ".research"
 SUBDIRS = ["questions", "experiments", "findings", "decisions", "checkpoints", "notes", "runs",
+           "plans", "tasks",  # Plan/Task entities (Phase 0)
            "skills", "context", "prompts", "templates", "cache"]
 TEMPLATES = Path(__file__).parent / "templates"
 
@@ -325,7 +326,8 @@ class Project:
 
     def _max_existing(self, prefix: str) -> int:
         table = {"Q": "questions", "EXP": "experiments", "RUN": "runs", "F": "findings",
-                 "D": "decisions", "CP": "checkpoints", "A": "artifacts"}[prefix]
+                 "D": "decisions", "CP": "checkpoints", "A": "artifacts",
+                 "PLAN": "plans", "T": "tasks"}[prefix]
         best = 0
         for (i,) in self.conn.execute(f"SELECT id FROM {table}"):
             p = parse_id(i)

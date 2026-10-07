@@ -1,0 +1,9 @@
+# research: the SQLite index is rebuilt automatically from the text files
+research.db
+research.db-journal
+research.db-wal
+research.db-shm
+cache/
+# run logs can be large; remove these lines if you want them versioned
+runs/*/stdout.log
+runs/*/stderr.log

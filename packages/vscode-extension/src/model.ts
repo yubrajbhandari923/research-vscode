@@ -11,6 +11,7 @@ export interface Tree {
   notes: any[];
   artifacts: any[];
   skills: any[];
+  plans: any[];
   agent: { context: any[]; prompts: any[]; templates: any[] };
   needs_synthesis: string[];
 }

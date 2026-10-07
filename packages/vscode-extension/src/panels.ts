@@ -2,13 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Model } from './model';
-import { renderArtifact, renderCheckpoint, renderDecision, renderExperiment, renderFinding, renderQuestion, renderRun, RenderCtx } from './render/detail';
+import { renderArtifact, renderCheckpoint, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
 import { FormSpec, renderForm } from './render/form';
+import { renderHome } from './render/home';
 import { renderOverview, renderResume } from './render/resume';
 import { esc, nonce } from './util';
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
+  plan: 'list-ordered', task: 'list-ordered',
 };
 
 export function shell(webview: vscode.Webview, extUri: vscode.Uri, body: string, opts: { sidebar?: boolean; index?: any[]; title?: string } = {}): string {
@@ -85,8 +87,8 @@ export class Panels implements vscode.Disposable {
 
   // ------------------------------------------------------------------ public API
   async openResume() {
-    const ep = this.create('resume', 'Resume · ' + (this.model.tree?.project.name || 'Research'), 'history', 'resume');
-    ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Resume' });
+    const ep = this.create('resume', 'Research Home · ' + (this.model.tree?.project.name || 'Research'), 'beaker', 'resume');
+    ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Research Home' });
     if (!this.model.resume) await this.model.refresh();
     this.renderResume(ep);
   }
@@ -131,11 +133,20 @@ export class Panels implements vscode.Disposable {
     } else ep.panel.webview.postMessage({ t: 'render', html });
   }
 
-  private renderResume(ep: EntityPanel) {
-    const r = this.model.resume;
-    if (!r) return;
-    ep.panel.title = 'Resume · ' + (r.project?.name || '');
-    this.post(ep, renderResume(r));
+  private async renderResume(ep: EntityPanel) {
+    // Try new Research Home first, fall back to legacy Resume if home endpoint fails
+    try {
+      const home = await this.model.client.request('home');
+      ep.panel.title = 'Research Home · ' + (home.project?.name || '');
+      const ctx = this.rctx(ep);
+      this.post(ep, renderHome(home, { uri: ctx.uri }));
+    } catch {
+      // Fall back to legacy Resume view
+      const r = this.model.resume;
+      if (!r) return;
+      ep.panel.title = 'Resume · ' + (r.project?.name || '');
+      this.post(ep, renderResume(r));
+    }
   }
 
   private rctx(ep: EntityPanel): RenderCtx {
@@ -175,6 +186,8 @@ export class Panels implements vscode.Disposable {
     else if (t === 'question') html = renderQuestion(d);
     else if (t === 'decision') html = renderDecision(d);
     else if (t === 'checkpoint') html = renderCheckpoint(d);
+    else if (t === 'plan') html = renderPlan(d);
+    else if (t === 'task') html = renderTask(d);
     else if (t === 'run') {
       ctx.logTail = { stdout: tail(d.stdout_path_abs), stderr: tail(d.stderr_path_abs) };
       html = renderRun(d, ctx);
@@ -217,7 +230,7 @@ export class Panels implements vscode.Disposable {
 
 function guessType(id: string): string {
   const p = id.split('-')[0];
-  return { Q: 'question', EXP: 'experiment', RUN: 'run', F: 'finding', D: 'decision', CP: 'checkpoint', A: 'artifact' }[p] || 'file';
+  return { Q: 'question', EXP: 'experiment', RUN: 'run', F: 'finding', D: 'decision', CP: 'checkpoint', A: 'artifact', PLAN: 'plan', T: 'task' }[p] || 'file';
 }
 
 export async function openPath(root: string, p: string) {

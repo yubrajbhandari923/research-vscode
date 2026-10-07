@@ -13,6 +13,13 @@ or $RESEARCH_ROOT, unless you pass `project=Project(...)`):
     research.create_finding("alpha=0.5 best tradeoff", supports=[e["id"], run["id"]], confidence="medium")
     research.create_decision("Use alpha=0.5 as baseline", supporting_findings=["F-001"])
     research.create_checkpoint()
+
+    # Plans and Tasks (Phase 0)
+    plan = research.create_plan("Reproduce paper X", objective="Reproduce Table 1")
+    t1 = research.create_task(plan["id"], "Implement baseline model", goal="...")
+    t2 = research.create_task(plan["id"], "Run experiments", depends_on=[t1["id"]])
+    research.start_task(t1["id"])
+    research.complete_task(t1["id"], result="baseline implemented in model.py")
 """
 from __future__ import annotations
 
@@ -20,6 +27,7 @@ import functools
 from typing import Any, Dict, List, Optional
 
 from . import context as _context
+from . import plans as _plans
 from . import runs as _runs
 from . import services as _services
 from . import views as _views
@@ -38,6 +46,10 @@ __all__ = [
     "create_finding", "update_finding", "list_findings", "supersede_finding",
     "create_decision", "list_decisions", "create_checkpoint", "checkpoint_draft", "list_checkpoints",
     "create_note", "list_notes", "list_skills", "show", "regenerate_context",
+    # Phase 0: Plans and Tasks
+    "create_plan", "update_plan", "list_plans", "get_plan",
+    "create_task", "update_task", "list_tasks", "get_task", "get_next_ready_task",
+    "start_task", "complete_task", "block_task",
 ]
 
 
@@ -188,3 +200,28 @@ def list_checkpoints(p: Project) -> List[Dict[str, Any]]:
 create_note = _with_project(_services.create_note)
 list_notes = _with_project(_services.list_notes)
 list_skills = _with_project(_services.list_skills)
+
+
+# ------------------------------------------------------------------------------------ plans/tasks (Phase 0)
+create_plan = _with_project(_plans.create_plan)
+update_plan = _with_project(_plans.update_plan)
+list_plans = _with_project(_plans.list_plans)
+create_task = _with_project(_plans.create_task)
+update_task = _with_project(_plans.update_task)
+list_tasks = _with_project(_plans.list_tasks)
+start_task = _with_project(_plans.start_task)
+complete_task = _with_project(_plans.complete_task)
+block_task = _with_project(_plans.block_task)
+get_next_ready_task = _with_project(_plans.get_next_ready_task)
+
+
+@_with_project
+def get_plan(p: Project, plan_id: str) -> Dict[str, Any]:
+    """Get plan with all its tasks and summary statistics."""
+    return _plans.get_plan_with_tasks(p, plan_id)
+
+
+@_with_project
+def get_task(p: Project, task_id: str) -> Dict[str, Any]:
+    """Get task with resolved dependencies and readiness status."""
+    return _plans.get_task_with_deps(p, task_id)

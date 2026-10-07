@@ -1,3 +1,5 @@
+# Agent instructions — research-vscode
+
 <!-- research:begin — managed by `research init`; edit outside these markers freely -->
 ## Research OS
 

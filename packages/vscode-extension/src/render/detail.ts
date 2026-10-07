@@ -1,4 +1,4 @@
-/** Detail views: experiment, finding, question, decision, checkpoint, run, artifact. */
+/** Detail views: experiment, finding, question, decision, checkpoint, run, artifact, plan, task. */
 import { dur, esc, fmtVal, paramsSummary, truncate } from '../util';
 import {
   ART_ICON, author, btn, confidence, empty, entityRow, field, fileLink, h2, ic, iconBtn, idLink, kindPill, kvTable, md, menu,
@@ -327,7 +327,7 @@ function renderPreview(a: any, ctx: RenderCtx): string {
     return src ? `<img class="preview-img" src="${src}" alt="${esc(a.name)}">` : empty('Image outside the allowed roots.');
   }
   const p = ctx.preview;
-  if (!p) return empty(`No built-in preview for “${a.type}”. Open it with an extension that understands the format.`, btn('Open', 'research.openFile', [a.path], { ghost: true }));
+  if (!p) return empty(`No built-in preview for "${a.type}". Open it with an extension that understands the format.`, btn('Open', 'research.openFile', [a.path], { ghost: true }));
   if (p.error) return empty(p.error);
   if (p.kind === 'table' && p.rows) {
     const [head, ...body] = p.rows;
@@ -335,4 +335,206 @@ function renderPreview(a: any, ctx: RenderCtx): string {
   }
   if (p.kind === 'markdown') return `<div class="card">${md(p.text)}</div>`;
   return `<pre class="text">${esc(p.text || '')}</pre>${p.truncated ? '<div class="muted small" style="margin-top:6px">Truncated preview.</div>' : ''}`;
+}
+
+// =============================================================================== plan
+
+const TASK_STATUS_ICON: Record<string, [string, string]> = {
+  done: ['check', 'green'],
+  running: ['sync~spin', 'yellow'],
+  blocked: ['error', 'red'],
+  verify: ['eye', 'blue'],
+  todo: ['circle-large-outline', 'muted'],
+};
+
+export function renderPlan(p: any): string {
+  const tasks: any[] = p.tasks || [];
+  const done = p.tasks_done || 0;
+  const total = p.task_count || 0;
+  const blocked = p.tasks_blocked || 0;
+  const running = p.tasks_running || 0;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const toolbar = [
+    btn('Add Task', 'research.task.create', [p.id], { icon: 'add', primary: true }),
+    btn('Edit', 'research.edit', [p.id], { icon: 'edit' }),
+    menu('Status', [
+      ['Mark completed', 'research.setStatus', [p.id, 'completed'], 'pass'],
+      ['Mark blocked', 'research.setStatus', [p.id, 'blocked'], 'error'],
+      ['Abandon', 'research.setStatus', [p.id, 'abandoned'], 'circle-slash'],
+    ]),
+    menu('More', [
+      ['Open Markdown file', 'research.openMirror', [p.id], 'markdown'],
+      ['Copy ID', 'research.copyId', [p.id], 'copy'],
+    ], 'ellipsis'),
+  ].join('');
+
+  const pills = [pill(p.status, { lg: true }), author(p, true)].join('');
+  const meta = `<span>${ic('calendar')}created ${time(p.created_at)}</span>${p.completed_at ? `<span>${ic('pass')}completed ${time(p.completed_at)}</span>` : ''}`;
+
+  let h = `<div class="page fade-in">${header(`${ic('list-ordered')}Plan${p.root_question_id ? ` · ${idLink(p.root_question_id)}` : ''}`, p.title, idLink(p.id), pills, meta, toolbar)}`;
+
+  // Progress bar
+  h += `<section class="plan-progress-section">
+    <div class="plan-progress-bar"><div class="plan-progress-fill" style="width:${pct}%"></div></div>
+    <div class="plan-progress-stats">
+      <span class="stat-done">${ic('check')} ${done} done</span>
+      ${running ? `<span class="stat-running">${ic('sync~spin')} ${running} running</span>` : ''}
+      ${blocked ? `<span class="stat-blocked">${ic('error')} ${blocked} blocked</span>` : ''}
+      <span class="stat-remaining">${total - done} remaining</span>
+    </div>
+  </section>`;
+
+  // Objective & criteria
+  h += `<section class="split">
+    <div class="card">${field('Objective', p.objective, 'No objective specified')}${field('Success Criteria', p.success_criteria)}</div>
+    ${p.context ? `<div class="card">${field('Context', p.context)}</div>` : ''}
+  </section>`;
+
+  // Tasks list
+  h += `<section>${h2('Tasks', total, btn('Add', 'research.task.create', [p.id], { icon: 'add', ghost: true }))}`;
+
+  if (tasks.length) {
+    h += `<div class="task-list">`;
+    for (const t of tasks) {
+      const [icon, color] = TASK_STATUS_ICON[t.status] || ['circle-outline', 'muted'];
+      const deps = t.depends_on || [];
+      const depStr = deps.length ? `<span class="task-deps">${ic('arrow-small-left')} ${deps.map(idLink).join(' ')}</span>` : '';
+
+      h += `<div class="task-row ${t.status === 'done' ? 'done' : ''}" data-open="${esc(t.id)}" tabindex="0">
+        <i class="codicon codicon-${icon} task-icon" style="color:var(--${color})"></i>
+        <div class="task-main">
+          <div class="task-title">${idLink(t.id)} ${esc(t.title)}</div>
+          ${t.goal ? `<div class="task-goal">${esc(truncate(t.goal, 100))}</div>` : ''}
+          <div class="task-meta">
+            ${t.task_type ? `<span class="task-type">${esc(t.task_type)}</span>` : ''}
+            ${t.assigned_role ? `<span class="task-role">${ic('person')} ${esc(t.assigned_role)}</span>` : ''}
+            ${depStr}
+            ${t.author_type === 'agent' ? author(t) : ''}
+          </div>
+        </div>
+        <div class="task-status">${pill(t.status)}</div>
+      </div>`;
+    }
+    h += `</div>`;
+  } else {
+    h += empty('No tasks yet. Tasks break down the plan into concrete work units.', btn('Add Task', 'research.task.create', [p.id], { primary: true }));
+  }
+  h += `</section>`;
+
+  // Related entities
+  const findings: any[] = [];  // TODO: link findings to plans
+  const experiments: any[] = [];  // TODO: link experiments to plans
+
+  h += `<section>${h2('Activity')}<div class="card">${timeline(p.events, 15)}</div></section></div>`;
+  return h;
+}
+
+// =============================================================================== task
+
+export function renderTask(t: any): string {
+  const [icon, color] = TASK_STATUS_ICON[t.status] || ['circle-outline', 'muted'];
+  const deps: any[] = t.dependencies || [];
+  const isReady = t.is_ready;
+
+  const toolbar = [
+    t.status === 'todo' && isReady ? btn('Start', 'research.task.start', [t.id], { icon: 'play', primary: true }) : '',
+    t.status === 'running' ? btn('Complete', 'research.task.complete', [t.id], { icon: 'check', primary: true }) : '',
+    t.status === 'running' ? btn('Block', 'research.task.block', [t.id], { icon: 'error' }) : '',
+    btn('Edit', 'research.edit', [t.id], { icon: 'edit' }),
+    menu('Status', [
+      ['Mark done', 'research.setStatus', [t.id, 'done'], 'check'],
+      ['Mark running', 'research.setStatus', [t.id, 'running'], 'play'],
+      ['Mark blocked', 'research.setStatus', [t.id, 'blocked'], 'error'],
+      ['Mark verify', 'research.setStatus', [t.id, 'verify'], 'eye'],
+      ['Reset to todo', 'research.setStatus', [t.id, 'todo'], 'circle-large-outline'],
+    ]),
+    menu('More', [
+      ['Open Markdown file', 'research.openMirror', [t.id], 'markdown'],
+      ['Copy ID', 'research.copyId', [t.id], 'copy'],
+    ], 'ellipsis'),
+  ].filter(Boolean).join('');
+
+  const pills = [
+    pill(t.status, { lg: true }),
+    isReady && t.status === 'todo' ? `<span class="pill lg c-green">${ic('check')}ready</span>` : '',
+    t.task_type ? `<span class="pill lg c-blue">${esc(t.task_type)}</span>` : '',
+    author(t, true),
+  ].join('');
+
+  const meta = [
+    `<span>${ic('calendar')}created ${time(t.created_at)}</span>`,
+    t.started_at ? `<span>${ic('play')}started ${time(t.started_at)}</span>` : '',
+    t.completed_at ? `<span>${ic('check')}completed ${time(t.completed_at)}</span>` : '',
+    t.assigned_role ? `<span>${ic('person')}${esc(t.assigned_role)}</span>` : '',
+  ].filter(Boolean).join('');
+
+  let h = `<div class="page narrow fade-in">${header(`${ic('list-ordered')}${idLink(t.plan_id)} ${ic('chevron-right')} Task`, t.title, idLink(t.id), pills, meta, toolbar)}`;
+
+  // Ready/blocked banner
+  if (isReady && t.status === 'todo') {
+    h += `<div class="banner" style="--c:var(--green)">${ic('check')}<div class="grow"><b>Ready to start</b> — all dependencies are satisfied.</div>${btn('Start Task', 'research.task.start', [t.id], { primary: true, icon: 'play' })}</div>`;
+  } else if (t.status === 'blocked') {
+    h += `<div class="banner" style="--c:var(--red)">${ic('error')}<div class="grow"><b>Blocked:</b> ${esc(t.blockers || 'No reason specified')}</div></div>`;
+  }
+
+  // Goal
+  h += `<section><div class="card">${field('Goal', t.goal, 'No goal specified')}</div></section>`;
+
+  // Dependencies
+  if (deps.length) {
+    h += `<section>${h2('Dependencies', deps.length)}
+      <div class="card flush"><div class="list" style="padding:4px">${deps.map((d: any) => {
+        const [di, dc] = TASK_STATUS_ICON[d.status] || ['circle-outline', 'muted'];
+        return `<div class="item" data-open="${esc(d.id)}" tabindex="0">
+          <i class="codicon codicon-${di} lead" style="color:var(--${dc})"></i>
+          <div class="grow"><div class="hl">${idLink(d.id)}<span class="title">${esc(d.title)}</span></div></div>
+          ${pill(d.status)}
+        </div>`;
+      }).join('')}</div></div>
+    </section>`;
+  }
+
+  // Inputs / Expected outputs
+  h += `<section class="grid2">
+    <div class="card">${field('Inputs', t.inputs, 'Not specified')}</div>
+    <div class="card">${field('Expected Outputs', t.expected_outputs, 'Not specified')}</div>
+  </section>`;
+
+  // Acceptance criteria & verification
+  h += `<section class="grid2">
+    <div class="card">${field('Acceptance Criteria', t.acceptance_criteria, 'Not specified')}</div>
+    <div class="card">${field('Verification', t.verification, 'Not specified')}</div>
+  </section>`;
+
+  // Result (if completed)
+  if (t.result) {
+    h += `<section><div class="card tint" style="--c:var(--green)">${field('Result', t.result)}</div></section>`;
+  }
+
+  // Related entities
+  h += `<section class="grid2">
+    <div>${h2('Related')}`;
+
+  const related: string[] = [];
+  if (t.plan) related.push(entityRow(t.plan));
+  if (t.question) related.push(entityRow(t.question));
+  if (t.experiment) related.push(entityRow(t.experiment));
+  h += related.length ? `<div class="card flush"><div class="list" style="padding:4px">${related.join('')}</div></div>` : empty('No related entities.');
+  h += `</div>`;
+
+  // Artifacts
+  const arts = t.artifact_cards || [];
+  h += `<div>${h2('Artifacts', arts.length)}`;
+  h += arts.length ? `<div class="card flush"><div class="list" style="padding:4px">${arts.map((a: any) => entityRow(a)).join('')}</div></div>` : empty('No artifacts.');
+  h += `</div></section>`;
+
+  // Notes
+  if (t.notes) {
+    h += `<section><div class="card">${field('Notes', t.notes)}</div></section>`;
+  }
+
+  // Activity
+  h += `<section>${h2('Activity')}<div class="card">${timeline(t.events, 10)}</div></section></div>`;
+  return h;
 }

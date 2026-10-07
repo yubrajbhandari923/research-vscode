@@ -14,10 +14,11 @@ from typing import Any, Dict, List, Optional
 
 import research
 from research import context as C
+from research import plans as P
 from research import runs as R
 from research import services as S
 from research import views as V
-from research.schema import CONFIDENCE, FINDING_KINDS, STATUSES, normalize_id
+from research.schema import CONFIDENCE, FINDING_KINDS, STATUSES, TASK_TYPES, TASK_ROLES, normalize_id
 from research.store import Project
 from research.util import ResearchError, detect_author, human_size, parse_kv
 
@@ -44,6 +45,8 @@ STATUS_COLOR = {
     "queued": dim, "cancelled": dim, "unknown": red,
     "preliminary": yellow, "supported": green, "contradicted": red, "superseded": dim,
     "active": green, "reversed": dim,
+    # Plan/Task statuses (Phase 0)
+    "todo": dim, "verify": magenta, "done": green,
 }
 
 
@@ -299,6 +302,58 @@ def print_list(rows: List[Dict[str, Any]], cols: List[str]) -> None:
             elif v not in (None, ""):
                 parts.append(bold(str(v)) if c == "id" else str(v))
         print("  ".join(parts))
+
+
+def print_plan(plan: Dict[str, Any]) -> None:
+    print(f"{bold(plan['id'])}  {bold(plan['title'])}  [{st(plan['status'])}]")
+    kv("objective", plan.get("objective"))
+    kv("success criteria", plan.get("success_criteria"))
+    kv("context", plan.get("context"))
+    if plan.get("root_question_id"):
+        kv("question", plan.get("root_question_id"))
+    kv("author", author(plan))
+    if plan.get("tasks"):
+        section(f"Tasks ({plan['tasks_done']}/{plan['task_count']} done)")
+        for t in plan["tasks"]:
+            ready_str = ""
+            if t["status"] == "todo" and t.get("is_ready"):
+                ready_str = green(" ✓ ready")
+            deps = t.get("depends_on") or []
+            dep_str = dim(f" → {', '.join(deps)}") if deps else ""
+            print(f"  {t['id']}  [{st(t['status'])}]  {t['title']}{ready_str}{dep_str}")
+    elif plan.get("task_count", 0) == 0:
+        print(dim("  (no tasks yet)"))
+
+
+def print_task(task: Dict[str, Any]) -> None:
+    print(f"{bold(task['id'])}  {bold(task['title'])}  [{st(task['status'])}]")
+    if task.get("is_ready"):
+        print(green("  ✓ Ready to start (all dependencies satisfied)"))
+    kv("plan", task.get("plan_id"))
+    kv("type", task.get("task_type"))
+    kv("role", task.get("assigned_role"))
+    kv("goal", task.get("goal"))
+    kv("inputs", task.get("inputs"))
+    kv("expected outputs", task.get("expected_outputs"))
+    kv("acceptance", task.get("acceptance_criteria"))
+    kv("verification", task.get("verification"))
+    if task.get("dependencies"):
+        section("Dependencies")
+        for d in task["dependencies"]:
+            icon = green("✓") if d["status"] == "done" else dim("○")
+            print(f"  {icon} {d['id']}  {d['title']}  [{st(d['status'])}]")
+    if task.get("related_question_id"):
+        kv("question", task.get("related_question_id"))
+    if task.get("related_experiment_id"):
+        kv("experiment", task.get("related_experiment_id"))
+    kv("result", task.get("result"))
+    kv("blockers", task.get("blockers"))
+    kv("notes", task.get("notes"))
+    kv("started", task.get("started_at"))
+    kv("completed", task.get("completed_at"))
+    if task.get("completed_by"):
+        kv("completed by", task.get("completed_by"))
+    kv("author", author(task))
 
 
 # ----------------------------------------------------------------------------- command impls
@@ -830,6 +885,158 @@ def cmd_rebuild(a, p) -> int:
     return 0
 
 
+# ----------------------------------------------------------------------------- plans
+@mut
+def cmd_plan_create(a, p) -> int:
+    plan = P.create_plan(p, a.title, objective=a.objective, status=a.status,
+                         root_question_id=a.question, success_criteria=a.success, context=a.context)
+    _done(a, plan, msg=f"{plan['id']}  {plan['title']}  [{plan['status']}]")
+    return 0
+
+
+def cmd_plan_list(a, p) -> int:
+    rows = P.list_plans(p, a.status)
+    for r in rows:
+        tasks = P.list_tasks(p, plan_id=r["id"])
+        done = sum(1 for t in tasks if t["status"] == "done")
+        r["progress"] = f"{done}/{len(tasks)} tasks"
+    out_json(rows) if a.json else print_list(rows, ["id", "status", "title", "progress", "author_type"])
+    return 0
+
+
+def cmd_plan_show(a, p) -> int:
+    plan = P.get_plan_with_tasks(p, a.id)
+    # Add is_ready to each task for display
+    for t in plan.get("tasks", []):
+        if t["status"] == "todo":
+            deps = t.get("depends_on") or []
+            all_done = True
+            for d in deps:
+                dep_task = p.get("task", d)
+                if dep_task["status"] != "done":
+                    all_done = False
+                    break
+            t["is_ready"] = (len(deps) == 0 or all_done)
+    if a.json:
+        out_json(plan)
+    else:
+        print_plan(plan)
+    return 0
+
+
+@mut
+def cmd_plan_update(a, p) -> int:
+    plan = P.update_plan(p, a.id, title=a.title, objective=a.objective, status=a.status,
+                         root_question_id=a.question, success_criteria=a.success, context=a.context)
+    _done(a, plan, msg=f"{plan['id']} updated")
+    return 0
+
+
+# ----------------------------------------------------------------------------- tasks
+@mut
+def cmd_task_create(a, p) -> int:
+    task = P.create_task(p, a.plan, a.title, goal=a.goal, task_type=a.type, status=a.status,
+                         assigned_role=a.role, depends_on=a.depends, inputs=a.inputs,
+                         expected_outputs=a.outputs, acceptance_criteria=a.acceptance,
+                         verification=a.verification, related_question_id=a.question,
+                         related_experiment_id=a.experiment, notes=a.notes)
+    _done(a, task, msg=f"{task['id']}  {task['title']}  [{task['status']}]")
+    return 0
+
+
+def cmd_task_list(a, p) -> int:
+    rows = P.list_tasks(p, a.plan, a.status)
+    for r in rows:
+        deps = r.get("depends_on") or []
+        r["deps"] = ", ".join(deps) if deps else None
+    out_json(rows) if a.json else print_list(rows, ["id", "plan_id", "status", "title", "task_type", "deps"])
+    return 0
+
+
+def cmd_task_show(a, p) -> int:
+    task = P.get_task_with_deps(p, a.id)
+    if a.json:
+        out_json(task)
+    else:
+        print_task(task)
+    return 0
+
+
+@mut
+def cmd_task_update(a, p) -> int:
+    kw = {}
+    if a.title:
+        kw["title"] = a.title
+    if a.goal:
+        kw["goal"] = a.goal
+    if a.type:
+        kw["task_type"] = a.type
+    if a.status:
+        kw["status"] = a.status
+    if a.role:
+        kw["assigned_role"] = a.role
+    if a.depends:
+        kw["depends_on"] = a.depends
+    if a.inputs:
+        kw["inputs"] = a.inputs
+    if a.outputs:
+        kw["expected_outputs"] = a.outputs
+    if a.acceptance:
+        kw["acceptance_criteria"] = a.acceptance
+    if a.verification:
+        kw["verification"] = a.verification
+    if a.question:
+        kw["related_question_id"] = a.question
+    if a.experiment:
+        kw["related_experiment_id"] = a.experiment
+    if a.result:
+        kw["result"] = a.result
+    if a.blockers:
+        kw["blockers"] = a.blockers
+    if a.notes:
+        kw["notes"] = a.notes
+    task = P.update_task(p, a.id, **kw)
+    _done(a, task, msg=f"{task['id']} updated")
+    return 0
+
+
+@mut
+def cmd_task_start(a, p) -> int:
+    task = P.start_task(p, a.id, a.role)
+    _done(a, task, msg=f"{task['id']} → running")
+    return 0
+
+
+@mut
+def cmd_task_done(a, p) -> int:
+    task = P.complete_task(p, a.id, result=a.result, completed_by=a.by, artifacts=a.artifacts)
+    _done(a, task, msg=f"{task['id']} → done")
+    return 0
+
+
+@mut
+def cmd_task_block(a, p) -> int:
+    task = P.block_task(p, a.id, a.reason)
+    _done(a, task, msg=f"{task['id']} → blocked")
+    return 0
+
+
+def cmd_task_next(a, p) -> int:
+    task = P.get_next_ready_task(p, a.plan)
+    if not task:
+        if not a.json:
+            print(dim("No tasks ready (all dependencies unsatisfied or no todo tasks)"))
+        else:
+            out_json(None)
+        return 0
+    if a.json:
+        out_json(task)
+    else:
+        print(green("Next ready task:"))
+        print_task(task)
+    return 0
+
+
 def cmd_log(a, p) -> int:
     rows = p.q("SELECT * FROM events ORDER BY id DESC LIMIT ?", (a.limit,))
     if a.json:
@@ -1130,6 +1337,82 @@ def build_parser() -> argparse.ArgumentParser:
     x = add(g, "duplicate", cmd_skills_duplicate, "copy a skill")
     x.add_argument("src")
     x.add_argument("name")
+
+    # Phase 0: Plans
+    g = group("plan", "research plans (decomposed into tasks)", aliases=["plans", "p"])
+    x = add(g, "create", cmd_plan_create, "create a plan", aliases=["new"])
+    x.add_argument("title")
+    x.add_argument("--objective", "-o")
+    x.add_argument("--question", "-q", help="root question this plan addresses")
+    x.add_argument("--success", help="success criteria")
+    x.add_argument("--context", help="additional context for the plan")
+    x.add_argument("--status", default="active", choices=STATUSES["plan"])
+    x = add(g, "list", cmd_plan_list, "list plans", aliases=["ls"])
+    x.add_argument("--status", choices=STATUSES["plan"])
+    x = add(g, "show", cmd_plan_show, "show plan with all tasks")
+    x.add_argument("id")
+    x = add(g, "update", cmd_plan_update, "update a plan")
+    x.add_argument("id")
+    x.add_argument("--title")
+    x.add_argument("--objective", "-o")
+    x.add_argument("--question", "-q")
+    x.add_argument("--success")
+    x.add_argument("--context")
+    x.add_argument("--status", choices=STATUSES["plan"])
+
+    # Phase 0: Tasks
+    g = group("task", "tasks within plans (units of work)", aliases=["tasks", "t"])
+    x = add(g, "create", cmd_task_create, "create a task", aliases=["new"])
+    x.add_argument("plan", help="plan id (PLAN-001)")
+    x.add_argument("title")
+    x.add_argument("--goal", "-g")
+    x.add_argument("--type", choices=TASK_TYPES, help="task type (extensible)")
+    x.add_argument("--role", choices=TASK_ROLES, help="assigned role (extensible)")
+    x.add_argument("--status", default="todo", choices=STATUSES["task"])
+    x.add_argument("--depends", nargs="+", metavar="T-NNN", help="task dependencies")
+    x.add_argument("--inputs")
+    x.add_argument("--outputs", help="expected outputs")
+    x.add_argument("--acceptance", help="acceptance criteria")
+    x.add_argument("--verification", help="verification requirements")
+    x.add_argument("--question", "-q", help="related question")
+    x.add_argument("--experiment", "-e", help="related experiment")
+    x.add_argument("--notes")
+    x = add(g, "list", cmd_task_list, "list tasks", aliases=["ls"])
+    x.add_argument("--plan", "-p", help="filter by plan")
+    x.add_argument("--status", choices=STATUSES["task"])
+    x = add(g, "show", cmd_task_show, "show task detail")
+    x.add_argument("id")
+    x = add(g, "update", cmd_task_update, "update a task")
+    x.add_argument("id")
+    x.add_argument("--title")
+    x.add_argument("--goal", "-g")
+    x.add_argument("--type", choices=TASK_TYPES)
+    x.add_argument("--role", choices=TASK_ROLES)
+    x.add_argument("--status", choices=STATUSES["task"])
+    x.add_argument("--depends", nargs="+")
+    x.add_argument("--inputs")
+    x.add_argument("--outputs")
+    x.add_argument("--acceptance")
+    x.add_argument("--verification")
+    x.add_argument("--question", "-q")
+    x.add_argument("--experiment", "-e")
+    x.add_argument("--result")
+    x.add_argument("--blockers")
+    x.add_argument("--notes")
+    x = add(g, "start", cmd_task_start, "mark task as running (started)")
+    x.add_argument("id")
+    x.add_argument("--role", help="assign role when starting")
+    x = add(g, "done", cmd_task_done, "mark task as done (completed)", aliases=["complete"])
+    x.add_argument("id")
+    x.add_argument("--result", "-r")
+    x.add_argument("--by", help="completed by (agent name or human)")
+    x.add_argument("--artifacts", nargs="+", metavar="A-NNN", help="artifact ids")
+    x = add(g, "block", cmd_task_block, "mark task as blocked")
+    x.add_argument("id")
+    x.add_argument("reason")
+    x = add(g, "next", cmd_task_next, "show next ready task (dependencies satisfied)")
+    x.add_argument("--plan", "-p", help="filter by plan")
+
     return ap
 
 

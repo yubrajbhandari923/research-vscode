@@ -1,0 +1,20 @@
+# Research project configuration (human-editable).
+# project.goal is shown at the top of the Resume view and in .research/context/current.md.
+# agent_policy limits are enforced for agents (exit code 3); humans get warnings unless enforce_for_humans.
+# backends.slurm.setup: shell lines run before every SLURM job, e.g. "module load python/3.11".
+project: {name: research-vscode, description: '', goal: '', status: active, created_at: '2026-10-05T22:02:35-04:00',
+  git_repo: 'git@github.com:yubrajbhandari923/research-vscode.git', default_backend: local}
+agent_policy: {max_runs_without_synthesis: 5, max_failed_runs_without_review: 3, require_experiment_registration: true,
+  require_synthesis_before_new_experiment: true, enforce_for_humans: false}
+backends:
+  slurm:
+    partition: null
+    account: null
+    time: 01:00:00
+    cpus: null
+    mem: null
+    gpus: null
+    extra_args: []
+    setup: []
+artifacts: {hash_max_bytes: 67108864}
+resume: {stale_checkpoint_days: 14}

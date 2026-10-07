@@ -1,0 +1,2 @@
+{"action": "initialized", "author_name": "claude-code", "author_type": "agent", "entity_id": null, "entity_type": "project", "summary": "Initialized research project 'research-vscode'", "ts": "2026-10-05T22:02:35-04:00"}
+{"action": "created", "author_name": "claude-code", "author_type": "agent", "entity_id": "PLAN-001", "entity_type": "plan", "summary": "Plan created: Reproduce Paper X", "ts": "2026-10-05T22:02:36-04:00"}

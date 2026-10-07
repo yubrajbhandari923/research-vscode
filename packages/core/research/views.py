@@ -194,6 +194,30 @@ def artifact_detail(p: Project, aid: str) -> Dict[str, Any]:
     return a
 
 
+def plan_detail(p: Project, plan_id: str) -> Dict[str, Any]:
+    """Get detailed plan view with tasks and statistics."""
+    from . import plans as _plans
+    return _plans.get_plan_with_tasks(p, plan_id)
+
+
+def task_detail(p: Project, task_id: str) -> Dict[str, Any]:
+    """Get detailed task view with dependencies and related entities."""
+    from . import plans as _plans
+    task = _plans.get_task_with_deps(p, task_id)
+
+    # Add related entity details
+    task["plan"] = _brief(p, task["plan_id"]) if task.get("plan_id") else None
+    task["question"] = _brief(p, task["related_question_id"]) if task.get("related_question_id") else None
+    task["experiment"] = _brief(p, task["related_experiment_id"]) if task.get("related_experiment_id") else None
+
+    # Resolve artifacts
+    arts = task.get("artifacts") or []
+    task["artifact_cards"] = [_brief(p, a) for a in arts]
+
+    task["events"] = p.q("SELECT * FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 20", (task["id"],))
+    return task
+
+
 def show(p: Project, id_: str) -> Dict[str, Any]:
     t = schema.type_of(id_)
     if t == "note":
@@ -205,7 +229,7 @@ def show(p: Project, id_: str) -> Dict[str, Any]:
     id_ = normalize_id(id_)
     return {"experiment": experiment_detail, "finding": finding_detail, "question": question_detail,
             "decision": decision_detail, "checkpoint": checkpoint_detail, "run": run_detail,
-            "artifact": artifact_detail}[t](p, id_)
+            "artifact": artifact_detail, "plan": plan_detail, "task": task_detail}[t](p, id_)
 
 
 # =============================================================================== mirror tails
@@ -251,9 +275,77 @@ def mirror_tail(p: Project, etype: str, id_: str) -> str:
             if etype == "checkpoint":
                 extra = f"Git: `{r.get('git_branch') or '—'}` @ `{(r.get('git_commit') or '—')[:10]}`" + (" (dirty)" if r.get("git_dirty") else "") + "  \n"
             return extra + f"_Author: {by} · created {r.get('created_at')}_"
+        if etype == "plan":
+            return _plan_tail(p, id_)
+        if etype == "task":
+            return _task_tail(p, id_)
     except Exception as e:  # never break writes because of a view bug
         return f"_(could not render generated section: {e})_"
     return ""
+
+
+def _plan_tail(p: Project, plan_id: str) -> str:
+    """Generate tail for plan mirror showing task summary."""
+    plan = plan_detail(p, plan_id)
+    L = [f"## Tasks ({plan['tasks_done']}/{plan['task_count']} done)", ""]
+
+    if plan.get("tasks"):
+        for t in plan["tasks"]:
+            status_icon = {
+                "done": "✓", "running": "⏳", "blocked": "⛔",
+                "verify": "🔍", "todo": "○"
+            }.get(t["status"], "○")
+
+            deps = t.get("depends_on") or []
+            dep_str = f" (deps: {', '.join(deps)})" if deps else ""
+            L.append(f"- {status_icon} **{t['id']}** {t['title']} — {t['status']}{dep_str}")
+
+        if plan["tasks_blocked"]:
+            L.append(f"\n⚠ {plan['tasks_blocked']} task(s) blocked")
+    else:
+        L.append("_(no tasks yet)_")
+
+    L.append(f"\n_Author: {plan.get('author_type')}" +
+             (f" ({plan['author_name']})" if plan.get("author_name") else "") + "_")
+    return "\n".join(L)
+
+
+def _task_tail(p: Project, task_id: str) -> str:
+    """Generate tail for task mirror showing status and related entities."""
+    task = task_detail(p, task_id)
+    L = ["## Status", ""]
+
+    # Ready status (derived)
+    if task.get("is_ready"):
+        L.append("**Ready to start** — all dependencies satisfied")
+    else:
+        L.append(f"**{task['status']}**")
+
+    # Dependencies
+    deps = task.get("dependencies") or []
+    if deps:
+        L.append("\n### Dependencies")
+        for d in deps:
+            status_icon = "✓" if d["status"] == "done" else "○"
+            L.append(f"- {status_icon} **{d['id']}** {d['title']} ({d['status']})")
+
+    # Related entities
+    if task.get("plan"):
+        L.append(f"\n**Plan:** {task['plan']['id']} {task['plan']['title']}")
+    if task.get("question"):
+        L.append(f"**Question:** {task['question']['id']} {task['question']['title']}")
+    if task.get("experiment"):
+        L.append(f"**Experiment:** {task['experiment']['id']} {task['experiment']['title']}")
+
+    # Artifacts
+    if task.get("artifact_cards"):
+        L.append("\n### Artifacts")
+        for a in task["artifact_cards"]:
+            L.append(f"- **{a['id']}** {a['title']}")
+
+    L.append(f"\n_Author: {task.get('author_type')}" +
+             (f" ({task['author_name']})" if task.get("author_name") else "") + "_")
+    return "\n".join(L)
 
 
 def _experiment_tail(p: Project, exp_id: str) -> str:

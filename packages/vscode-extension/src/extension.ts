@@ -7,7 +7,7 @@ import { Model } from './model';
 import { OverviewView, Panels } from './panels';
 import { Shim } from './shim';
 import {
-  agentRoots, artifactRoots, checkpointRoots, decisionRoots, experimentRoots, findingRoots, noteRoots, questionRoots, ResearchTree,
+  agentRoots, artifactRoots, checkpointRoots, decisionRoots, experimentRoots, findingRoots, noteRoots, planRoots, questionRoots, ResearchTree,
 } from './trees';
 
 function pickRoot(): string | undefined {
@@ -44,7 +44,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   // ------------------------------------------------------------------ views
   ctx.subscriptions.push(vscode.window.registerWebviewViewProvider('research.overview', new OverviewView(ctx, model, panels), { webviewOptions: { retainContextWhenHidden: true } }));
   const trees: [string, (m: Model) => any[]][] = [
-    ['research.questions', questionRoots], ['research.experiments', experimentRoots], ['research.findings', findingRoots],
+    ['research.plans', planRoots], ['research.questions', questionRoots], ['research.experiments', experimentRoots], ['research.findings', findingRoots],
     ['research.decisions', decisionRoots], ['research.checkpoints', checkpointRoots], ['research.notes', noteRoots],
     ['research.artifacts', artifactRoots], ['research.agent', agentRoots],
   ];

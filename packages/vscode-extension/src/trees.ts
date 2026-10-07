@@ -56,6 +56,19 @@ export const STATUS_ICONS: Record<string, Record<string, Icon>> = {
     reversed: I('discard', 'disabledForeground'),
     superseded: I('history', 'disabledForeground'),
   },
+  plan: {
+    active: I('list-ordered', 'charts.blue'),
+    completed: I('pass-filled', 'charts.green'),
+    blocked: I('error', 'charts.red'),
+    abandoned: I('circle-slash', 'disabledForeground'),
+  },
+  task: {
+    todo: I('circle-large-outline', 'disabledForeground'),
+    running: I('sync~spin', 'charts.yellow'),
+    verify: I('eye', 'charts.blue'),
+    done: I('check', 'charts.green'),
+    blocked: I('error', 'charts.red'),
+  },
 };
 
 const ART_ICONS: Record<string, string> = {
@@ -370,4 +383,77 @@ export function agentRoots(m: Model): Node[] {
     group('ag/prompts', 'Prompts', list('prompts'), I('comment'), false),
     group('ag/templates', 'Templates', list('templates'), I('file-code'), false),
   ];
+}
+
+// --------------------------------------------------------------------------- plans & tasks
+
+export function taskNode(m: Model, t: any, pk: string): Node {
+  const icon = STATUS_ICONS.task[t.status] || I('circle-outline');
+  const deps = t.depends_on || [];
+  return {
+    key: `${pk}/${t.id}`,
+    label: `${t.id}  ${t.title}`,
+    description: [
+      t.status === 'blocked' ? 'blocked' : t.status !== 'todo' && t.status !== 'done' ? t.status : '',
+      t.assigned_role ? t.assigned_role : '',
+      deps.length ? `deps: ${deps.join(',')}` : '',
+    ].filter(Boolean).join(' · ') + author(t),
+    tooltip: md(
+      `**${t.id} · ${t.title}**\n\n_${t.status}_${t.task_type ? ' · ' + t.task_type : ''}` +
+      (t.goal ? `\n\n**Goal:** ${truncate(t.goal, 200)}` : '') +
+      (t.blockers ? `\n\n$(error) **Blocked:** ${truncate(t.blockers, 200)}` : '') +
+      (deps.length ? `\n\n**Dependencies:** ${deps.join(', ')}` : ''),
+    ),
+    icon,
+    context: t.status === 'blocked' ? 'task.blocked' : t.status === 'running' ? 'task.running' : 'task',
+    command: open(t.id),
+  };
+}
+
+export function planNode(m: Model, p: any, pk = 'plan'): Node {
+  const tasks: any[] = p.tasks || [];
+  const done = tasks.filter((t) => t.status === 'done').length;
+  const blocked = tasks.filter((t) => t.status === 'blocked').length;
+  const running = tasks.filter((t) => t.status === 'running').length;
+  const key = `${pk}/${p.id}`;
+
+  let desc = `${done}/${tasks.length}`;
+  if (running) desc += ` · ${running} running`;
+  if (blocked) desc += ` · ${blocked} blocked`;
+  desc += author(p);
+
+  return {
+    key,
+    label: `${p.id}  ${p.title}`,
+    description: desc,
+    tooltip: md(
+      `**${p.id} · ${p.title}**\n\n_${p.status}_ · ${done}/${tasks.length} tasks done` +
+      (p.objective ? `\n\n**Objective:** ${truncate(p.objective, 300)}` : '') +
+      (blocked ? `\n\n$(error) ${blocked} blocked task(s)` : ''),
+    ),
+    icon: blocked ? I('error', 'charts.orange') : STATUS_ICONS.plan[p.status] || I('list-ordered'),
+    context: 'plan',
+    command: open(p.id),
+    expanded: p.status === 'active',
+    children: tasks.length ? () => tasks.map((t) => taskNode(m, t, key)) : undefined,
+  };
+}
+
+export function planRoots(m: Model): Node[] {
+  const plans = m.tree?.plans || [];
+  if (!plans.length) return [];
+
+  const active = plans.filter((p) => p.status === 'active');
+  const completed = plans.filter((p) => p.status === 'completed');
+  const other = plans.filter((p) => p.status === 'blocked' || p.status === 'abandoned');
+
+  if (plans.length <= 3) {
+    return plans.map((p) => planNode(m, p));
+  }
+
+  const out: Node[] = [];
+  if (active.length) out.push(group('pg/active', 'Active', active.map((p) => planNode(m, p, 'pg/active')), I('list-ordered', 'charts.blue')));
+  if (completed.length) out.push(group('pg/done', 'Completed', completed.map((p) => planNode(m, p, 'pg/done')), I('pass', 'charts.green'), false));
+  if (other.length) out.push(group('pg/other', 'Blocked & abandoned', other.map((p) => planNode(m, p, 'pg/other')), I('error', 'disabledForeground'), false));
+  return out;
 }

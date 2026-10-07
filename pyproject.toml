@@ -9,7 +9,9 @@ description = "Project-local research memory: questions → experiments → runs
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-dependencies = []  # stdlib only; PyYAML is vendored (used only if not installed)
+dependencies = [
+    "setuptools>=75.3.4",
+]  # stdlib only; PyYAML is vendored (used only if not installed)
 classifiers = [
   "Programming Language :: Python :: 3",
   "Environment :: Console",
@@ -31,3 +33,8 @@ research = ["templates/**/*", "templates/*", "_vendor/yaml/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+]
