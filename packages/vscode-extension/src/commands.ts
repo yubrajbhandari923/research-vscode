@@ -13,7 +13,7 @@ const D_STATUS: [string, string, string][] = [['active', 'active', 'green'], ['r
 const CONF: [string, string, string][] = [['low', 'low', 'orange'], ['medium', 'medium', 'yellow'], ['high', 'high', 'green']];
 const PLAN_STATUS: [string, string, string][] = [['active', 'active', 'blue'], ['completed', 'completed', 'green'], ['blocked', 'blocked', 'red'], ['abandoned', 'abandoned', 'gray']];
 const TASK_STATUS: [string, string, string][] = [['todo', 'to do', 'gray'], ['running', 'running', 'yellow'], ['verify', 'verify', 'blue'], ['done', 'done', 'green'], ['blocked', 'blocked', 'red']];
-const TASK_TYPES: [string, string, string][] = [['research', 'research', 'blue'], ['implementation', 'implementation', 'purple'], ['experiment', 'experiment', 'yellow'], ['analysis', 'analysis', 'green'], ['verification', 'verification', 'orange'], ['synthesis', 'synthesis', 'blue']];
+const TASK_TYPES: [string, string, string][] = [['research', 'research', 'blue'], ['implementation', 'implementation', 'purple'], ['experiment', 'experiment', 'yellow'], ['analysis', 'analysis', 'green'], ['verification', 'verification', 'orange'], ['synthesis', 'synthesis', 'blue'], ['debug', 'debug', 'red'], ['data', 'data', 'gray']];
 const TASK_ROLES: [string, string, string][] = [['planner', 'planner', 'blue'], ['implementer', 'implementer', 'purple'], ['verifier', 'verifier', 'orange'], ['analyst', 'analyst', 'green'], ['human', 'human', 'yellow']];
 
 function idArg(a: any): string | undefined {
@@ -74,8 +74,16 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     await model.refresh();
   });
   reg('research.resume', () => panels.openResume());
-  reg('research.open', (a: any, side?: boolean) => {
-    const id = idArg(a);
+  reg('research.open', async (a: any, side?: boolean) => {
+    let id = idArg(a);
+    if (!id) {
+      const icons: Record<string, string> = { question: 'question', experiment: 'beaker', run: 'play-circle', finding: 'lightbulb', decision: 'law',
+        checkpoint: 'bookmark', artifact: 'file', plan: 'list-ordered', task: 'tasklist' };
+      const pick = await vscode.window.showQuickPick((model.index?.items || []).map((i: any) => ({
+        label: `$(${icons[i.type] || 'circle-outline'}) ${i.title || i.id}`, description: i.id, detail: i.status ? `${i.type} · ${i.status}` : i.type, id: i.id })),
+        { placeHolder: 'Open a question, plan, task, experiment, finding…', matchOnDescription: true, matchOnDetail: true });
+      id = pick?.id;
+    }
     if (id) return panels.openEntity(id, !!side);
   });
   reg('research.focus', (view: string) => vscode.commands.executeCommand(`research.${view}.focus`));
@@ -227,6 +235,16 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     } else if (t === 'decision') {
       panels.openForm(`edit-${id}`, decisionSpec(`Edit ${id}`, { ...d, findings: d.links?.supporting_findings, experiments: d.links?.experiments }), async (v) => {
         await rpc('update', { type: 'decision', id, statement: v.statement, reason: v.reason ?? '', status: v.status, supporting_findings: v.findings, experiments: v.experiments });
+        return id;
+      });
+    } else if (t === 'plan') {
+      panels.openForm(`edit-${id}`, { kind: 'plan', title: `Edit ${id}`, icon: 'edit', submit: 'Save', groups: planGroups(d, true) }, async (v) => {
+        await rpc('update', { type: 'plan', id, ...blank(v), root_question_id: v.root_question_id || '' });
+        return id;
+      });
+    } else if (t === 'task') {
+      panels.openForm(`edit-${id}`, { kind: 'task', title: `Edit ${id}`, icon: 'edit', submit: 'Save', groups: taskGroups(d, true) }, async (v) => {
+        await rpc('update', { type: 'task', id, ...taskValues(blank(v)) });
         return id;
       });
     } else await vscode.commands.executeCommand('research.openMirror', id);
@@ -520,27 +538,18 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
           [{ name: 'questions', label: 'Open questions', type: 'entities', filter: ['question'], value: d.question_ids },
             { name: 'experiments', label: 'Active experiments', type: 'entities', filter: ['experiment'], value: d.experiment_ids }],
         ] },
+        { fields: [{ name: 'commit', label: 'Also commit .research/ to git (only .research/ — nothing else, never pushed)', type: 'check', value: !!d.commit_default }] },
       ],
     }, async (v) => (await rpc('create', { type: 'checkpoint', ...v, use_draft: false })).id);
   });
 
   // ------------------------------------------------------------------ plans & tasks
   reg('research.plan.create', async (a?: any) => {
-    const pre = typeof a === 'object' && a && !a.key ? a : a?.key ? { question: idArg(a) } : {};
+    const pre = typeof a === 'object' && a && !a.key ? a : a?.key ? { root_question_id: idArg(a) } : {};
     panels.openForm('new-plan', {
       kind: 'plan', title: 'Create plan', icon: 'list-ordered', submit: 'Create plan',
       subtitle: 'A plan turns a research objective into concrete, tracked work. Define what success looks like before starting.',
-      groups: [
-        { title: 'What', icon: 'target', fields: [
-          { name: 'title', label: 'Plan title', type: 'text', required: true, autofocus: true, placeholder: 'e.g. Reproduce Figure 3 from paper' },
-          { name: 'objective', label: 'Objective', type: 'textarea', rows: 3, placeholder: 'What are we trying to achieve? Be specific.' },
-          { name: 'success_criteria', label: 'Success criteria', type: 'textarea', rows: 2, placeholder: 'How will we know the plan succeeded?' },
-        ] },
-        { title: 'Context', icon: 'link', fields: [
-          { name: 'question', label: 'Addresses question', type: 'entity', filter: ['question'], value: pre.question },
-          { name: 'context', label: 'Additional context', type: 'textarea', rows: 2, placeholder: 'Relevant background, constraints, dependencies…' },
-        ] },
-      ],
+      groups: planGroups(pre),
     }, async (v) => (await rpc('create', { type: 'plan', ...v, status: 'active' })).id);
   });
 
@@ -563,35 +572,13 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     }
     const plan = await rpc('show', { id: planId });
     const existingTasks = plan.tasks || [];
-    const taskOptions = existingTasks.map((t: any) => ({ label: t.id, description: t.title }));
 
     panels.openForm(`new-task-${planId}`, {
       kind: 'task', title: `Add task to ${planId}`, icon: 'list-ordered', submit: 'Add task',
       subtitle: `<b>${escapeHtml(plan.title)}</b> — ${existingTasks.length} tasks so far`,
       context: { plan_id: planId },
-      groups: [
-        { title: 'Task definition', icon: 'symbol-method', fields: [
-          { name: 'title', label: 'Task title', type: 'text', required: true, autofocus: true, placeholder: 'e.g. Run validation on test subjects' },
-          { name: 'goal', label: 'Goal', type: 'textarea', rows: 2, placeholder: 'What should this task accomplish?' },
-          [{ name: 'task_type', label: 'Type', type: 'seg', options: TASK_TYPES, value: 'research' },
-            { name: 'assigned_role', label: 'Role', type: 'seg', options: TASK_ROLES, value: '' }],
-        ] },
-        { title: 'Workflow', icon: 'git-merge', fields: [
-          { name: 'depends_on', label: 'Dependencies', type: 'entities', filter: ['task'], value: [], hint: 'Tasks that must complete first' },
-          [{ name: 'inputs', label: 'Inputs', type: 'textarea', rows: 2, placeholder: 'What does this task need?' },
-            { name: 'expected_outputs', label: 'Expected outputs', type: 'textarea', rows: 2, placeholder: 'What will this task produce?' }],
-        ] },
-        { title: 'Quality', icon: 'checklist', fields: [
-          { name: 'acceptance_criteria', label: 'Acceptance criteria', type: 'textarea', rows: 2, placeholder: 'How do we know this task is done correctly?' },
-          { name: 'verification', label: 'Verification approach', type: 'textarea', rows: 2, placeholder: 'How should we verify the outputs?' },
-        ] },
-      ],
-    }, async (v, c) => (await rpc('create', {
-      type: 'task', plan_id: c.plan_id, ...v,
-      task_type: v.task_type || undefined,
-      assigned_role: v.assigned_role || undefined,
-      status: 'todo'
-    })).id);
+      groups: taskGroups({ task_type: 'research' }),
+    }, async (v, c) => (await rpc('create', { type: 'task', plan_id: c.plan_id, ...taskValues(v), status: 'todo' })).id);
   });
 
   reg('research.task.start', async (a?: any) => {
@@ -605,6 +592,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     const id = idArg(a);
     if (!id) return;
     const result = await vscode.window.showInputBox({ prompt: 'Task result (optional)', placeHolder: 'What was the outcome?' });
+    if (result === undefined) return; // Esc cancels; an empty string completes without a result
     await rpc('update', { type: 'task', id, status: 'done', result: result || undefined });
     done(`${id} completed`);
   });
@@ -658,9 +646,326 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     done();
     openPath(model.root, s.path);
   });
+
+  // ------------------------------------------------------------------ agents: dispatch, planning
+  const ROLE_TARGET: Record<string, string> = { implementer: 'task', verifier: 'finding', analyst: 'experiment', planner: 'plan' };
+  const defaultRole = (id?: string): string => {
+    if (!id) return 'planner';
+    const p = id.split('-')[0];
+    if (p === 'F') return 'verifier';
+    if (p === 'EXP') return 'analyst';
+    if (p === 'PLAN') return 'planner';
+    if (p === 'T') {
+      const t = (model.tree?.plans || []).flatMap((x: any) => x.tasks || []).find((x: any) => x.id === id);
+      if (t?.status === 'verify' || t?.task_type === 'verification') return 'verifier';
+      if (['planner', 'implementer', 'verifier', 'analyst'].includes(t?.assigned_role)) return t.assigned_role;
+      return 'implementer';
+    }
+    return 'analyst';
+  };
+  reg('research.dispatch', async (a?: any, roleArg?: string, objectiveArg?: string) => {
+    let target = idArg(a);
+    let role = roleArg;
+    if (!role) {
+      const def = defaultRole(target);
+      const roles = ['implementer', 'verifier', 'analyst', 'planner'].sort((x, y) => (x === def ? -1 : y === def ? 1 : 0));
+      const pick = await vscode.window.showQuickPick(roles.map((r) => ({ label: r, description: r === def ? 'suggested' : '' })), { placeHolder: `Which role should the agent take${target ? ' on ' + target : ''}?` });
+      if (!pick) return;
+      role = pick.label;
+    }
+    let objective = objectiveArg;
+    if (role === 'planner' && !target && !objective) {
+      objective = await vscode.window.showInputBox({ prompt: 'What should the plan achieve?', placeHolder: 'e.g. Reproduce Figure 3 of the paper within 5% RMSE', ignoreFocusOut: true });
+      if (!objective) return;
+    }
+    if (!target && role !== 'planner') {
+      target = await pickEntity(ROLE_TARGET[role], `Which ${ROLE_TARGET[role]} should the ${role} work on?`);
+      if (!target) return;
+    }
+    const ag = await rpc('agents');
+    const preferred = ag.roles?.[role] || ag.default_profile;
+    const profiles = (ag.profiles || []).slice().sort((x: any, y: any) => (x.name === preferred ? -1 : y.name === preferred ? 1 : Number(y.available) - Number(x.available)));
+    const prof: any = await vscode.window.showQuickPick(profiles.map((x: any) => ({
+      label: x.name, description: `${x.command}${x.model ? ' · ' + x.model : ''}${x.name === preferred ? ' · configured for ' + role : ''}`,
+      detail: x.available ? undefined : '$(warning) not found on PATH', name: x.name,
+    })), { placeHolder: 'Which agent? (profiles live in .research/config.yaml → agents)' });
+    if (!prof) return;
+    const d = await rpc('dispatch', { role, target, objective, profile: prof.name });
+    const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: model.root, env: { ...shim.env(), ...d.env } });
+    term.show();
+    term.sendText(d.argv.map(shq).join(' '), true);
+    done(`${d.profile}/${d.role} dispatched`);
+    if (!d.available) vscode.window.showWarningMessage(`\`${d.argv[0]}\` was not found on PATH. Install it, or point the "${d.profile}" profile at the right command in .research/config.yaml.`);
+  });
+  reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
+
+  // ------------------------------------------------------------------ retrieval: search, report, brief
+  reg('research.search', async () => {
+    const qp = vscode.window.createQuickPick<any>();
+    qp.placeholder = 'Search findings, experiments, tasks, runs, notes, skills…';
+    qp.matchOnDescription = true;
+    qp.matchOnDetail = true;
+    let timer: any;
+    qp.onDidChangeValue((v) => {
+      clearTimeout(timer);
+      if (!v.trim()) { qp.items = []; return; }
+      timer = setTimeout(async () => {
+        qp.busy = true;
+        try {
+          const rows = await rpc('search', { query: v, limit: 40 });
+          qp.items = rows.map((r: any) => ({ label: `${r.id}  ${r.title || ''}`, description: `${r.type}${r.status ? ' · ' + r.status : ''}`, detail: r.snippet, alwaysShow: true, row: r }));
+        } catch { /* ignore */ }
+        qp.busy = false;
+      }, 200);
+    });
+    qp.onDidAccept(async () => {
+      const r = qp.selectedItems[0]?.row;
+      qp.hide();
+      if (!r) return;
+      if (r.type === 'skill') {
+        const sk = (model.tree?.skills || []).find((x: any) => `skill:${x.name}` === r.id);
+        if (sk) openPath(model.root, sk.path);
+      } else if (r.type === 'synthesis' || r.type === 'review') panels.openEntity(r.id.split('/')[0]);
+      else panels.openEntity(r.id);
+    });
+    qp.show();
+  });
+  reg('research.report', async (a?: any) => {
+    let scope = idArg(a);
+    if (!scope) {
+      const items = [{ label: '$(project) Whole project', id: '' },
+        ...(model.index?.items || []).filter((i: any) => ['question', 'plan', 'experiment'].includes(i.type)).map((i: any) => ({ label: i.id, description: i.title, id: i.id }))];
+      const pick: any = await vscode.window.showQuickPick(items, { placeHolder: 'Report on what?', matchOnDescription: true });
+      if (!pick) return;
+      scope = pick.id || undefined;
+    }
+    const r = await rpc('report', { scope, fmt: 'both' });
+    const mdPath = r.paths.find((x: string) => x.endsWith('.md'));
+    const htmlPath = r.paths.find((x: string) => x.endsWith('.html'));
+    if (mdPath) await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(path.join(model.root, mdPath)));
+    done('report written');
+    const c = await vscode.window.showInformationMessage(`Report written: ${r.paths.join(', ')}`, 'Open HTML in browser', 'Open Markdown');
+    if (c === 'Open HTML in browser' && htmlPath) vscode.env.openExternal(vscode.Uri.file(path.join(model.root, htmlPath)));
+    if (c === 'Open Markdown' && mdPath) openPath(model.root, mdPath);
+  });
+  reg('research.task.brief', async (a?: any) => {
+    const id = idArg(a);
+    if (!id) return;
+    const md = await rpc('task_brief', { id });
+    const doc = await vscode.workspace.openTextDocument({ content: md, language: 'markdown' });
+    vscode.window.showTextDocument(doc, { preview: true });
+  });
+
+  // ------------------------------------------------------------------ coordination & verification
+  reg('research.task.verify', async (a?: any) => {
+    const id = idArg(a);
+    if (!id) return;
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Running ${id} checks…` }, () => rpc('verify_task', { id }));
+    done();
+    const failed = r.results.filter((x: any) => !x.ok);
+    if (r.passed) vscode.window.showInformationMessage(`${id}: all ${r.results.length} checks passed${r.task.status === 'done' ? ' — task done' : ''}.`);
+    else vscode.window.showWarningMessage(`${id}: ${failed.length}/${r.results.length} checks failed — ${failed.map((x: any) => `${x.check} (${x.detail})`).join('; ')}`, { modal: false });
+  });
+  reg('research.task.note', async (a?: any) => {
+    const id = idArg(a);
+    if (!id) return;
+    const text = await vscode.window.showInputBox({ prompt: `Progress note for ${id}`, placeHolder: 'What was done, what was found, what is left…', ignoreFocusOut: true });
+    if (!text) return;
+    await rpc('task_note', { id, text });
+    done(`${id} note added`);
+  });
+  reg('research.task.release', async (a?: any) => {
+    const id = idArg(a);
+    if (!id) return;
+    const note = await vscode.window.showInputBox({ prompt: `Release ${id} back to the queue — hand-off note (optional)`, placeHolder: 'Where things stand for whoever picks it up' });
+    if (note === undefined) return;
+    await rpc('release_task', { id, note: note || undefined });
+    done(`${id} released`);
+  });
+  reg('research.finding.review', async (a?: any) => {
+    const id = idArg(a);
+    if (!id) return;
+    const f = await rpc('show', { id });
+    panels.openForm(`review-${id}`, {
+      kind: 'review', title: `Review ${id}`, icon: 'comment-discussion', submit: 'Record review',
+      subtitle: `<b>${escapeHtml(f.title)}</b> — ${escapeHtml(f.statement || '')}<br><span class="muted">Does the evidence (${(f.evidence?.supports || []).map((x: any) => x.id).join(', ') || 'none linked'}) support the claim? Is the interpretation overreaching?</span>`,
+      groups: [{ fields: [
+        { name: 'verdict', label: 'Verdict', type: 'seg', required: true, value: 'supported', options: [['supported', 'supported', 'green'], ['needs_work', 'needs work', 'orange'], ['contradicted', 'contradicted', 'red']] },
+        { name: 'notes', label: 'Reasoning', type: 'textarea', rows: 4, required: true, autofocus: true, placeholder: 'What you checked, and why you reached this verdict' },
+        { name: 'confidence', label: 'Confidence', type: 'seg', options: CONF, value: f.confidence || '' },
+      ] }],
+    }, async (v) => {
+      await rpc('review_finding', { id, verdict: v.verdict, notes: v.notes, confidence: v.confidence || undefined });
+      return id;
+    });
+  });
+  reg('research.run.compare', async (a?: any, b?: string) => {
+    let first = typeof a === 'string' || a?.key ? idArg(a) : undefined;
+    const exp = a && typeof a === 'object' && !a.key ? a.experiment : undefined;
+    const runFilter = (x: any) => !exp || x.experiment_id === exp;
+    if (!first) first = await pickEntity('run', 'First run', runFilter);
+    if (!first) return;
+    let second = b;
+    if (!second) second = await pickEntity('run', `Compare ${first} with…`, (x) => x.id !== first && runFilter(x));
+    if (!second) return;
+    await panels.openCompare(first, second);
+  });
+
+  // ------------------------------------------------------------------ skills management & MCP
+  reg('research.skill.import', async () => {
+    const how: any = await vscode.window.showQuickPick([
+      { label: '$(folder) From a folder…', detail: 'A folder with SKILL.md, or a downloaded repo with skills/<name>/SKILL.md', id: 'folder' },
+      { label: '$(github) From a git URL or owner/repo…', detail: 'e.g. DietrichGebert/ponytail · https://github.com/org/repo/tree/main/skills/x', id: 'git' },
+    ], { placeHolder: 'Import skills into .research/skills/' });
+    if (!how) return;
+    let source: string | undefined;
+    if (how.id === 'folder') {
+      const uri = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Import skills from here' });
+      source = uri?.[0]?.fsPath;
+    } else source = await vscode.window.showInputBox({ prompt: 'Git URL or owner/repo', placeHolder: 'DietrichGebert/ponytail', ignoreFocusOut: true });
+    if (!source) return;
+    const preview = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Reading skills…' }, () => rpc('skills_add', { source, list_only: true }));
+    let only: string[] | undefined;
+    if (preview.available.length > 1) {
+      const picks: any = await vscode.window.showQuickPick(preview.available.map((x: any) => ({ label: x.name, description: x.subpath, detail: x.description, picked: false })), { canPickMany: true, placeHolder: `${preview.available.length} skills found — which ones?` });
+      if (!picks || !picks.length) return;
+      only = picks.map((x: any) => x.label);
+    }
+    const mode: any = await vscode.window.showQuickPick([
+      { label: 'On demand', detail: 'Suggested in task briefs when assigned or matched; agents load it when needed', always: false },
+      { label: 'Always on', detail: 'Listed in current.md for every agent session (e.g. a coding-style skill)', always: true },
+    ], { placeHolder: 'How should agents use it?' });
+    if (!mode) return;
+    const run = (force: boolean) => vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Importing skills…' },
+      () => rpc('skills_add', { source, only, always: mode.always || undefined, force }));
+    let r: any;
+    try { r = await run(false); } catch (e: any) {
+      if (!/already exists/.test(e.message)) throw e;
+      const c = await vscode.window.showWarningMessage(`${e.message}. Replace? (The old copy is kept in .research/cache/removed-skills/.)`, { modal: true }, 'Replace');
+      if (c !== 'Replace') return;
+      r = await run(true);
+    }
+    done(`Imported ${r.added.join(', ')}`);
+    vscode.window.showInformationMessage(`Imported ${r.added.join(', ')} — available to agents via .claude/skills and .agents/skills.`);
+  });
+  const skillName = async (a: any) => a?.key?.split('/').pop() || (await vscode.window.showQuickPick((model.tree?.skills || []).map((s: any) => s.dir || s.name), { placeHolder: 'Which skill?' }));
+  reg('research.skill.remove', async (a?: any) => {
+    const name = await skillName(a);
+    if (!name) return;
+    const c = await vscode.window.showWarningMessage(`Remove skill "${name}"? It is moved to .research/cache/removed-skills/.`, { modal: true }, 'Remove');
+    if (c !== 'Remove') return;
+    await rpc('skills_remove', { name });
+    done(`${name} removed`);
+  });
+  reg('research.skill.update', async (a?: any) => {
+    const name = await skillName(a);
+    if (!name) return;
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Updating ${name}…` }, () => rpc('skills_update', { names: [name] }));
+    done(`updated ${r.updated.join(', ')}`);
+  });
+  reg('research.skill.toggleAlways', async (a?: any) => {
+    const name = await skillName(a);
+    if (!name) return;
+    const cur = (model.tree?.skills || []).find((s: any) => (s.dir || s.name) === name);
+    const r = await rpc('skills_set', { name, always: !cur?.always });
+    done(`${r.name}: ${r.always ? 'always on' : 'on demand'}`);
+  });
+  reg('research.skill.link', async () => {
+    const r = await rpc('skills_link');
+    const lines = Object.entries(r).map(([k, v]: any) => `${k}: ${v.linked.length} linked${v.skipped.length ? `, left alone: ${v.skipped.join(', ')}` : ''}`);
+    vscode.window.showInformationMessage(lines.join(' · ') || 'Skill linking is off (config skills.link).');
+  });
+  reg('research.mcp.install', async () => {
+    const picks: any = await vscode.window.showQuickPick([
+      { label: 'claude', description: '.mcp.json (Claude Code)', picked: true },
+      { label: 'vscode', description: '.vscode/mcp.json (VS Code / Copilot agent mode)', picked: true },
+      { label: 'cursor', description: '.cursor/mcp.json' },
+      { label: 'gemini', description: '.gemini/settings.json' },
+      { label: 'codex', description: 'prints the `codex mcp add` command (per-user config)' },
+    ], { canPickMany: true, placeHolder: 'Register the research MCP server for which agents?' });
+    if (!picks || !picks.length) return;
+    const r = await rpc('mcp_install', { clients: picks.map((x: any) => x.label) });
+    const codex = r.installed.codex;
+    const msg = Object.entries(r.installed).filter(([k]) => k !== 'codex').map(([k, v]) => `${k}: ${v}`).join(' · ');
+    const c = await vscode.window.showInformationMessage(`MCP server registered${msg ? ' — ' + msg : ''}. Agents started from a VS Code terminal find \`research\` on PATH.`, ...(codex ? ['Copy Codex command'] : []));
+    if (c === 'Copy Codex command') vscode.env.clipboard.writeText('codex mcp add research -- research mcp');
+  });
+}
+
+/** POSIX shell quoting for terminal command lines. */
+function shq(s: string): string {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
 /** Edit forms: an emptied text field means "clear it", not "leave unchanged". */
+function planGroups(d: any, edit = false): any[] {
+  return [
+    { title: 'What', icon: 'target', fields: [
+      { name: 'title', label: 'Plan title', type: 'text', required: true, autofocus: true, value: d.title, placeholder: 'e.g. Reproduce Figure 3 from paper' },
+      { name: 'objective', label: 'Objective', type: 'textarea', rows: 3, value: d.objective, placeholder: 'What are we trying to achieve? Be specific.' },
+      { name: 'success_criteria', label: 'Success criteria', type: 'textarea', rows: 2, value: d.success_criteria, placeholder: 'How will we know the plan succeeded?' },
+      ...(edit ? [{ name: 'status', label: 'Status', type: 'seg', options: PLAN_STATUS, value: d.status }] : []),
+    ] },
+    { title: 'Context', icon: 'link', fields: [
+      { name: 'root_question_id', label: 'Addresses question', type: 'entity', filter: ['question'], value: d.root_question_id },
+      { name: 'context', label: 'Additional context', type: 'textarea', rows: 2, value: d.context, placeholder: 'Relevant background, constraints, dependencies…' },
+    ] },
+  ];
+}
+
+function taskGroups(d: any, edit = false): any[] {
+  return [
+    { title: 'Task definition', icon: 'symbol-method', fields: [
+      { name: 'title', label: 'Task title', type: 'text', required: true, autofocus: true, value: d.title, placeholder: 'e.g. Run validation on test subjects' },
+      { name: 'goal', label: 'Goal', type: 'textarea', rows: 2, value: d.goal, placeholder: 'What should this task accomplish?' },
+      [{ name: 'task_type', label: 'Type', type: 'seg', options: TASK_TYPES, value: d.task_type || '' },
+        { name: 'assigned_role', label: 'Role', type: 'seg', options: TASK_ROLES, value: d.assigned_role || '' }],
+      ...(edit ? [{ name: 'status', label: 'Status', type: 'seg', options: TASK_STATUS, value: d.status }] : []),
+    ] },
+    { title: 'Workflow', icon: 'git-merge', fields: [
+      { name: 'depends_on', label: 'Dependencies', type: 'entities', filter: ['task'], value: d.depends_on || [], hint: 'Tasks that must complete first' },
+      [{ name: 'inputs', label: 'Inputs', type: 'textarea', rows: 2, value: d.inputs, placeholder: 'What does this task need?' },
+        { name: 'expected_outputs', label: 'Expected outputs', type: 'textarea', rows: 2, value: d.expected_outputs, placeholder: 'What will this task produce?' }],
+      [{ name: 'related_question_id', label: 'Related question', type: 'entity', filter: ['question'], value: d.related_question_id },
+        { name: 'related_experiment_id', label: 'Related experiment', type: 'entity', filter: ['experiment'], value: d.related_experiment_id }],
+    ] },
+    { title: 'Quality', icon: 'checklist', fields: [
+      { name: 'acceptance_criteria', label: 'Acceptance criteria', type: 'textarea', rows: 2, value: d.acceptance_criteria, placeholder: 'How do we know this task is done correctly?' },
+      { name: 'verification', label: 'Verification approach', type: 'textarea', rows: 2, value: d.verification, placeholder: 'How should we verify the outputs?' },
+      { name: 'checks', label: 'Checks (one per line — they gate completion)', type: 'textarea', rows: 3, mono: true, value: (d.checks_desc || checkLines(d.checks)).join('\n'),
+        placeholder: 'cmd: pytest -q\nfile: outputs/fig3.png\nmetric: EXP-002:rmse <= 0.05', hint: 'cmd: … · file: … · metric: [EXP-…:]name <= value' },
+      { name: 'skills', label: 'Skills to load', type: 'list', value: d.skills || [], placeholder: 'e.g. ponytail, nv-segment-ct', hint: 'comma-separated project skill names' },
+      ...(edit ? [
+        { name: 'result', label: 'Result', type: 'textarea', rows: 2, value: d.result },
+        { name: 'blockers', label: 'Blockers', type: 'textarea', rows: 2, value: d.blockers },
+        { name: 'notes', label: 'Notes', type: 'textarea', rows: 2, value: d.notes },
+      ] : []),
+    ] },
+  ];
+}
+
+/** Stored checks → the one-per-line text the form shows (`metric: name <= 0.05` style, same as describe_check). */
+function checkLines(checks: any[] | undefined): string[] {
+  return (checks || []).map((c: any) => typeof c === 'string' ? c : c.type === 'command' ? `cmd: ${c.run}` : c.type === 'file' ? `file: ${c.path}`
+    : `metric: ${c.target ? c.target + ':' : ''}${c.name} ${c.op} ${c.value}`);
+}
+
+/** Unset type/role/links are sent as null (cleared), never as ''. Checks: one per line, `metric: a <= b` spacing allowed. */
+function taskValues(v: any): any {
+  const checks = typeof v.checks === 'string' ? v.checks.split('\n').map((x: string) => x.trim()).filter(Boolean)
+    .map((x: string) => x.replace(/^metric:\s*(.+)$/i, (_m: string, rest: string) => 'metric:' + rest.replace(/\s+/g, ''))) : v.checks;
+  return {
+    ...v,
+    checks: checks || [],
+    skills: v.skills || [],
+    task_type: v.task_type || null,
+    assigned_role: v.assigned_role || null,
+    related_question_id: v.related_question_id || null,
+    related_experiment_id: v.related_experiment_id || null,
+    depends_on: v.depends_on || [],
+  };
+}
+
 function blank(v: any): any {
   const out: any = {};
   for (const [k, x] of Object.entries(v)) out[k] = x === null && k !== 'planned_runs' ? '' : x;

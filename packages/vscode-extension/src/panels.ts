@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { Model } from './model';
-import { renderArtifact, renderCheckpoint, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
+import { renderArtifact, renderCheckpoint, renderCompare, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
 import { FormSpec, renderForm } from './render/form';
-import { renderHome } from './render/home';
-import { renderOverview, renderResume } from './render/resume';
+import { renderHome, renderOverviewHome } from './render/home';
+import { renderResume } from './render/resume';
 import { esc, nonce } from './util';
 
 const TITLES: Record<string, string> = {
@@ -38,7 +38,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'resume' | 'form';
+  kind: 'entity' | 'resume' | 'form' | 'compare';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -80,6 +80,7 @@ export class Panels implements vscode.Disposable {
       }
       if (kind === 'resume') this.renderResume(ep);
       else if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
+      else if (kind === 'compare') this.renderComparison(ep).catch(() => undefined);
     });
     panel.webview.onDidReceiveMessage((m) => this.onMessage(ep, m));
     return ep;
@@ -106,6 +107,22 @@ export class Panels implements vscode.Disposable {
     await this.renderEntity(ep);
   }
 
+  async openCompare(a: string, b: string) {
+    const ep = this.create(`cmp:${a}:${b}`, `${a} ↔ ${b}`, 'diff', 'compare');
+    if (!ep.panel.webview.html) ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Comparing ${esc(a)} and ${esc(b)}…</div></div>`);
+    await this.renderComparison(ep);
+  }
+
+  private async renderComparison(ep: EntityPanel) {
+    const [, a, b] = ep.id.split(':');
+    try {
+      const d = await this.model.client.request('compare_runs', { a, b });
+      this.post(ep, renderCompare(d, this.rctx(ep)));
+    } catch (e: any) {
+      this.post(ep, `<div class="page"><div class="banner" style="--c:var(--red)"><i class="codicon codicon-error"></i><div class="grow">${esc(e.message)}</div></div></div>`);
+    }
+  }
+
   openForm(key: string, spec: FormSpec, handler: Handler) {
     const ep = this.create('f:' + key, spec.title, 'edit', 'form');
     ep.handler = handler;
@@ -123,6 +140,7 @@ export class Panels implements vscode.Disposable {
     for (const ep of this.panels.values()) {
       if (ep.kind === 'resume') this.renderResume(ep);
       else if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
+      else if (ep.kind === 'compare' && ep.panel.visible) this.renderComparison(ep).catch(() => undefined);
     }
   }
 
@@ -137,6 +155,7 @@ export class Panels implements vscode.Disposable {
     // Try new Research Home first, fall back to legacy Resume if home endpoint fails
     try {
       const home = await this.model.client.request('home');
+      this.model.resume = home;
       ep.panel.title = 'Research Home · ' + (home.project?.name || '');
       const ctx = this.rctx(ep);
       this.post(ep, renderHome(home, { uri: ctx.uri }));
@@ -355,7 +374,7 @@ export class OverviewView implements vscode.WebviewViewProvider {
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
     view.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.ctx.extensionUri, 'media')] };
-    view.webview.html = shell(view.webview, this.ctx.extensionUri, renderOverview(this.model.resume, this.model.error), { sidebar: true });
+    view.webview.html = shell(view.webview, this.ctx.extensionUri, renderOverviewHome(this.model.resume, this.model.error), { sidebar: true });
     view.webview.onDidReceiveMessage(async (m) => {
       try {
         if (m.t === 'open') await this.panels.openEntity(m.id, m.side);
@@ -369,6 +388,6 @@ export class OverviewView implements vscode.WebviewViewProvider {
   }
   render() {
     if (!this.view) return;
-    this.view.webview.postMessage({ t: 'render', html: renderOverview(this.model.resume, this.model.error) });
+    this.view.webview.postMessage({ t: 'render', html: renderOverviewHome(this.model.resume, this.model.error) });
   }
 }

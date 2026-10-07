@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional
 from . import __version__
 from . import context as C
 from . import plans as P
+from . import skills as SK
 from . import runs as R
 from . import services as S
 from . import views as V
@@ -104,7 +105,7 @@ class Server:
             "decisions": p.list("decision", order="date DESC, id DESC"),
             "checkpoints": p.list("checkpoint", order="created_at DESC, id DESC"),
             "notes": S.list_notes(p), "artifacts": arts,
-            "skills": S.list_skills(p),
+            "skills": SK.list_skills(p),
             "agent": {k: S.list_agent_files(p, k) for k in ("context", "prompts", "templates")},
             "needs_synthesis": [e["id"] for e in S.experiments_needing_synthesis(p)],
             "plans": plans,
@@ -231,6 +232,19 @@ class Server:
     def m_write_context(self) -> Dict[str, Any]:
         return {"path": C.write_current_md(self.project())}
 
+    def m_install_bin(self, force: bool = False) -> Dict[str, Any]:
+        from . import localbin
+        r = localbin.install(self.root, force=force)
+        # one-time migration: refresh the managed AGENTS.md block so agents learn about .research/bin/research
+        path = os.path.join(self.root, "AGENTS.md")
+        try:
+            text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
+            if "<!-- research:begin" in text and ".research/bin/research" not in text:
+                r["agents_md"] = self.project(sync=False).write_agents_md()
+        except OSError:
+            pass
+        return r
+
     def m_agents_md(self) -> Dict[str, Any]:
         return {"path": self.project(sync=False).write_agents_md()}
 
@@ -256,12 +270,80 @@ class Server:
     def m_get_task(self, id: str) -> Dict[str, Any]:
         return P.get_task_with_deps(self.project(), id)
 
+    def m_task_context(self, id: str) -> Dict[str, Any]:
+        return P.task_context(self.project(), id)
+
+    def m_task_brief(self, id: str) -> str:
+        """The task context as Markdown (what an agent reads)."""
+        from . import agents as AG
+        return AG.task_brief_md(P.task_context(self.project(), id))
+
     def m_next_task(self, plan_id: Optional[str] = None) -> Any:
         """Get the next ready task (dependencies satisfied, status=todo)."""
         return P.get_next_ready_task(self.project(), plan_id)
 
-    def m_start_task(self, id: str, assigned_role: Optional[str] = None) -> Dict[str, Any]:
-        return P.start_task(self.project(), id, assigned_role)
+    def m_start_task(self, id: str, assigned_role: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
+        return P.start_task(self.project(), id, assigned_role, force)
+
+    def m_release_task(self, id: str, note: Optional[str] = None) -> Dict[str, Any]:
+        return P.release_task(self.project(), id, note)
+
+    def m_task_note(self, id: str, text: str) -> Dict[str, Any]:
+        return P.add_task_note(self.project(), id, text)
+
+    def m_verify_task(self, id: str) -> Dict[str, Any]:
+        from . import verification as VF
+        return VF.verify_task(self.project(), id)
+
+    def m_review_finding(self, id: str, verdict: str, notes: Optional[str] = None,
+                         confidence: Optional[str] = None) -> Dict[str, Any]:
+        from . import verification as VF
+        return VF.review_finding(self.project(), id, verdict, notes, confidence)
+
+    # search / compare / report ------------------------------------------------------------
+    def m_search(self, query: str, type: Any = None, limit: int = 30) -> Any:
+        from .search import search
+        return search(self.project(), query, type, limit)
+
+    def m_compare_runs(self, a: str, b: str) -> Dict[str, Any]:
+        from . import compare as CMP
+        return CMP.compare_runs(self.project(), a, b)
+
+    def m_report(self, scope: Optional[str] = None, fmt: str = "both") -> Dict[str, Any]:
+        from . import report as RP
+        return RP.write_report(self.project(), scope, fmt)
+
+    # agents ------------------------------------------------------------------------------------
+    def m_agents(self) -> Dict[str, Any]:
+        from . import agents as AG
+        return AG.list_profiles(self.project(sync=False))
+
+    def m_dispatch(self, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
+                   profile: Optional[str] = None, model: Optional[str] = None,
+                   instructions: Optional[str] = None) -> Dict[str, Any]:
+        from . import agents as AG
+        return AG.dispatch(self.project(), role, target, objective, profile, model, instructions)
+
+    def m_mcp_install(self, clients: Any = None) -> Dict[str, Any]:
+        from . import mcp as MCP
+        return MCP.install(self.project(sync=False).root, clients)
+
+    # skills ------------------------------------------------------------------------------------
+    def m_skills_add(self, source: str, only: Any = None, force: bool = False, always: Optional[bool] = None,
+                     applies_to: Any = None, list_only: bool = False) -> Dict[str, Any]:
+        return SK.add_skills(self.project(), source, only, force, always, applies_to, list_only=list_only)
+
+    def m_skills_remove(self, name: str) -> Dict[str, Any]:
+        return SK.remove_skill(self.project(), name)
+
+    def m_skills_update(self, names: Any = None) -> Dict[str, Any]:
+        return SK.update_skills(self.project(), names)
+
+    def m_skills_set(self, name: str, always: Optional[bool] = None, applies_to: Any = None) -> Dict[str, Any]:
+        return SK.set_skill(self.project(), name, always, applies_to)
+
+    def m_skills_link(self) -> Dict[str, Any]:
+        return SK.link_skills(self.project(sync=False))
 
     def m_complete_task(self, id: str, result: Optional[str] = None,
                         completed_by: Optional[str] = None, artifacts: Any = None) -> Dict[str, Any]:
@@ -274,7 +356,8 @@ class Server:
 MUTATING = {"create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
-            "start_task", "complete_task", "block_task"}
+            "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
+            "review_finding", "report", "dispatch", "skills_add", "skills_remove", "skills_update", "skills_set"}
 
 
 def serve(root: str, stdin=None, stdout=None) -> None:

@@ -54,8 +54,8 @@ export class CoreClient implements vscode.Disposable {
       this.python = python;
       const env = { ...process.env, PYTHONPATH: [CoreClient.pythonPathEnv, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter), PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' };
       // UI actions are the human's, even when VS Code itself was launched from an agent's shell.
-      delete (env as any).CLAUDECODE;
-      delete (env as any).RESEARCH_AGENT;
+      for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
+        'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE']) delete (env as any)[k];
       this.out.appendLine(`[core] starting ${python} -m research.rpc --root ${this.root}`);
       let proc: cp.ChildProcessWithoutNullStreams;
       try {

@@ -58,7 +58,7 @@ with sync_playwright() as p:
     time.sleep(1)
     pg.screenshot(path=f"{OUT}/10_sidebar.png")
     ok("sidebar shows tree items", pg.locator('.monaco-list-row:has-text("EXP-001")').count() > 0)
-    ok("overview webview rendered", frame_with(pg, "text=Resume Project") is not None)
+    ok("overview webview rendered", frame_with(pg, "text=Open Research Home") is not None)
 
     cmd(pg, "Research: New Question")
     time.sleep(3)

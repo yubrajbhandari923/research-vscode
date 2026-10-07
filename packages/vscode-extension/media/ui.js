@@ -21,8 +21,15 @@
   // ------------------------------------------------------------------ click delegation
   document.addEventListener('click', (ev) => {
     const menuBtn = ev.target.closest('[data-menu]');
-    $$('.menu .pop').forEach((p) => { if (!menuBtn || p !== menuBtn.nextElementSibling) p.classList.add('hidden'); });
-    if (menuBtn) { menuBtn.nextElementSibling.classList.toggle('hidden'); ev.preventDefault(); return; }
+    $$('.menu .pop').forEach((p) => { if (!menuBtn || p !== menuBtn.nextElementSibling) closeMenu(p); });
+    if (menuBtn) {
+      const pop = menuBtn.nextElementSibling;
+      const open = pop.classList.toggle('hidden') === false;
+      menuBtn.setAttribute('aria-expanded', String(open));
+      if (open) { const r = menuBtn.getBoundingClientRect(); pop.style.left = r.right < 230 ? '0' : ''; pop.style.right = r.right < 230 ? 'auto' : ''; $('button', pop)?.focus(); }
+      ev.preventDefault(); return;
+    }
+    if (ev.target.closest('summary')) return; // native disclosure toggle
 
     const cmd = ev.target.closest('[data-cmd]');
     if (cmd) {
@@ -43,8 +50,17 @@
     }
     if (ev.target.closest('a[href]')) return; // external links handled by VS Code
   });
+  function closeMenu(p) { p.classList.add('hidden'); p.previousElementSibling?.setAttribute('aria-expanded', 'false'); }
   document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && ev.target.classList?.contains('item')) ev.target.click();
+    const t = ev.target;
+    if ((ev.key === 'Enter' || ev.key === ' ') && t.matches?.('[tabindex][data-open], [tabindex][data-cmd], [tabindex][data-file]') && !t.matches('button, a, summary')) { ev.preventDefault(); t.click(); return; }
+    const pop = t.closest?.('.menu .pop');
+    if (ev.key === 'Escape') { $$('.menu .pop:not(.hidden)').forEach((p) => { closeMenu(p); p.previousElementSibling?.focus(); }); }
+    if (pop && (ev.key === 'ArrowDown' || ev.key === 'ArrowUp')) {
+      ev.preventDefault();
+      const bs = $$('button', pop); const i = bs.indexOf(t);
+      bs[(i + (ev.key === 'ArrowDown' ? 1 : -1) + bs.length) % bs.length]?.focus();
+    }
     if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') { const f = $('#form'); if (f) { ev.preventDefault(); submit(f); } }
   });
 
@@ -53,8 +69,11 @@
     const m = ev.data;
     if (m.t === 'render') {
       const y = window.scrollY;
-      const openMenus = [];
+      // keep disclosure state across live re-renders
+      const opened = new Set($$('details[data-key]').map((d) => (d.open ? d.dataset.key : '')).filter(Boolean));
+      const closed = new Set($$('details[data-key]').map((d) => (!d.open ? d.dataset.key : '')).filter(Boolean));
       app.innerHTML = m.html;
+      $$('details[data-key]').forEach((d) => { if (opened.has(d.dataset.key)) d.open = true; else if (closed.has(d.dataset.key)) d.open = false; });
       if (m.index) INDEX = m.index;
       window.scrollTo(0, y);
       initForms();

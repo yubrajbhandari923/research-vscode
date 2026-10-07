@@ -65,10 +65,10 @@
         {
           "type": "webview",
           "id": "research.overview",
-          "name": "Overview",
+          "name": "Focus",
           "icon": "media/research.svg",
           "when": "research.initialized",
-          "initialSize": 3
+          "initialSize": 4
         },
         {
           "id": "research.plans",
@@ -78,8 +78,8 @@
           "initialSize": 2
         },
         {
-          "id": "research.questions",
-          "name": "Questions",
+          "id": "research.findings",
+          "name": "Findings",
           "icon": "media/research.svg",
           "when": "research.initialized",
           "initialSize": 2
@@ -92,11 +92,11 @@
           "initialSize": 2
         },
         {
-          "id": "research.findings",
-          "name": "Findings",
+          "id": "research.questions",
+          "name": "Questions",
           "icon": "media/research.svg",
           "when": "research.initialized",
-          "initialSize": 2
+          "visibility": "collapsed"
         },
         {
           "id": "research.decisions",
@@ -156,9 +156,9 @@
       },
       {
         "command": "research.resume",
-        "title": "Resume Project",
+        "title": "Open Research Home",
         "category": "Research",
-        "icon": "$(history)"
+        "icon": "$(home)"
       },
       {
         "command": "research.refresh",
@@ -306,7 +306,7 @@
       },
       {
         "command": "research.open",
-        "title": "Open Details",
+        "title": "Open Item…",
         "category": "Research",
         "icon": "$(go-to-file)"
       },
@@ -429,6 +429,102 @@
         "title": "Block Task",
         "category": "Research",
         "icon": "$(error)"
+      },
+      {
+        "command": "research.dispatch",
+        "title": "Dispatch to Agent…",
+        "category": "Research",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "research.plan.withAgent",
+        "title": "Plan Objective with Agent…",
+        "category": "Research",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "research.search",
+        "title": "Search Research…",
+        "category": "Research",
+        "icon": "$(search)"
+      },
+      {
+        "command": "research.report",
+        "title": "Export Research Report…",
+        "category": "Research",
+        "icon": "$(output)"
+      },
+      {
+        "command": "research.task.brief",
+        "title": "Show Agent Brief",
+        "category": "Research",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "research.task.verify",
+        "title": "Verify Task (Run Checks)",
+        "category": "Research",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "research.task.note",
+        "title": "Add Progress Note…",
+        "category": "Research",
+        "icon": "$(comment)"
+      },
+      {
+        "command": "research.task.release",
+        "title": "Release Task",
+        "category": "Research",
+        "icon": "$(debug-step-back)"
+      },
+      {
+        "command": "research.finding.review",
+        "title": "Review Finding…",
+        "category": "Research",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "research.run.compare",
+        "title": "Compare Runs…",
+        "category": "Research",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "research.skill.import",
+        "title": "Import Skills…",
+        "category": "Research",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "research.skill.remove",
+        "title": "Remove Skill",
+        "category": "Research",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "research.skill.update",
+        "title": "Update Skill from Source",
+        "category": "Research",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "research.skill.toggleAlways",
+        "title": "Toggle Always-On",
+        "category": "Research",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "research.skill.link",
+        "title": "Expose Skills to Agents (.claude/skills, .agents/skills)",
+        "category": "Research",
+        "icon": "$(link)"
+      },
+      {
+        "command": "research.mcp.install",
+        "title": "Register MCP Server for Agents…",
+        "category": "Research",
+        "icon": "$(plug)"
       }
     ],
     "menus": {
@@ -455,7 +551,7 @@
         },
         {
           "command": "research.open",
-          "when": "false"
+          "when": "research.initialized"
         },
         {
           "command": "research.openFile",
@@ -616,6 +712,70 @@
         {
           "command": "research.task.block",
           "when": "false"
+        },
+        {
+          "command": "research.task.brief",
+          "when": "false"
+        },
+        {
+          "command": "research.task.verify",
+          "when": "false"
+        },
+        {
+          "command": "research.task.note",
+          "when": "false"
+        },
+        {
+          "command": "research.task.release",
+          "when": "false"
+        },
+        {
+          "command": "research.finding.review",
+          "when": "false"
+        },
+        {
+          "command": "research.dispatch",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.withAgent",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.search",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.report",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.run.compare",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.import",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.remove",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.update",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.toggleAlways",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.skill.link",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.mcp.install",
+          "when": "research.initialized"
         }
       ],
       "view/title": [
@@ -698,6 +858,26 @@
           "command": "research.showOutput",
           "when": "view =~ /^research\\./",
           "group": "zz@3"
+        },
+        {
+          "command": "research.search",
+          "when": "view == research.overview",
+          "group": "navigation@0"
+        },
+        {
+          "command": "research.plan.withAgent",
+          "when": "view == research.plans",
+          "group": "navigation@1"
+        },
+        {
+          "command": "research.skill.import",
+          "when": "view == research.agent",
+          "group": "navigation@1"
+        },
+        {
+          "command": "research.mcp.install",
+          "when": "view == research.agent",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -893,13 +1073,73 @@
         },
         {
           "command": "research.task.complete",
-          "when": "viewItem == task.running",
+          "when": "viewItem =~ /^task\\.(running|verify)$/",
           "group": "inline@1"
         },
         {
           "command": "research.task.block",
           "when": "viewItem == task.running",
           "group": "1_act@2"
+        },
+        {
+          "command": "research.dispatch",
+          "when": "viewItem == task",
+          "group": "inline@0"
+        },
+        {
+          "command": "research.dispatch",
+          "when": "viewItem =~ /^(task|plan|finding|experiment)/",
+          "group": "0_agent@1"
+        },
+        {
+          "command": "research.task.brief",
+          "when": "viewItem =~ /^task/",
+          "group": "0_agent@2"
+        },
+        {
+          "command": "research.task.verify",
+          "when": "viewItem =~ /^task/",
+          "group": "1_act@5"
+        },
+        {
+          "command": "research.task.note",
+          "when": "viewItem =~ /^task/",
+          "group": "1_act@6"
+        },
+        {
+          "command": "research.task.release",
+          "when": "viewItem == task.running",
+          "group": "1_act@3"
+        },
+        {
+          "command": "research.finding.review",
+          "when": "viewItem == finding",
+          "group": "1_act@0"
+        },
+        {
+          "command": "research.run.compare",
+          "when": "viewItem =~ /^run/",
+          "group": "1_act@9"
+        },
+        {
+          "command": "research.report",
+          "when": "viewItem =~ /^(question|plan|experiment)/",
+          "group": "9_copy@9"
+        },
+        {
+          "command": "research.skill.toggleAlways",
+          "when": "viewItem =~ /^skill/",
+          "group": "1_act@2"
+        },
+        {
+          "command": "research.skill.update",
+          "when": "viewItem == skill.imported",
+          "group": "1_act@3"
+        },
+        {
+          "command": "research.skill.remove",
+          "when": "viewItem =~ /^skill/",
+          "group": "2_danger@1"
         }
       ],
       "explorer/context": [
@@ -929,6 +1169,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Put a `research` command on `PATH` in VS Code terminals (so you and coding agents can use the CLI without installing it)."
+        },
+        "research.projectCli": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Keep a project-local CLI at `.research/bin/research` (gitignored, refreshed automatically). Agents whose shells don't get VS Code's terminal `PATH` — e.g. the Claude Code extension's Bash tool — can run it without installing anything."
         },
         "research.pollIntervalSeconds": {
           "type": "number",

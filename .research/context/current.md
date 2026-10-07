@@ -1,13 +1,13 @@
 # Research context — research-vscode
 
-> Generated from .research/ by `research context`. Do not edit; it is overwritten.
-> Generated 2026-10-05T22:02:35-04:00. Details: `research show <ID>`, `research resume`.
+> Generated from .research/ by `research current`. Do not edit; it is overwritten. ~308 tokens.
+> Generated 2026-10-07T17:21:58-04:00. Details: `research show <ID>` · `research search "…"` · `research task context T-…`.
 
 ## Goal
 
 _(not set — `research project set --goal …`)_
 
-Git: `main` @ `cf569d1bfd` (uncommitted changes)
+Git: `main` @ `f6db70cc28` (uncommitted changes)
 
 ## Latest checkpoint
 
@@ -33,6 +33,10 @@ _none_
 
 _none_
 
+## Active plans
+
+- PLAN-001 Reproduce Paper X — 0/0 tasks done · objective: Reproduce Table 1
+
 ## Active decisions
 
 _none_
@@ -41,9 +45,15 @@ _none_
 
 _none_
 
+## Project skills
+
+- 4 more skills: `research skills list`, load one with `research skill show NAME`
+
 ## Agent policy
 
 - max runs without synthesis: 5
 - max failed runs without review: 3
 - synthesis required before new experiment: True
+- findings: agents create them preliminary; an independent review (`research finding review`) makes them supported
+- tasks: `research task done` runs the task's checks; failures block completion
 - Protocol: see AGENTS.md

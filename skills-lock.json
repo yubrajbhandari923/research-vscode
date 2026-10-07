@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "skills": {
+    "frontend-design": {
+      "source": "anthropics/claude-code",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "plugins/frontend-design/skills/frontend-design/SKILL.md",
+      "computedHash": "b8c8329ad9b98fa57f4a279e37bdf4a0d55743140e54bb7da3e340d754d75b43"
+    },
+    "ui-designer": {
+      "source": "Gustavosilveira23/claude-design-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ui-designer/SKILL.md",
+      "computedHash": "ee8c2ac347c52a7aa1e92949ed50418d9f64130ca4f4c371d7e3119241144427"
+    },
+    "ux-designer": {
+      "source": "Gustavosilveira23/claude-design-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ux-designer/SKILL.md",
+      "computedHash": "a7aeeaec52782ebd28ea00fd28484a3e634bb9f7bcccc7137d260bd91de2f13b"
+    },
+    "web-design-guidelines": {
+      "source": "vercel-labs/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/web-design-guidelines/SKILL.md",
+      "computedHash": "a6a44d5498f7e8f68289902f3dedfc6f38ae0cee1e96527c80724cf27f727c2a"
+    }
+  }
+}

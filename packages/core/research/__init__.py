@@ -49,7 +49,9 @@ __all__ = [
     # Phase 0: Plans and Tasks
     "create_plan", "update_plan", "list_plans", "get_plan",
     "create_task", "update_task", "list_tasks", "get_task", "get_next_ready_task",
-    "start_task", "complete_task", "block_task",
+    "start_task", "complete_task", "block_task", "task_context",
+    "release_task", "add_task_note", "verify_task", "review_finding", "search", "compare_runs", "sweep_run",
+    "write_report", "dispatch", "list_skills_full", "add_skills", "remove_skill", "update_skills", "link_skills",
 ]
 
 
@@ -213,6 +215,30 @@ start_task = _with_project(_plans.start_task)
 complete_task = _with_project(_plans.complete_task)
 block_task = _with_project(_plans.block_task)
 get_next_ready_task = _with_project(_plans.get_next_ready_task)
+task_context = _with_project(_plans.task_context)
+release_task = _with_project(_plans.release_task)
+add_task_note = _with_project(_plans.add_task_note)
+
+# ------------------------------------------------------------------------------------ verification, retrieval, agents
+from . import agents as _agents  # noqa: E402
+from . import compare as _compare  # noqa: E402
+from . import report as _report  # noqa: E402
+from . import search as _search  # noqa: E402
+from . import skills as _skills  # noqa: E402
+from . import verification as _verification  # noqa: E402
+
+verify_task = _with_project(_verification.verify_task)
+review_finding = _with_project(_verification.review_finding)
+search = _with_project(_search.search)
+compare_runs = _with_project(_compare.compare_runs)
+sweep_run = _with_project(_runs.sweep_run)
+write_report = _with_project(_report.write_report)
+dispatch = _with_project(_agents.dispatch)
+list_skills_full = _with_project(_skills.list_skills)
+add_skills = _with_project(_skills.add_skills)
+remove_skill = _with_project(_skills.remove_skill)
+update_skills = _with_project(_skills.update_skills)
+link_skills = _with_project(_skills.link_skills)
 
 
 @_with_project

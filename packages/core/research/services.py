@@ -317,6 +317,8 @@ def create_finding(p: Project, title: str, statement: Optional[str] = None, kind
         raise ResearchError(f"kind must be one of {FINDING_KINDS}")
     if confidence and confidence not in CONFIDENCE:
         raise ResearchError(f"confidence must be one of {CONFIDENCE}")
+    from .verification import check_finding_status
+    check_finding_status(p, _check_status("finding", status))
     links = {"supports": _ids(p, supports), "contradicts": _ids(p, contradicts),
              "related": _ids(p, related), "questions": _ids(p, questions, "Q")}
     return p.insert_entity("finding", {
@@ -333,6 +335,9 @@ def update_finding(p: Project, fid: str, supports: Any = None, contradicts: Any 
     ch = {k: v for k, v in fields.items() if v is not None}
     if "status" in ch:
         ch["status"] = _check_status("finding", ch["status"])
+        if ch["status"] != cur["status"]:
+            from .verification import check_finding_status
+            check_finding_status(p, ch["status"])
     if ch.get("confidence") and ch["confidence"] not in CONFIDENCE:
         raise ResearchError(f"confidence must be one of {CONFIDENCE}")
     if "tags" in ch:
@@ -402,11 +407,21 @@ def set_status(p: Project, id_: str, status: str, reason: Optional[str] = None) 
     if t in ("question", "finding", "decision"):
         s = _check_status(t, status)
         cur = p.get(t, id_)
+        if t == "finding" and s != cur["status"]:
+            from .verification import check_finding_status
+            check_finding_status(p, s)
         return p.update_entity(t, id_, {"status": s}, action="status",
                                summary=f"{id_}: {cur['status']} → {s}" + (f" ({reason})" if reason else ""))
     if t == "run":
         from .runs import set_run_status
         return set_run_status(p, id_, status, reason)
+    if t in ("plan", "task"):
+        from . import plans as _plans
+        s = _check_status(t, status)
+        if t == "plan":
+            return _plans.update_plan(p, id_, status=s)
+        extra = {"blockers": reason} if s == "blocked" and reason else {}
+        return _plans.update_task(p, id_, status=s, **extra)
     raise ResearchError(f"{t} has no status")
 
 

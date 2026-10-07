@@ -20,7 +20,7 @@ from research import services as S
 from research import views as V
 from research.schema import CONFIDENCE, FINDING_KINDS, STATUSES, TASK_TYPES, TASK_ROLES, normalize_id
 from research.store import Project
-from research.util import ResearchError, detect_author, human_size, parse_kv
+from research.util import NotFound, ResearchError, detect_author, human_size, parse_kv
 
 # ----------------------------------------------------------------------------- output helpers
 
@@ -80,9 +80,9 @@ def kv(label: str, value: Any, width: int = 16) -> None:
         value = ", ".join(f"{k}={v}" for k, v in value.items())
     text = str(value).rstrip()
     lines = text.splitlines() or [""]
-    print(f"  {dim(label.ljust(width))}{lines[0]}")
+    print(f"  {dim(label.ljust(width - 1))} {lines[0]}")  # always at least one space after the label
     for l in lines[1:]:
-        print(" " * (width + 2) + l)
+        print(" " * (width + 2 + max(0, len(label) - width + 1)) + l)
 
 
 def fmt_dur(sec: Optional[float]) -> str:
@@ -346,6 +346,12 @@ def print_task(task: Dict[str, Any]) -> None:
         kv("question", task.get("related_question_id"))
     if task.get("related_experiment_id"):
         kv("experiment", task.get("related_experiment_id"))
+    if task.get("claimed_by"):
+        kv("claimed by", f"{task['claimed_by']} · {task.get('claimed_at') or ''}")
+    if task.get("checks"):
+        from research.verification import describe_check, parse_check
+        kv("checks", "\n".join(describe_check(parse_check(c)) for c in task["checks"]))
+    kv("skills", task.get("skills"))
     kv("result", task.get("result"))
     kv("blockers", task.get("blockers"))
     kv("notes", task.get("notes"))
@@ -418,6 +424,13 @@ def cmd_context(a, p) -> int:
         print(open(path, encoding="utf-8").read())
     else:
         print(green("✓ ") + p.rel(path))
+    return 0
+
+
+def cmd_current(a, p) -> int:
+    path = C.write_current_md(p)
+    text = open(path, encoding="utf-8").read()
+    out_json({"path": p.rel(path), "markdown": text}) if a.json else print(text)
     return 0
 
 
@@ -789,8 +802,10 @@ def cmd_checkpoint_create(a, p) -> int:
     c = C.create_checkpoint(p, title=a.title, goal=a.goal, understanding=a.understanding, baseline=a.baseline,
                             baseline_experiment=a.baseline_experiment, findings=a.findings, failures=a.failures,
                             questions=a.questions, experiments=a.experiments, current_problem=a.problem,
-                            next_experiment=a.next, notes=a.notes, use_draft=not a.no_draft)
-    _done(a, c, msg=f"{c['id']}  {c['title']}  → {c['path']}")
+                            next_experiment=a.next, notes=a.notes, use_draft=not a.no_draft,
+                            commit=True if a.commit else None)
+    _done(a, c, msg=f"{c['id']}  {c['title']}  → {c['path']}"
+          + (f"  (committed {c['snapshot_commit'][:10]})" if c.get("snapshot_commit") else ""))
     return 0
 
 
@@ -851,12 +866,23 @@ def cmd_note_link(a, p) -> int:
 
 # skills / agents
 def cmd_skills_list(a, p) -> int:
-    rows = S.list_skills(p)
+    from research import skills as SKL
+    rows = SKL.list_skills(p)
     if a.json:
         out_json(rows)
     else:
         for s in rows:
-            print(f"{bold(s['name'])}  {dim(s['path'])}\n    {s['description']}")
+            tags = ([green("always")] if s["always"] else []) + ([f"applies to {', '.join(s['applies_to'])}"] if s["applies_to"] else [])
+            src = dim(f" ← {s['source']}" + (f"@{s['ref'][:8]}" if s.get("ref") else "")) if s.get("source") else ""
+            print(f"{bold(s['name'])}  {dim(s['path'])}{src}" + (f"  {' · '.join(tags)}" if tags else ""))
+            print(f"    {s['description'][:200]}")
+    return 0
+
+
+def cmd_skills_show(a, p) -> int:
+    from research import skills as SKL
+    s = SKL.get_skill(p, a.name)
+    out_json(s) if a.json else print(s["markdown"])
     return 0
 
 
@@ -889,7 +915,7 @@ def cmd_rebuild(a, p) -> int:
 @mut
 def cmd_plan_create(a, p) -> int:
     plan = P.create_plan(p, a.title, objective=a.objective, status=a.status,
-                         root_question_id=a.question, success_criteria=a.success, context=a.context)
+                         root_question_id=a.question, success_criteria=a.success, context=a.context, skills=a.skill)
     _done(a, plan, msg=f"{plan['id']}  {plan['title']}  [{plan['status']}]")
     return 0
 
@@ -927,7 +953,7 @@ def cmd_plan_show(a, p) -> int:
 @mut
 def cmd_plan_update(a, p) -> int:
     plan = P.update_plan(p, a.id, title=a.title, objective=a.objective, status=a.status,
-                         root_question_id=a.question, success_criteria=a.success, context=a.context)
+                         root_question_id=a.question, success_criteria=a.success, context=a.context, skills=a.skill)
     _done(a, plan, msg=f"{plan['id']} updated")
     return 0
 
@@ -939,7 +965,7 @@ def cmd_task_create(a, p) -> int:
                          assigned_role=a.role, depends_on=a.depends, inputs=a.inputs,
                          expected_outputs=a.outputs, acceptance_criteria=a.acceptance,
                          verification=a.verification, related_question_id=a.question,
-                         related_experiment_id=a.experiment, notes=a.notes)
+                         related_experiment_id=a.experiment, notes=a.notes, skills=a.skill, checks=a.check)
     _done(a, task, msg=f"{task['id']}  {task['title']}  [{task['status']}]")
     return 0
 
@@ -995,6 +1021,10 @@ def cmd_task_update(a, p) -> int:
         kw["blockers"] = a.blockers
     if a.notes:
         kw["notes"] = a.notes
+    if a.check is not None:
+        kw["checks"] = [c for c in a.check if c]  # --check "" clears
+    if a.skill is not None:
+        kw["skills"] = [x for x in a.skill if x]
     task = P.update_task(p, a.id, **kw)
     _done(a, task, msg=f"{task['id']} updated")
     return 0
@@ -1002,7 +1032,7 @@ def cmd_task_update(a, p) -> int:
 
 @mut
 def cmd_task_start(a, p) -> int:
-    task = P.start_task(p, a.id, a.role)
+    task = P.start_task(p, a.id, a.role, force=a.force)
     _done(a, task, msg=f"{task['id']} → running")
     return 0
 
@@ -1021,6 +1051,54 @@ def cmd_task_block(a, p) -> int:
     return 0
 
 
+def print_task_context(c: Dict[str, Any]) -> None:
+    t = c["task"]
+    print(f"# {t['id']} · {t['title']}  [{st(t['status'])}]" + (green("  ✓ ready") if c["is_ready"] else ""))
+    kv("type", t.get("task_type"))
+    kv("role", t.get("assigned_role"))
+    if c["plan"]:
+        section(f"Plan {c['plan']['id']} · {c['plan']['title']}")
+        kv("objective", c["plan"].get("objective"))
+        kv("success", c["plan"].get("success_criteria"))
+        kv("context", c["plan"].get("context"))
+    section("Task")
+    for key, label in (("goal", "goal"), ("inputs", "inputs"), ("expected_outputs", "outputs"),
+                       ("acceptance_criteria", "acceptance"), ("verification", "verification"),
+                       ("result", "result"), ("blockers", "blockers"), ("notes", "notes")):
+        kv(label, t.get(key))
+    if c["dependencies"]:
+        section("Dependencies")
+        for d in c["dependencies"]:
+            print(f"  {green('✓') if d['status'] == 'done' else dim('○')} {d['id']}  {d['title']}  [{st(d['status'])}]")
+            if d.get("result"):
+                kv("result", d["result"], width=18)
+    if c["question"]:
+        section(f"Question {c['question']['id']} · {c['question']['title']}  [{st(c['question']['status'])}]")
+        kv("description", c["question"].get("description"))
+    e = c["experiment"]
+    if e:
+        s = e["state"]
+        section(f"Experiment {e['id']} · {e['title']}  [{st(e['status'])}]")
+        for key in ("hypothesis", "parameters", "success_criteria", "stop_conditions"):
+            kv(key.replace("_", " "), e.get(key))
+        kv("runs", f"{s['runs']} ({s['unsynthesized']} unsynthesized)"
+           + (red(" — run budget reached: synthesize first") if s["over_run_budget"] else ""))
+        if e.get("latest_synthesis"):
+            kv("last synthesis", e["latest_synthesis"].get("interpretation"))
+            kv("suggested next", e["latest_synthesis"].get("next_experiment"))
+    pol = c["policy"]
+    section("Rules")
+    print(f"  max runs without synthesis: {pol.get('max_runs_without_synthesis')} · "
+          f"max failed runs without review: {pol.get('max_failed_runs_without_review')}")
+    print(dim(f"  when finished: research task done {t['id']} -r \"…\"   ·   if stuck: research task block {t['id']} \"reason\""))
+
+
+def cmd_task_context(a, p) -> int:
+    c = P.task_context(p, a.id)
+    out_json(c) if a.json else print_task_context(c)
+    return 0
+
+
 def cmd_task_next(a, p) -> int:
     task = P.get_next_ready_task(p, a.plan)
     if not task:
@@ -1034,6 +1112,259 @@ def cmd_task_next(a, p) -> int:
     else:
         print(green("Next ready task:"))
         print_task(task)
+    return 0
+
+
+# ----------------------------------------------------------------------------- coordination / verification
+@mut
+def cmd_task_note(a, p) -> int:
+    n = P.add_task_note(p, a.id, " ".join(a.text))
+    _done(a, n, msg=f"{n['id']} note added")
+    return 0
+
+
+@mut
+def cmd_task_release(a, p) -> int:
+    t = P.release_task(p, a.id, a.note)
+    _done(a, t, msg=f"{t['id']} released → todo")
+    return 0
+
+
+def _print_verification(res: Dict[str, Any]) -> None:
+    for r in res["results"]:
+        print(f"  {green('✓') if r['ok'] else red('✗')} {r['check']}  {dim(r.get('detail') or '')}")
+        if not r["ok"] and r.get("output"):
+            for l in r["output"].strip().splitlines()[-8:]:
+                print(dim("      " + l))
+    print((green("passed") if res["passed"] else red("failed")) + dim(f"  {res['record']['id']} · task now [{res['task']['status']}]"))
+
+
+@mut
+def cmd_task_verify(a, p) -> int:
+    from research import verification as VF
+    res = VF.verify_task(p, a.id)
+    out_json(res) if a.json else _print_verification(res)
+    return 0 if res["passed"] else 1
+
+
+@mut
+def cmd_finding_review(a, p) -> int:
+    from research import verification as VF
+    r = VF.review_finding(p, a.id, a.verdict, a.notes, a.confidence)
+    _done(a, r, msg=f"{r['review']['id']} {a.verdict} → {r['finding']['id']} is now [{r['finding']['status']}]")
+    return 0
+
+
+# ----------------------------------------------------------------------------- search / compare / sweep / report
+def cmd_search(a, p) -> int:
+    from research.search import search
+    rows = search(p, " ".join(a.query), a.type, a.limit)
+    if a.json:
+        out_json(rows)
+        return 0
+    if not rows:
+        print(dim("no matches"))
+    for r in rows:
+        print(f"{bold(r['id'])}  {dim(r['type'])}  {r['title'] or ''}" + (f"  [{st(r['status'])}]" if r.get("status") else ""))
+        if r.get("snippet") and r["snippet"] != r["title"]:
+            print(dim("    " + r["snippet"]))
+    return 0
+
+
+def cmd_run_compare(a, p) -> int:
+    from research import compare as CMP
+    c = CMP.compare_runs(p, a.a, a.b)
+    if a.json:
+        out_json(c)
+        return 0
+    A_, B_ = c["a"]["id"], c["b"]["id"]
+    print(bold(f"{A_}  vs  {B_}") + dim(f"   {c['a']['experiment_id']} / {c['b']['experiment_id']}"))
+    def table(title, rows, cols):
+        if not rows:
+            return
+        section(title)
+        w = max(len(str(r["name"])) for r in rows) + 2
+        for r in rows:
+            line = f"  {str(r['name']).ljust(w)}{fmt_val(r['a'])!s:<16} {fmt_val(r['b'])!s:<16}"
+            if "delta" in r and r["delta"] is not None:
+                line += (green if r["delta"] < 0 else yellow)(f" Δ {r['delta']:+.4g}") + (dim(f" ({r['rel']:+.1%})") if r.get("rel") is not None else "")
+            elif "same" in r and not r["same"]:
+                line += yellow(" ≠")
+            print(line)
+    table("Parameters", c["parameters"], None)
+    table("Metrics", c["metrics"], None)
+    table("Run", [m for m in c["meta"] if not m["same"]], None)
+    if c["code_diff"]:
+        section("Code changes between the two commits")
+        print(c["code_diff"]["stat"].rstrip())
+    for side in ("a", "b"):
+        if c["uncommitted"][side]:
+            print(yellow(f"\n{c[side]['id']} ran with uncommitted changes (see its git.diff)"))
+    if c["artifacts"]:
+        section("Artifacts")
+        for x in c["artifacts"]:
+            mark = dim("identical") if x["same_hash"] else ("" if x["a"] and x["b"] else yellow("only in " + (A_ if x["a"] else B_)))
+            print(f"  {x['name']}  {dim(x['type'])}  {mark}")
+    return 0
+
+
+@mut
+def cmd_run_sweep(a, p) -> int:
+    grid = {}
+    for g in a.grid or []:
+        k, _, v = g.partition("=")
+        if not k or not v:
+            raise ResearchError(f"--grid expects name=v1,v2,… (got {g!r})")
+        grid[k.strip()] = [parse_kv([f"x={x}"])["x"] for x in v.split(",")]
+    opts = dict(partition=a.partition, account=a.account, time=a.time, gpus=a.gpus, mem=a.mem, cpus=a.cpus) if a.mode == "slurm" else {}
+    res = R.sweep_run(p, a.experiment, " ".join(_cmd_list(a)), grid or None, mode=a.mode, override=a.override,
+                      dry_run=a.dry_run, working_dir=a.cwd, tee=not a.json, **{k: v for k, v in opts.items() if v})
+    if a.json:
+        out_json(res)
+        return 0
+    for w in res["warnings"]:
+        print(yellow("⚠ " + w))
+    if a.dry_run:
+        for pt in res["points"]:
+            print(f"  {pt['label']}  {dim(pt['command'])}")
+        print(dim(f"{len(res['points'])} runs (dry run; nothing started)"))
+    else:
+        for r in res["runs"]:
+            print(f"  {r['id']}  [{st(r['status'])}]  {r.get('label') or ''}")
+    return 0
+
+
+def cmd_report(a, p) -> int:
+    from research import report as RP
+    r = RP.write_report(p, a.scope, a.format, a.out)
+    _done(a, r, msg=f"report: {', '.join(r['paths'])}")
+    return 0
+
+
+# ----------------------------------------------------------------------------- agents / dispatch / mcp
+def cmd_agents(a, p) -> int:
+    from research import agents as AG
+    d = AG.list_profiles(p)
+    if a.json:
+        out_json(d)
+        return 0
+    section("Profiles")
+    for x in d["profiles"]:
+        print(f"  {bold(x['name'])}  {x['command']}" + (dim(f" · model {x['model']}") if x.get("model") else "")
+              + ("" if x["available"] else red("  (not on PATH)")))
+    section("Roles")
+    for r, prof in d["roles"].items():
+        print(f"  {r.ljust(12)} → {prof}")
+    print(dim("\n  edit .research/config.yaml → agents to change"))
+    return 0
+
+
+def cmd_dispatch(a, p) -> int:
+    from research import agents as AG
+    target = getattr(a, "target", None)
+    d = AG.dispatch(p, getattr(a, "role", None), target, getattr(a, "objective", None), a.profile, a.agent_model,
+                    getattr(a, "instructions", None))
+    if a.json:
+        out_json(d)
+        return 0
+    print(green("✓ ") + f"{d['profile']}/{d['role']} brief → {d['brief']}", file=sys.stderr)
+    if a.print or not d["available"]:
+        if not d["available"]:
+            print(yellow(f"⚠ `{d['argv'][0]}` is not on PATH; run this where it is:"), file=sys.stderr)
+        print(d["shell"])
+        return 0
+    import subprocess
+    root = p.root
+    p.close()
+    return subprocess.call(d["argv"], cwd=root, env={**os.environ, **d["env"]})
+
+
+def cmd_bin(a, p) -> int:
+    from research import localbin
+    r = localbin.status(p.root) if a.action == "status" else localbin.install(p.root, force=a.force)
+    if a.json:
+        out_json(r)
+    elif a.action == "status":
+        print((green("✓ ") + r["path"]) if r["exists"] else f"not installed — run: research bin install")
+    else:
+        print(green("✓ ") + f"{os.path.relpath(r['path'], os.getcwd())} " + ("updated" if r["updated"] else "already up to date"))
+        print(dim("  any agent or shell in this project can run it without installing anything"))
+    return 0
+
+
+def cmd_mcp(a, p) -> int:
+    from research import mcp as MCP
+    if a.action == "install":
+        r = MCP.install(p.root, a.client)
+        if a.json:
+            out_json(r)
+        else:
+            for c, where in r["installed"].items():
+                print(green("✓ ") + f"{c}: {where}")
+            print(dim(f"  server command: {r['command']}"))
+        return 0
+    explicit = detect_author(a.agent, a.model, a.as_) if (a.agent or a.model or a.as_) else None
+    root = p.root
+    p.close()
+    MCP.serve(root, author=explicit)
+    return 0
+
+
+# ----------------------------------------------------------------------------- skills management
+@mut
+def cmd_skills_add(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.add_skills(p, a.source, a.only, a.force, True if a.always else None, a.applies_to, link=not a.no_link,
+                       list_only=a.list)
+    if a.json:
+        out_json(r)
+        return 0
+    if a.list:
+        for s_ in r["available"]:
+            print(f"  {bold(s_['name'])}  {dim(s_['subpath'] or '.')}\n    {s_['description'][:160]}")
+        print(dim(f"{len(r['available'])} skills; import some with --only NAME …"))
+        return 0
+    print(green("✓ ") + f"imported {', '.join(r['added'])}")
+    for where, rep_ in (r.get("links") or {}).items():
+        if rep_["skipped"]:
+            print(yellow(f"  {where}: left alone (not ours): {', '.join(rep_['skipped'])}"))
+    return 0
+
+
+@mut
+def cmd_skills_remove(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.remove_skill(p, a.name)
+    _done(a, r, msg=f"removed {r['removed']} (kept in {r['kept_at']})")
+    return 0
+
+
+@mut
+def cmd_skills_update(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.update_skills(p, a.names)
+    _done(a, r, msg="updated " + (", ".join(r["updated"]) or "nothing"))
+    return 0
+
+
+@mut
+def cmd_skills_set(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.set_skill(p, a.name, a.always, a.applies_to)
+    _done(a, r, msg=f"{r['name']}: always={r['always']}, applies_to={', '.join(r['applies_to']) or '—'}")
+    return 0
+
+
+def cmd_skills_link(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.link_skills(p, a.target)
+    if a.json:
+        out_json(r)
+        return 0
+    for where, rep_ in r.items():
+        print(green("✓ ") + f"{where}: {len(rep_['linked'])} linked"
+              + (yellow(f", left alone: {', '.join(rep_['skipped'])}") if rep_["skipped"] else "")
+              + (dim(f", removed stale: {', '.join(rep_['removed'])}") if rep_["removed"] else ""))
     return 0
 
 
@@ -1090,6 +1421,27 @@ def build_parser() -> argparse.ArgumentParser:
     add(sub, "resume", cmd_resume, "what were we doing? (latest checkpoint + current state)")
     x = add(sub, "context", cmd_context, "regenerate .research/context/current.md")
     x.add_argument("--print", action="store_true")
+    add(sub, "current", cmd_current, "print the current research state for agents (regenerates current.md)")
+    x = add(sub, "search", cmd_search, "search everything recorded: research search \"dataset prep\"")
+    x.add_argument("query", nargs="+")
+    x.add_argument("--type", action="append", help="limit to a type (finding, experiment, task, run, note, skill, …)")
+    x.add_argument("--limit", type=int, default=20)
+    x = add(sub, "report", cmd_report, "write a readable report (project, or one Q-/PLAN-/EXP-) to .research/reports/")
+    x.add_argument("scope", nargs="?")
+    x.add_argument("--format", choices=["md", "html", "both"], default="both")
+    x.add_argument("-o", "--out", help="output file (with --format md or html)")
+    x = add(sub, "dispatch", cmd_dispatch, "hand work to an agent CLI: research dispatch verifier F-003")
+    x.add_argument("role", choices=["planner", "implementer", "verifier", "analyst"])
+    x.add_argument("target", nargs="?", help="T-, F-, EXP-, PLAN- … id")
+    _dispatch_args(x)
+    add(sub, "agents", cmd_agents, "agent profiles and roles (config.yaml → agents)")
+    x = add(sub, "bin", cmd_bin, "project-local CLI at .research/bin/research (no install needed for agents)")
+    x.add_argument("action", nargs="?", choices=["install", "status"], default="install")
+    x.add_argument("--force", action="store_true", help="re-copy even if up to date")
+    x = add(sub, "mcp", cmd_mcp, "MCP server for agents (stdio); `research mcp install` registers it")
+    x.add_argument("action", nargs="?", choices=["serve", "install"], default="serve")
+    x.add_argument("--client", action="append", choices=["claude", "vscode", "cursor", "gemini", "codex"],
+                   help="with install: which clients (default: claude + vscode)")
     x = add(sub, "show", cmd_show, "show any object by id (Q-…, EXP-…, RUN-…, F-…, D-…, CP-…, A-…, note:…)")
     x.add_argument("id")
     x = add(sub, "mark", cmd_mark, "set status of any object: research mark Q-001 answered")
@@ -1240,6 +1592,20 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--tail", type=int)
     x.add_argument("-f", "--follow", action="store_true")
     add(g, "sync", cmd_sync, "refresh status of all active runs")
+    x = add(g, "compare", cmd_run_compare, "side by side: parameters, metrics, code, artifacts of two runs", aliases=["diff"])
+    x.add_argument("a")
+    x.add_argument("b")
+    x = add(g, "sweep", cmd_run_sweep, "one run per grid point: research run sweep EXP-1 --grid lr=1e-3,1e-4 -- python t.py --lr {lr}")
+    _run_args(x)
+    x.add_argument("--grid", action="append", metavar="NAME=V1,V2", help="default: the experiment's list parameters")
+    x.add_argument("--mode", choices=["local", "detach", "slurm"], default="local")
+    x.add_argument("--dry-run", action="store_true", help="show the runs without starting them")
+    x.add_argument("--partition", "-p")
+    x.add_argument("--account", "-A")
+    x.add_argument("--time", "-t")
+    x.add_argument("--cpus", "-c", type=int)
+    x.add_argument("--mem")
+    x.add_argument("--gpus", "-G")
 
     g = group("metric", "metrics", aliases=["m"])
     x = add(g, "add", cmd_metric_add, "log a metric value", aliases=["log"])
@@ -1278,6 +1644,11 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--title")
     _finding_args(x)
     x.add_argument("--add-supports", nargs="+")
+    x = add(g, "review", cmd_finding_review, "independent review: --verdict supported|contradicted|needs_work")
+    x.add_argument("id")
+    x.add_argument("--verdict", required=True, choices=["supported", "contradicted", "needs_work"])
+    x.add_argument("--notes", help="your reasoning")
+    x.add_argument("--confidence", choices=CONFIDENCE)
     x = add(g, "supersede", cmd_finding_supersede, "mark superseded (optionally by a newer finding)")
     x.add_argument("id")
     x.add_argument("--by")
@@ -1331,6 +1702,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = group("skills", "agent skills (.research/skills/)", aliases=["skill"])
     add(g, "list", cmd_skills_list, "list skills", aliases=["ls"])
+    x = add(g, "show", cmd_skills_show, "print a skill's SKILL.md")
+    x.add_argument("name")
+    x = add(g, "add", cmd_skills_add, "import skill(s) from a folder or git repo (URL, owner/repo, …/tree/main/skills/x)",
+            aliases=["import"])
+    x.add_argument("source")
+    x.add_argument("--only", nargs="+", metavar="NAME", help="import only these skills from a multi-skill repo")
+    x.add_argument("--list", action="store_true", help="show the skills in the source without importing")
+    x.add_argument("--force", action="store_true", help="replace existing skills (old copy kept in cache)")
+    x.add_argument("--always", action="store_true", help="always-on: listed for every agent session")
+    x.add_argument("--applies-to", nargs="+", metavar="TYPE", help="task types/roles it is suggested for")
+    x.add_argument("--no-link", action="store_true", help="don't expose it in .claude/skills / .agents/skills")
+    x = add(g, "remove", cmd_skills_remove, "remove a skill (moved to .research/cache/removed-skills)", aliases=["rm"])
+    x.add_argument("name")
+    x = add(g, "update", cmd_skills_update, "re-import skills from their recorded source")
+    x.add_argument("names", nargs="*")
+    x = add(g, "set", cmd_skills_set, "project settings for a skill")
+    x.add_argument("name")
+    x.add_argument("--always", dest="always", action="store_true", default=None)
+    x.add_argument("--no-always", dest="always", action="store_false")
+    x.add_argument("--applies-to", nargs="*", metavar="TYPE")
+    x = add(g, "link", cmd_skills_link, "(re)create .claude/skills and .agents/skills links")
+    x.add_argument("--target", action="append", help="claude, agents, or a folder")
     x = add(g, "new", cmd_skills_new, "create a skill", aliases=["create"])
     x.add_argument("name")
     x.add_argument("-d", "--description")
@@ -1347,6 +1740,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--success", help="success criteria")
     x.add_argument("--context", help="additional context for the plan")
     x.add_argument("--status", default="active", choices=STATUSES["plan"])
+    x.add_argument("--skill", action="append", help="project skill for every task in the plan (repeatable)")
     x = add(g, "list", cmd_plan_list, "list plans", aliases=["ls"])
     x.add_argument("--status", choices=STATUSES["plan"])
     x = add(g, "show", cmd_plan_show, "show plan with all tasks")
@@ -1359,6 +1753,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--success")
     x.add_argument("--context")
     x.add_argument("--status", choices=STATUSES["plan"])
+    x.add_argument("--skill", action="append")
 
     # Phase 0: Tasks
     g = group("task", "tasks within plans (units of work)", aliases=["tasks", "t"])
@@ -1377,10 +1772,15 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--question", "-q", help="related question")
     x.add_argument("--experiment", "-e", help="related experiment")
     x.add_argument("--notes")
+    x.add_argument("--check", action="append", metavar="CHECK",
+                   help="verification check (repeatable): 'cmd:pytest -q', 'file:out/plot.png', 'metric:EXP-001:rmse<=0.05'")
+    x.add_argument("--skill", action="append", help="project skill to load for this task (repeatable)")
     x = add(g, "list", cmd_task_list, "list tasks", aliases=["ls"])
     x.add_argument("--plan", "-p", help="filter by plan")
     x.add_argument("--status", choices=STATUSES["task"])
     x = add(g, "show", cmd_task_show, "show task detail")
+    x.add_argument("id")
+    x = add(g, "context", cmd_task_context, "focused context for working on a task: plan, deps, question, experiment, rules")
     x.add_argument("id")
     x = add(g, "update", cmd_task_update, "update a task")
     x.add_argument("id")
@@ -1399,9 +1799,24 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--result")
     x.add_argument("--blockers")
     x.add_argument("--notes")
-    x = add(g, "start", cmd_task_start, "mark task as running (started)")
+    x.add_argument("--check", action="append", metavar="CHECK", help="replaces the checks (repeatable; --check '' clears)")
+    x.add_argument("--skill", action="append", help="replaces the skills (repeatable; --skill '' clears)")
+    x = add(g, "start", cmd_task_start, "claim a task and mark it running")
     x.add_argument("id")
     x.add_argument("--role", help="assign role when starting")
+    x.add_argument("--force", action="store_true", help="take over a task another agent has claimed")
+    x = add(g, "release", cmd_task_release, "give a claimed task back (→ todo) with a hand-off note")
+    x.add_argument("id")
+    x.add_argument("--note")
+    x = add(g, "note", cmd_task_note, "add a progress note: research task note T-003 \"loader done, tests next\"")
+    x.add_argument("id")
+    x.add_argument("text", nargs="+")
+    x = add(g, "verify", cmd_task_verify, "run the task's checks and record the result")
+    x.add_argument("id")
+    x = add(g, "dispatch", cmd_dispatch, "hand this task to an agent CLI (role from the task)")
+    x.add_argument("target", metavar="id")
+    x.add_argument("--role", choices=["planner", "implementer", "verifier", "analyst"])
+    _dispatch_args(x)
     x = add(g, "done", cmd_task_done, "mark task as done (completed)", aliases=["complete"])
     x.add_argument("id")
     x.add_argument("--result", "-r")
@@ -1424,6 +1839,14 @@ def _run_args(x) -> None:
     x.add_argument("--notes")
     x.add_argument("--override", metavar="REASON", help="bypass run budget (logged)")
     x.add_argument("cmd", nargs="*", help="command to run; put it after `--` if it has its own flags")
+
+
+def _dispatch_args(x) -> None:
+    x.add_argument("--objective", help="for the planner: what the plan should achieve")
+    x.add_argument("--profile", help="agent profile (default from config roles)")
+    x.add_argument("--agent-model", help="override the profile's model for this session")
+    x.add_argument("--instructions", help="extra instructions added to the brief")
+    x.add_argument("--print", action="store_true", help="print the command instead of starting the agent")
 
 
 def _finding_args(x) -> None:
@@ -1454,6 +1877,7 @@ def _checkpoint_args(x) -> None:
     x.add_argument("--next", help="next likely experiment")
     x.add_argument("--notes")
     x.add_argument("--no-draft", action="store_true", help="don't pre-fill from current state")
+    x.add_argument("--commit", action="store_true", help="also commit .research/ to git (only .research/, never pushed)")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1470,7 +1894,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
     if tail is not None:
         if hasattr(a, "cmd") and isinstance(getattr(a, "cmd", None), list) or getattr(a, "fn", None) in (
-                cmd_run_exec, cmd_run_submit, cmd_run_attach):
+                cmd_run_exec, cmd_run_submit, cmd_run_attach, cmd_run_sweep):
             a.cmd = list(getattr(a, "cmd", None) or []) + tail
         else:
             ap.error("unexpected arguments after --")

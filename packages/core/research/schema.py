@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .util import ResearchError
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 AUTHOR_COLS = [("author_type", "text"), ("author_name", "text"), ("author_model", "text")]
 TIME_COLS = [("created_at", "text"), ("updated_at", "text")]
@@ -22,6 +22,8 @@ STATUSES = {
     "task": ["todo", "running", "verify", "done", "blocked"],  # 'ready' is derived, not stored
 }
 FINDING_KINDS = ["result", "failure"]
+# Verdicts: task checks pass/fail; finding reviews supported/contradicted/needs_work
+REVIEW_VERDICTS = {"check": ["pass", "fail"], "review": ["supported", "contradicted", "needs_work"]}
 CONFIDENCE = ["low", "medium", "high"]
 RUN_TERMINAL = {"completed", "failed", "cancelled", "unknown"}
 
@@ -108,7 +110,7 @@ ENTITIES: Dict[str, dict] = {
     "plan": {
         "table": "plans", "prefix": "PLAN", "width": 3, "dir": "plans",
         "columns": [
-            ("title", "text"), ("status", "text"), ("root_question_id", "text"),
+            ("title", "text"), ("status", "text"), ("root_question_id", "text"), ("skills", "json"),
         ] + AUTHOR_COLS + TIME_COLS + [
             ("completed_at", "text"),
             ("objective", "text"), ("success_criteria", "text"), ("context", "text"),
@@ -123,7 +125,8 @@ ENTITIES: Dict[str, dict] = {
             ("plan_id", "text"), ("title", "text"), ("task_type", "text"), ("status", "text"),
             ("assigned_role", "text"), ("depends_on", "json"),
             ("related_question_id", "text"), ("related_experiment_id", "text"),
-            ("artifacts", "json"),
+            ("artifacts", "json"), ("skills", "json"), ("checks", "json"),
+            ("claimed_by", "text"), ("claimed_at", "text"),
         ] + AUTHOR_COLS + TIME_COLS + [
             ("completed_by", "text"),  # who completed this task (agent name or human)
             ("started_at", "text"), ("completed_at", "text"),
@@ -306,7 +309,29 @@ DDL_V2 = [
     "INSERT OR IGNORE INTO counters (prefix, next) VALUES ('T', 1)",
 ]
 
-MIGRATIONS: Dict[int, List[str]] = {1: DDL_V1, 2: DDL_V2}
+def _add_column(table: str, col: str, kind: str):
+    """Migration step: add a column unless it exists (fresh DBs already get every column from ENTITIES)."""
+    def step(conn: sqlite3.Connection) -> None:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {kind}")
+    return step
+
+
+DDL_V3 = [
+    _add_column("plans", "skills", "TEXT"),
+    _add_column("tasks", "skills", "TEXT"),
+    _add_column("tasks", "checks", "TEXT"),
+    _add_column("tasks", "claimed_by", "TEXT"),
+    _add_column("tasks", "claimed_at", "TEXT"),
+    # verification records: task check runs and finding reviews (canonical: .research/reviews.jsonl)
+    """CREATE TABLE IF NOT EXISTS reviews (
+      id TEXT PRIMARY KEY, target_id TEXT NOT NULL, target_type TEXT, kind TEXT, verdict TEXT,
+      summary TEXT, details TEXT, author_type TEXT, author_name TEXT, author_model TEXT, created_at TEXT)""",
+    "CREATE INDEX IF NOT EXISTS ix_reviews_target ON reviews(target_id)",
+]
+
+MIGRATIONS: Dict[int, List[Any]] = {1: DDL_V1, 2: DDL_V2, 3: DDL_V3}
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -339,7 +364,7 @@ def migrate(conn: sqlite3.Connection) -> int:
         conn.execute("BEGIN IMMEDIATE")
         try:
             for stmt in MIGRATIONS[target]:
-                conn.execute(stmt)
+                stmt(conn) if callable(stmt) else conn.execute(stmt)
             conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version',?)", (str(target),))
             conn.execute("COMMIT")
         except Exception:

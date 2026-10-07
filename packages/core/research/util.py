@@ -30,6 +30,10 @@ class BudgetExceeded(ResearchError):
     exit_code = 3
 
 
+class PolicyBlocked(BudgetExceeded):
+    """A verification / coordination gate refused the action (same exit code 3 as the run budget)."""
+
+
 class NotInitialized(ResearchError):
     exit_code = 2
 
@@ -171,4 +175,7 @@ def detect_author(agent: Optional[str] = None, model: Optional[str] = None,
     if at not in ("human", "agent", "system"):
         raise ResearchError(f"author_type must be human|agent|system, got {at!r}")
     name = agent if at == "agent" else (env.get("RESEARCH_AUTHOR") or None)
+    role = env.get("RESEARCH_AGENT_ROLE")
+    if at == "agent" and name and role and "/" not in name:
+        name = f"{name}/{role}"  # e.g. claude/verifier: roles of one CLI count as different reviewers
     return {"author_type": at, "author_name": name, "author_model": model if at == "agent" else None}

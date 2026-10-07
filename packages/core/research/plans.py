@@ -13,7 +13,24 @@ from typing import Any, Dict, List, Optional
 
 from .schema import STATUSES, TASK_TYPES, TASK_ROLES, normalize_id
 from .store import Project
-from .util import NotFound, ResearchError, now_iso
+from .util import NotFound, PolicyBlocked, ResearchError, as_list, now_iso, parse_iso
+
+
+def author_label(project: Project) -> str:
+    """Who is acting, as a short string: agent name (e.g. claude/implementer) or the human's name."""
+    a = project.author
+    return a.get("author_name") or a.get("author_type") or "human"
+
+
+def _skill_names(values: Any) -> Optional[List[str]]:
+    names = [str(v).strip() for v in as_list(values) if str(v).strip()]
+    return names or None
+
+
+def _checks(values: Any) -> Optional[List[Dict[str, Any]]]:
+    from .verification import parse_check
+    out = [parse_check(v) for v in as_list(values) if v not in (None, "")]
+    return out or None
 
 
 def create_plan(
@@ -24,12 +41,16 @@ def create_plan(
     root_question_id: str = None,
     success_criteria: str = None,
     context: str = None,
+    question: str = None,
+    skills: Any = None,
 ) -> Dict[str, Any]:
-    """Create a new plan."""
+    """Create a new plan. `question` is an alias for `root_question_id` (matches create_experiment)."""
+    status = status or "active"
     if status not in STATUSES["plan"]:
         raise ResearchError(f"Invalid plan status: {status}. Valid: {STATUSES['plan']}")
 
     # Validate question exists if provided
+    root_question_id = root_question_id or question
     qid = None
     if root_question_id:
         qid = normalize_id(root_question_id, "Q")
@@ -43,6 +64,7 @@ def create_plan(
         "objective": objective,
         "success_criteria": success_criteria,
         "context": context,
+        "skills": _skill_names(skills),
     }
 
     return project.insert_entity("plan", values, summary=f"Plan created: {title}")
@@ -64,8 +86,10 @@ def create_task(
     related_question_id: str = None,
     related_experiment_id: str = None,
     notes: str = None,
+    skills: Any = None,
+    checks: Any = None,
 ) -> Dict[str, Any]:
-    """Create a new task within a plan."""
+    """Create a new task within a plan. `checks` are verification checks (see verification.parse_check)."""
     # Validate status
     if status not in STATUSES["task"]:
         raise ResearchError(f"Invalid task status: {status}. Valid: {STATUSES['task']}")
@@ -117,6 +141,8 @@ def create_task(
         "artifacts": None,
         "blockers": None,
         "notes": notes,
+        "skills": _skill_names(skills),
+        "checks": _checks(checks),
         "completed_by": None,
         "started_at": None,
         "completed_at": None,
@@ -131,8 +157,13 @@ def update_plan(project: Project, plan_id: str, **fields) -> Dict[str, Any]:
     if not project.exists("plan", pid):
         raise NotFound(f"Plan {pid} not found")
 
-    allowed = {"title", "objective", "status", "root_question_id", "success_criteria", "context", "completed_at"}
+    if "question" in fields and "root_question_id" not in fields:
+        fields["root_question_id"] = fields.pop("question")
+    allowed = {"title", "objective", "status", "root_question_id", "success_criteria", "context", "completed_at",
+               "skills"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if "skills" in updates:
+        updates["skills"] = _skill_names(updates["skills"])
 
     if "status" in updates:
         if updates["status"] not in STATUSES["plan"]:
@@ -142,8 +173,8 @@ def update_plan(project: Project, plan_id: str, **fields) -> Dict[str, Any]:
             updates["completed_at"] = now_iso()
 
     if "root_question_id" in updates:
-        qid = normalize_id(updates["root_question_id"], "Q")
-        if not project.exists("question", qid):
+        qid = normalize_id(updates["root_question_id"], "Q")  # '' → None clears the link
+        if qid and not project.exists("question", qid):
             raise NotFound(f"Question {qid} not found")
         updates["root_question_id"] = qid
 
@@ -164,9 +195,18 @@ def update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
         "title", "goal", "task_type", "status", "assigned_role", "depends_on",
         "inputs", "expected_outputs", "acceptance_criteria", "verification",
         "related_question_id", "related_experiment_id", "artifacts",
-        "blockers", "notes", "result", "completed_by", "started_at", "completed_at"
+        "blockers", "notes", "result", "completed_by", "started_at", "completed_at",
+        "skills", "checks", "claimed_by", "claimed_at",
     }
     updates = {k: v for k, v in fields.items() if k in allowed}
+    if "skills" in updates:
+        updates["skills"] = _skill_names(updates["skills"])
+    if "checks" in updates:
+        updates["checks"] = _checks(updates["checks"])
+    # An emptied id field (e.g. cleared in an edit form) means "unlink", stored as NULL.
+    for k in ("related_question_id", "related_experiment_id"):
+        if k in updates and updates[k] == "":
+            updates[k] = None
 
     # Validate status
     if "status" in updates and updates["status"] is not None:
@@ -321,14 +361,71 @@ def get_next_ready_task(project: Project, plan_id: str = None) -> Optional[Dict[
     return None
 
 
-def start_task(project: Project, task_id: str, assigned_role: str = None) -> Dict[str, Any]:
-    """Mark a task as running (started)."""
-    return update_task(
-        project, task_id,
-        status="running",
-        assigned_role=assigned_role,
-        started_at=now_iso()
-    )
+def start_task(project: Project, task_id: str, assigned_role: str = None, force: bool = False) -> Dict[str, Any]:
+    """Claim a task and mark it running. Refuses a task another actor has claimed (unless force)."""
+    tid = normalize_id(task_id, "T")
+    task = get_task_with_deps(project, tid)
+    me = author_label(project)
+    if task["status"] == "running" and task.get("claimed_by") and task["claimed_by"] != me and not force:
+        raise PolicyBlocked(f"{tid} is already claimed by {task['claimed_by']} (since {task.get('claimed_at')})",
+                            hint=f"Pick another task (`research task next`), or take it over with --force.")
+    if task["status"] == "done" and not force:
+        raise ResearchError(f"{tid} is already done", hint="Use --force to reopen it.")
+    warnings = []
+    unmet = [d["id"] for d in task["dependencies"] if d["status"] != "done"]
+    if unmet:
+        warnings.append(f"{tid} is not ready: waiting on {', '.join(unmet)}")
+    kw = {"assigned_role": assigned_role} if assigned_role else {}
+    out = update_task(project, tid, status="running", started_at=task.get("started_at") or now_iso(),
+                      claimed_by=me, claimed_at=now_iso(), **kw)
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def release_task(project: Project, task_id: str, note: str = None) -> Dict[str, Any]:
+    """Give a claimed task back (status → todo) so another agent can pick it up."""
+    tid = normalize_id(task_id, "T")
+    if note:
+        add_task_note(project, tid, note)
+    return update_task(project, tid, status="todo", claimed_by=None, claimed_at=None)
+
+
+def add_task_note(project: Project, task_id: str, text: str) -> Dict[str, Any]:
+    """Append a progress note (an event): the hand-off trail for whoever continues the task."""
+    tid = normalize_id(task_id, "T")
+    if not project.exists("task", tid):
+        raise NotFound(f"Task {tid} not found")
+    if not text or not str(text).strip():
+        raise ResearchError("A progress note needs text")
+    project.event("task", tid, "progress", str(text).strip())
+    return {"id": tid, "note": str(text).strip(), "by": author_label(project)}
+
+
+def progress_notes(project: Project, task_id: str, limit: int = 5) -> List[Dict[str, Any]]:
+    return project.q("SELECT ts, summary AS text, author_type, author_name FROM events WHERE entity_id=? "
+                     "AND action='progress' ORDER BY id DESC LIMIT ?", (task_id, limit))
+
+
+def last_activity(project: Project, task: Dict[str, Any]) -> Optional[str]:
+    r = project.q1("SELECT MAX(ts) AS ts FROM events WHERE entity_id=?", (task["id"],))
+    stamps = [x for x in (task.get("updated_at"), task.get("claimed_at"), r and r["ts"]) if x]
+    return max(stamps) if stamps else None
+
+
+def stale_tasks(project: Project) -> List[Dict[str, Any]]:
+    """Running tasks with no activity (update, note, check) for `coordination.stale_task_hours`."""
+    import datetime as _dt
+    hours = float((project.config.get("coordination") or {}).get("stale_task_hours") or 0)
+    if not hours:
+        return []
+    now = _dt.datetime.now().astimezone()
+    out = []
+    for t in list_tasks(project, status="running"):
+        last = parse_iso(last_activity(project, t))
+        if last and (now - last).total_seconds() > hours * 3600:
+            out.append({**t, "idle_hours": round((now - last).total_seconds() / 3600, 1)})
+    return out
 
 
 def complete_task(
@@ -338,24 +435,89 @@ def complete_task(
     completed_by: str = None,
     artifacts: List[str] = None
 ) -> Dict[str, Any]:
-    """Mark a task as done (completed)."""
+    """Mark a task as done. If it has checks, they run first and gate completion (see verification)."""
+    from . import verification as _v
+    tid = normalize_id(task_id, "T")
+    warnings = _v.gate_task_completion(project, tid)
     updates = {
         "status": "done",
         "completed_at": now_iso(),
+        "completed_by": completed_by or author_label(project),
     }
     if result:
         updates["result"] = result
-    if completed_by:
-        updates["completed_by"] = completed_by
     if artifacts:
-        updates["artifacts"] = artifacts
+        updates["artifacts"] = [normalize_id(a, "A") for a in as_list(artifacts)]
 
-    return update_task(project, task_id, **updates)
+    out = update_task(project, tid, **updates)
+    if warnings:
+        out["warnings"] = warnings
+    return out
 
 
 def block_task(project: Project, task_id: str, blockers: str) -> Dict[str, Any]:
     """Mark a task as blocked with reason."""
     return update_task(project, task_id, status="blocked", blockers=blockers)
+
+
+def task_context(project: Project, task_id: str) -> Dict[str, Any]:
+    """Everything an agent needs to work on one task, and nothing more.
+
+    Bundles the task, its plan's objective, dependency results, the related question and experiment
+    (with run/synthesis state), and the agent policy.
+    """
+    from .services import experiment_state
+
+    task = get_task_with_deps(project, task_id)
+    plan = project.get("plan", task["plan_id"]) if task.get("plan_id") and project.exists("plan", task["plan_id"]) else None
+    question = None
+    if task.get("related_question_id") and project.exists("question", task["related_question_id"]):
+        q = project.get("question", task["related_question_id"])
+        question = {k: q.get(k) for k in ("id", "title", "status", "description")}
+    experiment = None
+    if task.get("related_experiment_id") and project.exists("experiment", task["related_experiment_id"]):
+        e = project.get("experiment", task["related_experiment_id"])
+        experiment = {k: e.get(k) for k in ("id", "title", "status", "hypothesis", "parameters", "success_criteria",
+                                            "stop_conditions", "is_baseline")}
+        experiment["state"] = experiment_state(project, e["id"])
+        syn = project.q1("SELECT id, interpretation, next_experiment FROM syntheses WHERE experiment_id=? "
+                         "ORDER BY created_at DESC, id DESC LIMIT 1", (e["id"],))
+        experiment["latest_synthesis"] = syn
+    brief = {k: task.get(k) for k in (
+        "id", "title", "status", "task_type", "assigned_role", "goal", "inputs", "expected_outputs",
+        "acceptance_criteria", "verification", "result", "blockers", "notes", "artifacts", "depends_on")}
+    if task["status"] != "blocked":
+        brief["blockers"] = None  # stale once unblocked; still kept on the task itself as history
+    from . import skills as _skills
+    from . import verification as _v
+    checks = [_v.describe_check(_v.parse_check(c)) for c in (task.get("checks") or [])]
+    last = _v.latest(project, task["id"], "check")
+    related_ids = [x for x in (task.get("related_experiment_id"), task.get("related_question_id")) if x]
+    findings = []
+    if related_ids:
+        marks = ",".join("?" * len(related_ids))
+        rows = project.q(f"SELECT DISTINCT src_id FROM links WHERE src_type='finding' AND (dst_id IN ({marks}) OR dst_id IN "
+                         f"(SELECT id FROM runs WHERE experiment_id IN ({marks})))", tuple(related_ids) * 2)
+        for r in rows[:6]:
+            f = project.get("finding", r["src_id"])
+            findings.append({k: f.get(k) for k in ("id", "title", "status", "kind", "confidence")})
+    return {
+        "task": brief,
+        "claimed_by": task.get("claimed_by"),
+        "checks": checks,
+        "last_verification": {k: last[k] for k in ("id", "verdict", "summary", "created_at")} if last else None,
+        "progress": progress_notes(project, task["id"]),
+        "skills": _skills.skills_for(project, task, plan),
+        "related_findings": findings,
+        "is_ready": task["is_ready"],
+        "plan": {k: plan.get(k) for k in ("id", "title", "status", "objective", "success_criteria", "context")}
+        if plan else None,
+        "dependencies": [{"id": d["id"], "title": d["title"], "status": d["status"], "result": d.get("result")}
+                         for d in task["dependencies"]],
+        "question": question,
+        "experiment": experiment,
+        "policy": project.policy,
+    }
 
 
 def add_task_artifact(project: Project, task_id: str, artifact_id: str) -> Dict[str, Any]:

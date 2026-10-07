@@ -7,3 +7,5 @@ cache/
 # run logs can be large; remove these lines if you want them versioned
 runs/*/stdout.log
 runs/*/stderr.log
+# project-local CLI (per machine, recreated automatically)
+bin/

@@ -56,7 +56,7 @@ export class Model implements vscode.Disposable {
         if (this.initialized) {
           const [tree, resume, index] = await Promise.all([
             this.client.request<Tree>('tree'),
-            this.client.request('resume'),
+            this.client.request('home').catch(() => this.client.request('resume')),
             this.client.request('index'),
           ]);
           this.tree = tree;

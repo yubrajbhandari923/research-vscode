@@ -90,13 +90,28 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (model.tree && !model.tree.experiments.length) exp.message = 'No experiments yet. Register one before running anything substantial.';
   });
 
+  // ------------------------------------------------------------------ project-local CLI (.research/bin/research)
+  // Agents whose shells don't inherit VS Code's terminal PATH (e.g. Claude Code's Bash tool) call this launcher.
+  let binDone = false;
+  const installBin = async () => {
+    if (binDone || !model.initialized || !cfg().get<boolean>('projectCli', true)) return;
+    binDone = true;
+    try {
+      const r = await client.request('install_bin');
+      if (r?.updated) out.appendLine(`[research] project CLI ready: ${r.path}`);
+    } catch (e: any) {
+      out.appendLine(`[research] could not write .research/bin: ${e.message}`);
+    }
+  };
+  model.onChange(() => void installBin());
+
   // ------------------------------------------------------------------ commands + watchers
   registerCommands(ctx, model, panels, shim, out);
 
   const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, '.research/**'));
   const onFs = (u: vscode.Uri) => {
     const rel = path.relative(root, u.fsPath);
-    if (/research\.db|\/cache\/|\.tmp-\d+$|events\.jsonl$/.test(rel)) return;
+    if (/research\.db|\/cache\/|\.tmp-\d+$|events\.jsonl$|^\.research[\\/]bin([\\/]|$)/.test(rel)) return;
     model.schedule(400);
   };
   watcher.onDidChange(onFs);
@@ -109,6 +124,7 @@ export async function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(vscode.window.onDidChangeWindowState((s) => s.focused && model.initialized && model.schedule(200)));
   ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration('research.terminalCommand')) shim.install(cfg().get<boolean>('terminalCommand', true));
+    if (e.affectsConfiguration('research.projectCli')) { binDone = false; void installBin(); }
     if (e.affectsConfiguration('research.pythonPath')) vscode.window.showInformationMessage('Reload the window to use the new Python path.', 'Reload').then((c) => c && vscode.commands.executeCommand('workbench.action.reloadWindow'));
   }));
 

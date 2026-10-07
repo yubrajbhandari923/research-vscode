@@ -13,7 +13,7 @@ from .runner import read_status
 from .runner import run as runner_run
 from .schema import RUN_TERMINAL, normalize_id
 from .store import Project, _atomic_write, append_jsonl, read_jsonl_from
-from .util import NotFound, ResearchError, as_list, hostname, jdump, jload, now_iso, parse_iso, sha256_file
+from .util import BudgetExceeded, NotFound, ResearchError, as_list, hostname, jdump, jload, now_iso, parse_iso, sha256_file
 
 RUN_JSON_FIELDS = ["id", "experiment_id", "label", "command", "working_dir", "parameters", "env", "backend",
                    "hostname", "pid", "slurm_job_id", "slurm", "run_dir", "stdout_path", "stderr_path",
@@ -586,9 +586,9 @@ def list_artifacts(p: Project, run: Optional[str] = None, experiment: Optional[s
 # =============================================================================== ingestion
 
 def ingest_root_files(p: Project) -> None:
-    """Ingest .research/{artifacts,syntheses,metrics}.jsonl beyond the last seen offset (idempotent)."""
+    """Ingest .research/{artifacts,syntheses,metrics,reviews}.jsonl beyond the last seen offset (idempotent)."""
     with p.tx():
-        for fname in ("artifacts.jsonl", "syntheses.jsonl", "metrics.jsonl"):
+        for fname in ("artifacts.jsonl", "syntheses.jsonl", "metrics.jsonl", "reviews.jsonl"):
             path = p.path(fname)
             if not os.path.exists(path):
                 continue
@@ -619,6 +619,13 @@ def ingest_root_files(p: Project) -> None:
                          rec.get("author_type"), rec.get("author_name"), rec.get("author_model"), rec.get("created_at")))
                 elif fname == "metrics.jsonl":
                     _insert_metric(p, rec, None, rec.get("experiment_id"))
+                elif fname == "reviews.jsonl" and rec.get("id"):
+                    p.conn.execute(
+                        "INSERT OR REPLACE INTO reviews(id,target_id,target_type,kind,verdict,summary,details,"
+                        "author_type,author_name,author_model,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                        (rec["id"], rec.get("target_id"), rec.get("target_type"), rec.get("kind"), rec.get("verdict"),
+                         rec.get("summary"), jdump(rec.get("details")), rec.get("author_type"), rec.get("author_name"),
+                         rec.get("author_model"), rec.get("created_at")))
             p.set_meta(key, end)
 
 
@@ -687,3 +694,68 @@ def job_register_artifact(path: str, name: Optional[str] = None, description: Op
            "tags": as_list(tags), "ts": now_iso()}
     append_jsonl(os.path.join(d, "artifacts.jsonl"), rec)
     return rec
+
+
+# =============================================================================== sweeps
+
+def sweep_points(p: Project, experiment: str, grid: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Cartesian product of `grid` (name → list), or of the experiment's list-valued parameters."""
+    import itertools
+    from .services import _ids
+    exp = p.get("experiment", _ids(p, experiment, "EXP")[0])
+    base = dict(exp.get("parameters") or {})
+    grid = dict(grid or {k: v for k, v in base.items() if isinstance(v, list)})
+    if not grid:
+        raise ResearchError(f"Nothing to sweep: give --grid name=v1,v2 or list parameters on {exp['id']}")
+    axes = [(k, v if isinstance(v, list) else [v]) for k, v in grid.items()]
+    fixed = {k: v for k, v in base.items() if k not in grid and not isinstance(v, list)}
+    return [{**fixed, **dict(zip([k for k, _ in axes], combo))} for combo in itertools.product(*[v for _, v in axes])]
+
+
+def sweep_run(p: Project, experiment: str, command: str, grid: Optional[Dict[str, Any]] = None,
+              mode: str = "local", override: Optional[str] = None, dry_run: bool = False,
+              working_dir: Optional[str] = None, tee: bool = True, **slurm_opts: Any) -> Dict[str, Any]:
+    """One run per grid point. `{name}` in the command is replaced by the point's value.
+
+    The whole sweep is checked against the run budget and planned_runs *before* anything starts, so it can't
+    stop halfway. mode: local (one after another, foreground) · detach (all in background) · slurm.
+    """
+    from .services import _ids, _is_enforced, experiment_state
+    exp_id = _ids(p, experiment, "EXP")[0]
+    exp = p.get("experiment", exp_id)
+    points = sweep_points(p, exp_id, grid)
+    keys = sorted({k for pt in points for k in pt if (grid and k in grid) or isinstance((exp.get("parameters") or {}).get(k), list)})
+    st = experiment_state(p, exp_id)
+    problems = []
+    room = st["max_runs_without_synthesis"] - st["unsynthesized"] if st["max_runs_without_synthesis"] else None
+    if room is not None and len(points) > room:
+        problems.append(f"sweep of {len(points)} runs exceeds the run budget ({room} left before synthesis is required)")
+    if exp.get("planned_runs") and st["runs"] + len(points) > exp["planned_runs"]:
+        problems.append(f"sweep would bring {exp_id} to {st['runs'] + len(points)} runs (planned: {exp['planned_runs']})")
+    warnings = []
+    if problems:
+        msg = "; ".join(problems)
+        if _is_enforced(p) and not override:
+            raise BudgetExceeded(msg, hint=f"Sweep fewer points, synthesize {exp_id} first, raise planned_runs, "
+                                 "or --override \"reason\" (logged).")
+        if override:
+            p.event("experiment", exp_id, "override", f"Sweep override: {override}")
+        warnings.append(msg)
+    plan = []
+    for pt in points:
+        cmd = command
+        for k, v in pt.items():
+            cmd = cmd.replace("{" + k + "}", str(v))
+        plan.append({"parameters": pt, "command": cmd, "label": ", ".join(f"{k}={pt[k]}" for k in keys)})
+    if dry_run:
+        return {"experiment": exp_id, "points": plan, "runs": [], "warnings": warnings}
+    runs = []
+    for item in plan:
+        kw = dict(parameters=item["parameters"], label=item["label"], working_dir=working_dir,
+                  override=override or ("sweep pre-approved" if problems else None))
+        if mode == "slurm":
+            runs.append(submit_run(p, exp_id, item["command"], **kw, **slurm_opts))
+        else:
+            runs.append(exec_run(p, exp_id, item["command"], detach=(mode == "detach"), tee=tee, **kw))
+    p.event("experiment", exp_id, "swept", f"{exp_id} sweep: {len(runs)} runs over {', '.join(keys)} ({mode})")
+    return {"experiment": exp_id, "points": plan, "runs": runs, "warnings": warnings}

@@ -126,6 +126,9 @@ def finding_detail(p: Project, fid: str) -> Dict[str, Any]:
     f["supersedes"] = [_brief(p, r["id"]) for r in p.q("SELECT id FROM findings WHERE superseded_by=?", (fid,))]
     f["linked_notes"] = notes_linked_to(p, fid)
     f["events"] = p.q("SELECT * FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 20", (fid,))
+    from .verification import list_records
+    f["reviews"] = list_records(p, fid, "review")
+    f["awaiting_review"] = (f["status"] == "preliminary" and f.get("author_type") == "agent" and not f["reviews"])
     return f
 
 
@@ -197,7 +200,13 @@ def artifact_detail(p: Project, aid: str) -> Dict[str, Any]:
 def plan_detail(p: Project, plan_id: str) -> Dict[str, Any]:
     """Get detailed plan view with tasks and statistics."""
     from . import plans as _plans
-    return _plans.get_plan_with_tasks(p, plan_id)
+    plan = _plans.get_plan_with_tasks(p, plan_id)
+    ids = [plan["id"]] + [t["id"] for t in plan["tasks"]]
+    plan["events"] = p.q(f"SELECT * FROM events WHERE entity_id IN ({','.join('?' * len(ids))}) "
+                         "ORDER BY id DESC LIMIT 30", tuple(ids))
+    nxt = _plans.get_next_ready_task(p, plan["id"])
+    plan["next_task"] = {"id": nxt["id"], "title": nxt["title"]} if nxt else None
+    return plan
 
 
 def task_detail(p: Project, task_id: str) -> Dict[str, Any]:
@@ -215,6 +224,15 @@ def task_detail(p: Project, task_id: str) -> Dict[str, Any]:
     task["artifact_cards"] = [_brief(p, a) for a in arts]
 
     task["events"] = p.q("SELECT * FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 20", (task["id"],))
+    from . import skills as _skills
+    from .verification import describe_check, list_records, parse_check
+    plan = p.get("plan", task["plan_id"]) if task.get("plan_id") and p.exists("plan", task["plan_id"]) else None
+    task["checks_desc"] = [describe_check(parse_check(c)) for c in (task.get("checks") or [])]
+    task["verifications"] = list_records(p, task["id"], "check")[:10]
+    task["progress"] = _plans.progress_notes(p, task["id"], 20)
+    task["skills_info"] = _skills.skills_for(p, task, plan)
+    stale = {t["id"]: t["idle_hours"] for t in _plans.stale_tasks(p)}
+    task["stale_hours"] = stale.get(task["id"])
     return task
 
 

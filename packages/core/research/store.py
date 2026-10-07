@@ -44,6 +44,27 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "artifacts": {"hash_max_bytes": 64 * 1024 * 1024},
     "resume": {"stale_checkpoint_days": 14},
+    # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
+    "agents": {
+        "default_profile": "claude",
+        "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
+        "profiles": {
+            "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
+            "codex": {"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
+            "gemini": {"command": "gemini", "args": [], "model": None, "model_flag": "-m", "prompt_flag": "-i"},
+        },
+    },
+    "verification": {
+        "require_review_for_supported": True,   # agents can't mark findings supported; a review must
+        "independent_reviewer": True,           # the reviewer must not be the finding's author
+        "require_evidence_for_supported": True,
+        "checks_gate_task_completion": True,    # `task done` runs the task's checks; failures block agents
+        "check_timeout_seconds": 600,
+    },
+    "coordination": {"stale_task_hours": 4},
+    "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
+    "skills": {"link": ["claude", "agents"]},    # expose .research/skills to .claude/skills and .agents/skills
+    "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
 }
 
 CONFIG_HEADER = """# Research project configuration (human-editable).
@@ -61,6 +82,8 @@ cache/
 # run logs can be large; remove these lines if you want them versioned
 runs/*/stdout.log
 runs/*/stderr.log
+# project-local CLI (per machine, recreated automatically)
+bin/
 """
 
 
@@ -192,6 +215,11 @@ class Project:
             p.update_project(name=name, goal=goal, description=description)
         if agents_md:
             p.write_agents_md()
+        try:  # .research/bin/research: lets any agent run the CLI without installing it
+            from .localbin import install as _install_bin
+            _install_bin(root)
+        except Exception:
+            pass
         from . import context as _ctx
         _ctx.write_current_md(p)
         return p

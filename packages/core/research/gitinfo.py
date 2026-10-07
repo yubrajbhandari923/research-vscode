@@ -1,4 +1,5 @@
-"""Git metadata capture. Never commits, never modifies the repo."""
+"""Git metadata capture, plus one opt-in write: `snapshot()` commits .research/ only (never pushes, never touches
+other paths or the index of other files). Everything else is read-only."""
 from __future__ import annotations
 
 import os
@@ -57,3 +58,34 @@ def short(commit: Optional[str]) -> str:
 
 def available() -> bool:
     return any(os.access(os.path.join(p, "git"), os.X_OK) for p in os.environ.get("PATH", "").split(os.pathsep))
+
+
+def diff_commits(root: str, a: str, b: str, max_bytes: int = 200 * 1024) -> Optional[Dict[str, str]]:
+    """Code changes between two commits (excluding .research/): {stat, patch}. None if unavailable."""
+    stat = _git(root, "diff", "--stat", a, b, "--", ".", _EXCLUDE, timeout=30.0)
+    if stat is None:
+        return None
+    patch = _git(root, "diff", a, b, "--", ".", _EXCLUDE, timeout=30.0) or ""
+    if len(patch.encode("utf-8", "replace")) > max_bytes:
+        patch = patch.encode("utf-8", "replace")[:max_bytes].decode("utf-8", "ignore") + "\n# … truncated\n"
+    return {"stat": stat, "patch": patch}
+
+
+def snapshot(root: str, message: str) -> Optional[str]:
+    """Commit the current state of .research/ (and nothing else). Returns the new commit hash, or None if there was
+    nothing to commit. Uses `git commit --only -- .research`, so anything else you have staged stays staged."""
+    from .util import ResearchError
+    if not is_repo(root):
+        raise ResearchError("Not a git repository", hint="`git init` first, or create the checkpoint without --commit.")
+    p = subprocess.run(["git", "add", "--", ".research"], cwd=root, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise ResearchError(f"git add failed: {p.stderr.strip()[-300:]}")
+    pending = _git(root, "diff", "--cached", "--name-only", "--", ".research")
+    if not (pending and pending.strip()):
+        return None
+    p = subprocess.run(["git", "commit", "--only", "-m", message, "--", ".research"], cwd=root,
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise ResearchError(f"git commit failed: {(p.stderr or p.stdout).strip()[-400:]}",
+                            hint="Check `git config user.name/user.email` and any commit hooks.")
+    return (_git(root, "rev-parse", "HEAD") or "").strip() or None

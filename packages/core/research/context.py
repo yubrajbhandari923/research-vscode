@@ -133,6 +133,20 @@ def research_home(p: Project) -> Dict[str, Any]:
                 "message": f"{n['state'].get('unsynthesized', 0)} runs need synthesis",
             })
 
+    # Stale running tasks (claimed, but no activity for coordination.stale_task_hours)
+    for t in _plans.stale_tasks(p):
+        attention_items.append({
+            "kind": "stale_task",
+            "severity": "medium",
+            "id": t["id"],
+            "title": t["title"],
+            "message": f"No activity for {t['idle_hours']}h" + (f" (claimed by {t['claimed_by']})" if t.get("claimed_by") else ""),
+        })
+
+    # Verification: failed task checks, reviewers who disagree, agent findings awaiting review
+    from .verification import attention_items as _verification_items
+    attention_items.extend(_verification_items(p))
+
     # Failed runs that haven't been reviewed
     for b in r.get("blockers", []):
         if b["kind"] == "run":
@@ -149,17 +163,25 @@ def research_home(p: Project) -> Dict[str, Any]:
 
     # Get image artifacts from recent findings as evidence
     for f in r.get("established_findings", [])[:5]:
-        for aid in (f.get("evidence") or [])[:2]:
-            if aid.startswith("A-"):
-                a = p.q1("SELECT id, name, path, type FROM artifacts WHERE id=?", (aid,))
-                if a and a["type"] in ("image", "table"):
-                    key_outputs.append({
-                        "id": a["id"],
-                        "name": a["name"],
-                        "path": a["path"],
-                        "type": a["type"],
-                        "reason": f"Evidence for {f['id']}",
-                    })
+        for aid in [x for x in (f.get("evidence") or []) if x.startswith("A-")][:2]:
+            a = p.q1("SELECT id, name, path, type FROM artifacts WHERE id=?", (aid,))
+            if a and a["type"] in ("image", "table") and not any(o["id"] == a["id"] for o in key_outputs):
+                key_outputs.append({
+                    "id": a["id"],
+                    "name": a["name"],
+                    "path": a["path"],
+                    "type": a["type"],
+                    "reason": f"Evidence for {f['id']}",
+                    "finding_title": f.get("title"),
+                })
+
+    # Most recent figures from experiments still in progress
+    for a in p.q("SELECT a.id, a.name, a.path, a.type, a.experiment_id, a.description FROM artifacts a "
+                 "JOIN experiments e ON e.id = a.experiment_id WHERE a.type='image' AND e.status IN ('running','ready','needs_review') "
+                 "ORDER BY a.created_at DESC LIMIT 3"):
+        if not any(o["id"] == a["id"] for o in key_outputs):
+            key_outputs.append({"id": a["id"], "name": a["name"], "path": a["path"], "type": a["type"],
+                                "reason": f"Latest from {a['experiment_id']}"})
 
     # Baseline experiment artifacts
     base = r.get("baseline")
@@ -200,8 +222,38 @@ def research_home(p: Project) -> Dict[str, Any]:
             "statement": f.get("statement"),
         })
 
+    for o in key_outputs:
+        o["abspath"] = p.abspath(o["path"])
+        o["exists"] = bool(o["abspath"]) and os.path.exists(o["abspath"])
+
+    # --- Result charts: one metric across the runs of the most recently active experiments ---
+    from .runs import summary_metrics
+    result_charts = []
+    evidence_exps = [x for f in r.get("established_findings", []) for x in (f.get("evidence") or []) if x.startswith("EXP-")]
+    cands = p.q("SELECT e.id, e.title FROM experiments e WHERE EXISTS (SELECT 1 FROM runs r WHERE r.experiment_id=e.id "
+                "AND r.status='completed') ORDER BY e.updated_at DESC LIMIT 12")
+    cands.sort(key=lambda e: evidence_exps.index(e["id"]) if e["id"] in evidence_exps else 99)
+    for e in cands:
+        rows = []
+        for run in p.q("SELECT id, label FROM runs WHERE experiment_id=? AND status='completed' ORDER BY id", (e["id"],)):
+            ms = summary_metrics(p, run["id"])
+            rows.append({"id": run["id"], "label": run["label"] or run["id"], "metrics": {k: m.get("value") for k, m in ms.items()}})
+        names = [n for n in dict.fromkeys(k for x in rows for k in x["metrics"])
+                 if sum(isinstance(x["metrics"].get(n), (int, float)) for x in rows) >= 2]
+        if len(rows) >= 2 and names:
+            result_charts.append({"experiment_id": e["id"], "title": e["title"], "metrics": names[:2],
+                                  "runs": [{"id": x["id"], "label": x["label"], "values": [x["metrics"].get(n) for n in names[:2]]}
+                                           for x in rows][:12]})
+        if len(result_charts) >= 2:
+            break
+
+    since = r.get("since_checkpoint") or {}
+    if cp:
+        since["tasks_done"] = [t["id"] for t in tasks if t["status"] == "done" and (t.get("completed_at") or "") > cp["created_at"]]
+
     return {
         **r,  # Include all resume data
+        "result_charts": result_charts,
         "active_plan": active_plan,
         "tasks": tasks,
         "current_task": current_task,
@@ -367,6 +419,7 @@ def checkpoint_draft(p: Project) -> Dict[str, Any]:
         "current_problem": "\n".join(f"- {x}" for x in problems),
         "next_experiment": nxt,
         "git_branch": g.get("branch"), "git_commit": g.get("commit"), "git_dirty": g.get("dirty"),
+        "commit_default": bool((p.config.get("git") or {}).get("commit_checkpoints")),
     }
 
 
@@ -375,7 +428,9 @@ def create_checkpoint(p: Project, title: Optional[str] = None, goal: Optional[st
                       baseline_experiment: Optional[str] = None, findings: Any = None, failures: Any = None,
                       questions: Any = None, experiments: Any = None, current_problem: Optional[str] = None,
                       next_experiment: Optional[str] = None, notes: Optional[str] = None,
-                      use_draft: bool = True) -> Dict[str, Any]:
+                      use_draft: bool = True, commit: Optional[bool] = None) -> Dict[str, Any]:
+    """Create a checkpoint. With commit=True (or config git.commit_checkpoints) .research/ is committed to git
+    afterwards — only .research/, never pushed."""
     d = checkpoint_draft(p) if use_draft else {}
     g = gitinfo.info(p.root)
 
@@ -397,7 +452,14 @@ def create_checkpoint(p: Project, title: Optional[str] = None, goal: Optional[st
     }
     c = p.insert_entity("checkpoint", vals, summary=f"Checkpoint {vals['title']}")
     write_current_md(p)
-    return checkpoint_detail(p, c["id"])
+    sha = None
+    if commit if commit is not None else bool((p.config.get("git") or {}).get("commit_checkpoints")):
+        # log first so the event itself is part of the commit (no dirty events.jsonl right after a snapshot)
+        p.event("checkpoint", c["id"], "committed", f"{c['id']}: .research/ committed to git")
+        sha = gitinfo.snapshot(p.root, f"research: {c['id']} {vals['title']}")
+    out = checkpoint_detail(p, c["id"])
+    out["snapshot_commit"] = sha
+    return out
 
 
 # =============================================================================== current.md
@@ -406,15 +468,66 @@ def _line(items: List[str], empty: str = "_none_") -> List[str]:
     return items if items else [empty]
 
 
+def _plan_lines(p: Project, limit: int = 3) -> List[str]:
+    """Compact work-queue summary of the newest active plans for current.md."""
+    from . import plans as _plans
+    out: List[str] = []
+    stale = {t["id"]: t["idle_hours"] for t in _plans.stale_tasks(p)}
+    for plan in _plans.list_plans(p, status="active")[:limit]:
+        tasks = _plans.list_tasks(p, plan_id=plan["id"])
+        done = sum(1 for t in tasks if t["status"] == "done")
+        out.append(f"- {plan['id']} {plan['title']} — {done}/{len(tasks)} tasks done"
+                   + (f" · objective: {plan['objective'].splitlines()[0]}" if plan.get("objective") else ""))
+        nxt = _plans.get_next_ready_task(p, plan["id"])
+        if nxt:
+            out.append(f"  - next ready: {nxt['id']} {nxt['title']} (`research task context {nxt['id']}`)")
+        for status, label in (("running", "running"), ("verify", "awaiting verification"), ("blocked", "BLOCKED")):
+            for t in tasks:
+                if t["status"] == status:
+                    out.append(f"  - {label}: {t['id']} {t['title']}"
+                               + (f" (claimed by {t['claimed_by']})" if status == "running" and t.get("claimed_by") else "")
+                               + (f" — STALE, idle {stale[t['id']]}h" if t["id"] in stale else "")
+                               + (f" — {t['blockers'].splitlines()[0]}" if status == "blocked" and t.get("blockers") else ""))
+    return out
+
+
+# (findings, failures, questions, experiments, decisions, blockers) per budget step
+_LIMITS = [(15, 12, 20, 15, 10, 10), (8, 6, 10, 8, 5, 6), (5, 3, 5, 5, 3, 4), (3, 2, 3, 3, 2, 3)]
+
+
 def render_current_md(p: Project, r: Optional[Dict[str, Any]] = None) -> str:
+    """Tier-1 agent context. Lists shrink step by step until the text fits `context.max_chars`."""
     r = r or resume_context(p)
+    budget = int((p.config.get("context") or {}).get("max_chars") or 12000)
+    extra = _extra_sections(p)
+    text = ""
+    for lim in _LIMITS:
+        text = _render_current(p, r, lim, extra)
+        if len(text) <= budget:
+            break
+    return text.replace("{TOKENS}", str(len(text) // 4))
+
+
+def _extra_sections(p: Project) -> Dict[str, List[str]]:
+    from .skills import list_skills
+    from .verification import attention_items
+    sk = list_skills(p)
+    always = [f"- {s['name']} — {s['description'][:140]}" for s in sk if s["always"]]
+    skills = always + [f"- {len(sk) - len(always)} more skills: `research skills list`, load one with `research skill show NAME`"]
+    attention = [f"- [{a['kind'].replace('_', ' ')}] {a['id']} {a['title']}: {a['message'][:160]}" for a in attention_items(p)]
+    return {"skills": skills, "attention": attention}
+
+
+def _render_current(p: Project, r: Dict[str, Any], lim: tuple, extra: Dict[str, List[str]]) -> str:
+    n_find, n_fail, n_q, n_exp, n_dec, n_block = lim
     pr = r["project"]
     g = r["git"]
     cp = r["latest_checkpoint"]
     L = [f"# Research context — {pr['name']}",
          "",
-         "> Generated from .research/ by `research context`. Do not edit; it is overwritten.",
-         f"> Generated {r['generated_at']}. Details: `research show <ID>`, `research resume`.",
+         "> Generated from .research/ by `research current`. Do not edit; it is overwritten. ~{TOKENS} tokens.",
+         f"> Generated {r['generated_at']}. Details: `research show <ID>` · `research search \"…\"` · "
+         "`research task context T-…`.",
          "",
          "## Goal", "", pr.get("goal") or "_(not set — `research project set --goal …`)_", ""]
     if g.get("branch"):
@@ -432,30 +545,44 @@ def render_current_md(p: Project, r: Optional[Dict[str, Any]] = None) -> str:
     b = r["baseline"]
     L += ["", "## Current baseline", "",
           (f"{b['id']} — {b['title']}" + (f" · params: {b['parameters']}" if b.get("parameters") else "")) if b else "_none set_"]
+    qs = r["active_questions"] + r["open_questions"] + r["blocked_questions"]
     L += ["", "## Active & open questions", ""]
-    L += _line([f"- {q['id']} [{q['status']}] {q['title']}" for q in r["active_questions"] + r["open_questions"] + r["blocked_questions"]])
+    L += _line([f"- {q['id']} [{q['status']}] {q['title']}" for q in qs[:n_q]])
+    if len(qs) > n_q:
+        L += [f"- … {len(qs) - n_q} more (`research question list`)"]
     L += ["", "## Established findings (what we believe)", ""]
     L += _line([f"- {f['id']} [{f['status']}{', ' + f['confidence'] if f.get('confidence') else ''}] {f['title']}"
                 + (f" — evidence: {', '.join(f['evidence'][:4])}" if f.get("evidence") else "")
-                for f in r["established_findings"][:15]])
+                for f in r["established_findings"][:n_find]])
+    if len(r["established_findings"]) > n_find:
+        L += [f"- … {len(r['established_findings']) - n_find} more (`research finding list`)"]
     L += ["", "## Failed directions (do not repeat without a new reason)", ""]
-    L += _line([f"- {f['id']} [{f['status']}] {f['title']}" for f in r["failed_directions"][:12]])
+    L += _line([f"- {f['id']} [{f['status']}] {f['title']}" for f in r["failed_directions"][:n_fail]])
+    if len(r["failed_directions"]) > n_fail:
+        L += [f"- … {len(r['failed_directions']) - n_fail} more (`research finding list --kind failure`)"]
     L += ["", "## Current experiments", ""]
     L += _line([f"- {e['id']} [{e['status']}] {e['title']} — runs {e['state']['runs']}"
                 + (f", ⚠ {e['state']['unsynthesized']} unsynthesized" if e["state"]["unsynthesized"] else "")
-                for e in r["current_experiments"]])
+                for e in r["current_experiments"][:n_exp]])
+    L += ["", "## Active plans", ""]
+    L += _line(_plan_lines(p))
+    if extra["attention"]:
+        L += ["", "## Needs attention (verification)", ""] + extra["attention"]
     if r["needs_synthesis"]:
         L += ["", "## ⚠ Needs synthesis before new experiments", ""]
         L += [f"- {e['id']} {e['title']} ({e['state']['unsynthesized']} unsynthesized runs)" for e in r["needs_synthesis"]]
     L += ["", "## Active decisions", ""]
-    L += _line([f"- {d['id']} ({d['date']}) {d['statement']}" for d in r["decisions"][:10]])
+    L += _line([f"- {d['id']} ({d['date']}) {d['statement']}" for d in r["decisions"][:n_dec]])
     L += ["", "## Blockers", ""]
-    L += _line([f"- [{x['kind']}] {x['id']}: {x['text']}" for x in r["blockers"][:10]])
+    L += _line([f"- [{x['kind']}] {x['id']}: {x['text']}" for x in r["blockers"][:n_block]])
+    L += ["", "## Project skills", ""] + extra["skills"]
     pol = r["policy"]
     L += ["", "## Agent policy", "",
           f"- max runs without synthesis: {pol.get('max_runs_without_synthesis')}",
           f"- max failed runs without review: {pol.get('max_failed_runs_without_review')}",
           f"- synthesis required before new experiment: {pol.get('require_synthesis_before_new_experiment')}",
+          "- findings: agents create them preliminary; an independent review (`research finding review`) makes them supported",
+          "- tasks: `research task done` runs the task's checks; failures block completion",
           "- Protocol: see AGENTS.md", ""]
     return "\n".join(L)
 
@@ -467,8 +594,9 @@ def write_current_md(p: Project) -> str:
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             old = f.read()
-    # avoid churn: ignore the timestamp line when comparing
-    strip = lambda s: "\n".join(l for l in (s or "").splitlines() if not l.startswith("> Generated "))
+    # avoid churn: ignore the timestamp/token lines and the HEAD commit (it changes with every commit, including
+    # `checkpoint --commit` snapshots, which would otherwise leave current.md modified right after committing)
+    strip = lambda s: "\n".join(l for l in (s or "").splitlines() if not l.startswith(("> Generated ", "Git: `")))
     if strip(old) != strip(text):
         _atomic_write(path, text)
     return path

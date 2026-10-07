@@ -181,8 +181,8 @@ export function experimentNode(m: Model, e: any, parentKey = 'exp'): Node {
   const key = `${parentKey}/${e.id}`;
   return {
     key,
-    label: `${e.id}  ${e.title}`,
-    description: bits.join(' · ') + author(e),
+    label: e.title,
+    description: `${e.id} · ` + bits.join(' · ') + author(e),
     tooltip: md(
       `**${e.id} · ${e.title}**  \n_${e.status}_${e.is_baseline ? ' · $(star-full) baseline' : ''}\n\n` +
         (e.hypothesis ? `**Hypothesis:** ${truncate(e.hypothesis, 300)}\n\n` : '') +
@@ -250,8 +250,8 @@ export function questionRoots(m: Model): Node[] {
     const qe = exps.filter((e) => e.question_id === q.id).sort((a, b) => a.id.localeCompare(b.id));
     return {
       key,
-      label: `${q.id}  ${q.title}`,
-      description: [q.status, qe.length ? `${qe.length} exp` : ''].filter(Boolean).join(' · ') + author(q),
+      label: q.title,
+      description: `${q.id} · ` + [q.status, qe.length ? `${qe.length} exp` : ''].filter(Boolean).join(' · ') + author(q),
       tooltip: md(`**${q.id} · ${q.title}**\n\n_${q.status}_\n\n${truncate(q.description || '', 400)}`),
       icon: STATUS_ICONS.question[q.status],
       context: 'question',
@@ -284,8 +284,8 @@ export function findingNode(m: Model, f: any, pk = 'f'): Node {
   const ev = (f.links?.supports || []).length;
   return {
     key: `${pk}/${f.id}`,
-    label: `${f.id}  ${f.title}`,
-    description: [f.confidence ? `${f.confidence} confidence` : '', ev ? `${ev} evidence` : 'no evidence'].filter(Boolean).join(' · ') + author(f),
+    label: f.title,
+    description: `${f.id} · ` + [f.confidence ? `${f.confidence} confidence` : '', ev ? `${ev} evidence` : 'no evidence'].filter(Boolean).join(' · ') + author(f),
     tooltip: md(`**${f.id} · ${f.title}**\n\n${truncate(f.statement || '', 500)}\n\n_${f.kind === 'failure' ? 'failed direction' : 'result'} · ${f.status}${f.confidence ? ' · ' + f.confidence : ''}_` +
       (f.limitations ? `\n\n**Limitations:** ${truncate(f.limitations, 200)}` : '')),
     icon: findingIcon(f),
@@ -311,8 +311,8 @@ export function findingRoots(m: Model): Node[] {
 export function decisionRoots(m: Model): Node[] {
   return m.tree!.decisions.map((d) => ({
     key: `d/${d.id}`,
-    label: `${d.id}  ${d.title || d.statement}`,
-    description: [d.date, d.status !== 'active' ? d.status : ''].filter(Boolean).join(' · ') + author(d),
+    label: d.title || d.statement,
+    description: `${d.id} · ` + [d.date, d.status !== 'active' ? d.status : ''].filter(Boolean).join(' · ') + author(d),
     tooltip: md(`**${d.id}** ${d.statement}\n\n${d.reason ? '**Why:** ' + truncate(d.reason, 400) : ''}`),
     icon: STATUS_ICONS.decision[d.status],
     context: 'decision',
@@ -323,8 +323,8 @@ export function decisionRoots(m: Model): Node[] {
 export function checkpointRoots(m: Model): Node[] {
   return m.tree!.checkpoints.map((c, i) => ({
     key: `cp/${c.id}`,
-    label: `${c.id}  ${c.title}`,
-    description: (i === 0 ? 'latest · ' : '') + ago(c.created_at) + author(c),
+    label: c.title,
+    description: `${c.id} · ` + (i === 0 ? 'latest · ' : '') + ago(c.created_at) + author(c),
     tooltip: md(`**${c.title}**\n\n${truncate(c.understanding || '', 400)}\n\n${c.next_experiment ? '**Next:** ' + truncate(c.next_experiment, 200) : ''}`),
     icon: I('bookmark', i === 0 ? 'charts.green' : 'charts.blue'),
     context: 'checkpoint',
@@ -366,10 +366,12 @@ export function agentRoots(m: Model): Node[] {
   const skills: Node[] = t.skills.map((s) => ({
     key: `ag/sk/${s.name}`,
     label: s.name,
-    description: truncate(s.description, 80),
-    tooltip: md(`**${s.name}**\n\n${s.description}\n\n\`${s.path}\``),
-    icon: I('mortar-board', 'charts.purple'),
-    context: 'skill',
+    description: (s.always ? '★ always on · ' : '') + truncate(s.description, 80),
+    tooltip: md(`**${s.name}**${s.always ? ' — always on' : ''}\n\n${s.description}\n\n\`${s.path}\`` +
+      (s.source ? `\n\nImported from ${s.source}${s.subpath ? ' (' + s.subpath + ')' : ''}${s.ref ? ' @ ' + String(s.ref).slice(0, 10) : ''}` : '') +
+      ((s.applies_to || []).length ? `\n\nSuggested for: ${s.applies_to.join(', ')}` : '')),
+    icon: s.always ? I('star-full', 'charts.yellow') : I('mortar-board', 'charts.purple'),
+    context: s.source ? 'skill.imported' : 'skill',
     resourceUri: vscode.Uri.file(path.join(m.root, s.path)),
     command: { command: 'vscode.open', title: 'Open', arguments: [vscode.Uri.file(path.join(m.root, s.path))] },
     children: s.files.length > 1 ? () => s.files.map((f: string) => file(f, `ag/sk/${s.name}/${f}`, path.basename(f), path.dirname(f).split('/').slice(3).join('/'))) : undefined,
@@ -392,10 +394,11 @@ export function taskNode(m: Model, t: any, pk: string): Node {
   const deps = t.depends_on || [];
   return {
     key: `${pk}/${t.id}`,
-    label: `${t.id}  ${t.title}`,
-    description: [
+    label: t.title,
+    description: `${t.id} · ` + [
       t.status === 'blocked' ? 'blocked' : t.status !== 'todo' && t.status !== 'done' ? t.status : '',
-      t.assigned_role ? t.assigned_role : '',
+      t.status === 'running' && t.claimed_by ? t.claimed_by : t.assigned_role ? t.assigned_role : '',
+      (t.checks || []).length ? `${t.checks.length} check${t.checks.length > 1 ? 's' : ''}` : '',
       deps.length ? `deps: ${deps.join(',')}` : '',
     ].filter(Boolean).join(' · ') + author(t),
     tooltip: md(
@@ -405,7 +408,7 @@ export function taskNode(m: Model, t: any, pk: string): Node {
       (deps.length ? `\n\n**Dependencies:** ${deps.join(', ')}` : ''),
     ),
     icon,
-    context: t.status === 'blocked' ? 'task.blocked' : t.status === 'running' ? 'task.running' : 'task',
+    context: t.status === 'todo' ? 'task' : `task.${t.status}`, // only todo tasks get the inline Start action
     command: open(t.id),
   };
 }
@@ -424,14 +427,14 @@ export function planNode(m: Model, p: any, pk = 'plan'): Node {
 
   return {
     key,
-    label: `${p.id}  ${p.title}`,
-    description: desc,
+    label: p.title,
+    description: `${p.id} · ` + desc,
     tooltip: md(
       `**${p.id} · ${p.title}**\n\n_${p.status}_ · ${done}/${tasks.length} tasks done` +
       (p.objective ? `\n\n**Objective:** ${truncate(p.objective, 300)}` : '') +
       (blocked ? `\n\n$(error) ${blocked} blocked task(s)` : ''),
     ),
-    icon: blocked ? I('error', 'charts.orange') : STATUS_ICONS.plan[p.status] || I('list-ordered'),
+    icon: STATUS_ICONS.plan[p.status] || I('list-ordered'),
     context: 'plan',
     command: open(p.id),
     expanded: p.status === 'active',

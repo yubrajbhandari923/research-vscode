@@ -12,6 +12,8 @@ echo "==> Python package"
 PY="${PYTHON:-python3}"
 if "$PY" -c "import build" 2>/dev/null; then
   "$PY" -m build --outdir dist .
+elif ! "$PY" -m pip --version >/dev/null 2>&1 && command -v uv >/dev/null; then
+  uv build --out-dir dist .   # uv-created venvs have no pip
 else
   "$PY" -m pip wheel . --no-deps --no-build-isolation -w dist -q || "$PY" -m pip wheel . --no-deps -w dist -q
   echo "   (install 'build' for an sdist: $PY -m pip install build)"

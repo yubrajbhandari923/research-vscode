@@ -20,6 +20,9 @@ from .schema import ENTITIES
 
 GENERATED_MARKER = "<!-- research:generated — everything below is regenerated; edits here are ignored -->"
 _SKIP_FM = {"created_at", "updated_at"}  # still written, but not user-meaningful to edit
+# JSON columns that hold lists; rendered as [] when empty (all other JSON columns as {}).
+_LIST_COLS = {"tags", "metrics_requested", "expected_artifacts", "finding_ids", "failure_ids", "question_ids",
+              "experiment_ids", "depends_on", "artifacts", "skills", "checks"}
 
 
 def fm_key(spec: dict, col: str) -> str:
@@ -36,9 +39,10 @@ def render(etype: str, row: Dict[str, Any], links: Dict[str, List[str]], tail: s
         v = row.get(col)
         if kind == "bool":
             v = bool(v) if v is not None else None
-        if kind == "json" and v is None:
-            v = [] if col in ("tags", "metrics_requested", "expected_artifacts", "finding_ids",
-                              "failure_ids", "question_ids", "experiment_ids") else {}
+        if kind == "json" and col in _LIST_COLS and (v is None or v == {}):
+            v = []
+        elif kind == "json" and v is None:
+            v = {}
         if col == "param_delta" and not v:
             continue
         fm[fm_key(spec, col)] = v
