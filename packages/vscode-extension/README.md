@@ -16,6 +16,8 @@ plus optional **plans → tasks** for tracking the work itself.
 - Optional **Scientist Guide** (`docs/SCIENTIST_GUIDE.md`) kept current after each synthesis, a `scientific-handoff` skill, and
   Opus → Sonnet → Haiku tiered routing with frozen acceptance tests (`research setup agents`, `research orchestrate`). These are
   CLI-driven for now; the panel shows their tasks, notes and a "guide pending" attention item, but has no dedicated UI.
+- **Numerical evidence**: findings can bind their numbers to recorded metrics (`research evidence …`); a failed binding blocks `supported`,
+  and `research report` shows the verification table. CLI-driven; no dedicated panel UI yet.
 - Compare two runs side by side, sweep parameters within the run budget, export a report with the evidence plots.
 - Gives every project its own CLI at `.research/bin/research`, which any agent can run without installing anything,
   including the Claude Code extension's Bash tool. Plain `research` is also on `PATH` in VS Code terminals. Agents follow

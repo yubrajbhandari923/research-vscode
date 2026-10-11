@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Numerical evidence, artifact integrity and provenance (optional; legacy findings unchanged)
+
+- **Evidence bindings** (`research evidence bind|verify|value|suggest|provenance|artifact|pin|status`, append-only
+  `.research/evidence.jsonl`): tie a number in a finding to a recorded metric or a whitelisted calculation over metrics. Values are read from
+  the records; ambiguity, NaN, failed runs and incompatible units are explicit. Statuses: verified, mismatch, missing, stale, unverifiable.
+- **Review gate**: a finding with bindings can't become `supported` (by anyone) unless every binding verifies, and the reviewer must write
+  interpretation notes; independent review is unchanged. Corrections use `--supersedes`.
+- **Artifact integrity**: streamed hashes, `modified/missing/unavailable/unhashed` states, append-only pins for large files, historical warnings.
+  Runs now record environment lockfile hashes; `evidence provenance` lists what was *not* recorded.
+- **Reports** show an evidence table per finding with bindings. The Scientist Guide status shows each finding's numerical state, and the
+  `scientist-guide`/`synthesize-experiment` skills tell agents to get numbers from `research evidence`.
+- **Literature sources** (`research source`): offline records keeping identity, examination and support separate.
+- Limitations are listed in SPEC §22.2.
+
 ### Scientist Guide, handoffs and tiered agents (all optional; existing projects keep working)
 
 - **Scientist Guide** (`docs/SCIENTIST_GUIDE.md`, path/model in `config.yaml → guide`): a living scientific narrative, separate

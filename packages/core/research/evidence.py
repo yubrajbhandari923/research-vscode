@@ -25,6 +25,7 @@ from .util import NotFound, PolicyBlocked, ResearchError, as_list, jload, now_is
 
 STATUSES = ["verified", "mismatch", "missing", "stale", "unverifiable"]
 PARTITIONS = ["design", "validation", "test"]
+MAX_REL_TOL = 0.05
 SELECT = ["first", "last", "min", "max"]
 _REL = ("relative_improvement", "relative_change")
 OPS = {  # name → (arity check, fn, output-unit rule)
@@ -140,6 +141,8 @@ def bind(p: Project, fid: str, run: Optional[str] = None, metric: Optional[str] 
     value is stored and compared at verification time, so a wrong number is caught rather than trusted."""
     fid = normalize_id(fid, "F")
     p.get("finding", fid)
+    if rel_tol is not None and not 0 < rel_tol <= MAX_REL_TOL:
+        raise ResearchError(f"rel_tol must be in (0, {MAX_REL_TOL}]: a loose tolerance can hide a wrong number")
     if partition and partition not in PARTITIONS:
         raise ResearchError(f"partition must be one of {', '.join(PARTITIONS)}")
     if derive:

@@ -216,3 +216,9 @@ def test_cli_roundtrip(proj, exp, capsys):
     assert main(["evidence", "verify", f]) == 1
     assert main(["evidence", "value", run, "--metric", "rmse"]) == 0
     assert "12.8" in capsys.readouterr().out
+
+
+def test_loose_tolerance_cannot_launder_a_number(proj, exp):
+    run = mkrun(proj, exp, 12.8)
+    with pytest.raises(ResearchError, match="tolerance"):
+        E.bind(proj, finding(proj, [run]), run=run, metric="rmse", claim="1000", rel_tol=1.0)

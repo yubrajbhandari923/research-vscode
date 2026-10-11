@@ -1466,7 +1466,7 @@ differences; VS Code shows the side-by-side page (§13.5).
 After every **mutating** command, `current.md` is regenerated. (`note` commands and `skills list/show/new/duplicate/link`
 are not counted as mutating.)
 
-### 10.x Scientist Guide, orchestration and tuning (optional layer)
+### 10.x Scientist Guide, orchestration, tuning and evidence (optional layer)
 
 | Command | Purpose |
 |---|---|
@@ -1479,7 +1479,16 @@ are not counted as mutating.)
 | `orchestrate delegate T-parent "title" --tier haiku` | Child task; parent gains it in `depends_on`. |
 | `tuning declare\|trial\|select\|test EXP-…` | Frozen plan; design/validation trials within a budget; one-shot held-out test after selection. |
 
-State: `.research/guide.json`, `.research/orchestration/<T-id>.json`, `.research/orchestration/tuning-<EXP>.json`. Not covered: VS Code UI, MCP tools, token/cost usage.
+| `evidence bind F-… --run RUN-… --metric NAME [--step N\|--select first\|last\|min\|max] [--claim X] [--unit U] [--factor K] [--rel-tol T] [--partition design\|validation\|test] [--artifact A-…] [--supersedes F-…/B1]` | Bind a number to a recorded metric. Without `--claim` the value is **read** from the evidence. With `--derive OP --input RUN:metric[@step]…` it binds a whitelisted calculation (`mean sum min max std difference abs_difference ratio relative_improvement relative_change`); no free-form expressions. |
+| `evidence verify F-…` / `value RUN-… --metric NAME` | Re-read live records: `verified \| mismatch \| missing \| stale \| unverifiable` per binding. `value` prints one resolved metric. |
+| `evidence suggest F-…` / `status` | Legacy migration aid: unbound numbers in a statement; project overview incl. historical integrity warnings. |
+| `evidence provenance RUN-…` | Commit, dirty state, seeds, partitions, lockfile hashes, units, and explicit limitations. |
+| `evidence artifact A-… [--deep]` / `pin A-…` | Integrity vs the registered hash (`ok \| modified \| missing \| unavailable \| unhashed \| possibly_modified \| directory`); `pin` appends a first-seen hash for unhashed large files. Registered metadata is never rewritten. |
+| `source add --doi\|--arxiv\|--url` / `mark SRC-… [--identity-verified] [--examined --locator …] [--finding F-… --verdict supports\|partially_supports\|does_not_support]` / `list` | Offline literature records with identity, examination and per-finding support kept separate. |
+
+Review rule: for a finding with bindings, a `supported` review or status change is refused unless **every** binding verifies (humans included), and the reviewer must supply `--notes` on the interpretation; independent review is unchanged. Findings without bindings behave exactly as before. `research report` adds a per-finding evidence table (value, source or calculation, artifact, partition, verification) only for findings that have bindings.
+
+State: `.research/guide.json`, `.research/orchestration/<T-id>.json`, `.research/orchestration/tuning-<EXP>.json`, append-only `.research/evidence.jsonl`, `integrity.jsonl`, `sources.jsonl`.
 
 ---
 
@@ -2203,6 +2212,24 @@ No open bugs are known as of 2026-10-07 (104 pytest tests and 71 real-VS-Code ha
 | — | the RPC process kept `CLAUDE_CODE_ENTRYPOINT` / Codex / role variables, so UI actions could be attributed to an agent | all agent-identity variables are stripped |
 
 ### 22.2 Limitations by design
+
+#### Scientific provenance, Scientist Guide and orchestration layers (added after the items below)
+
+- **Evidence verification checks numbers, not science.** Verified bindings prove a number matches a recorded metric (or a whitelisted calculation over metrics). They do not show the metric is the right one, the experiment is valid, or the interpretation is correct. Free-form prose is not parsed; only explicitly bound numbers are checked (`evidence suggest` lists unbound numbers in legacy findings but cannot bind them for you).
+- **Claims are compared after rounding to the stated decimals (or `--rel-tol`, capped at 5%).** `12.8` matches a recorded 12.84. Use `--rel-tol` for exact comparison. An integer claim such as `12` matches anything within ±0.5.
+- **Only runs/metrics recorded in Research OS are verifiable.** A number computed outside a registered run, or in an artifact whose contents are not parsed, can only be cross-checked by its artifact hash (not by reading the file's numbers).
+- **Artifact integrity needs a stored hash.** Files larger than `artifacts.hash_max_bytes` have no registration hash: they report `unhashed`/`possibly_modified` (size only) until pinned with `research evidence pin`, which hashes from that moment, not from the original creation. Directories are not content-hashed. External or unmounted storage reports `unavailable`.
+- **Run provenance is only as good as what was recorded.** Lockfile hashes are recorded for runs created after this change; older runs say so. Seeds and split identities are read from run `parameters` (keys containing seed/split/partition/fold/dataset). Missing metadata is reported as a limitation, never inferred. A clean git commit does not prove reproducibility.
+- **Leakage protection is structural, not semantic.** Held-out test values are refused when the experiment has a `research tuning` plan with no frozen selection or recorded test. Without that structured metadata, the check can only warn. It cannot detect leakage you did not declare.
+- **The numerical gate also applies to humans.** Unlike other review gates, `supported` is refused for anyone when a bound number fails. Correct by superseding the binding or finding; a history of earlier bindings (including loose ones created before the tolerance cap) is preserved.
+- **Literature sources are offline records.** `research source` validates identifier format only. It never resolves a DOI or fetches a paper; identity, examination and per-finding support are three separate human/agent assertions.
+- **Scientist Guide prose is not machine-verified.** The guide status shows whether each finding's numbers verify, but nothing checks that the narrative quotes them correctly. Review it like any scientific text. Writing and freshness depend on an Opus agent actually being run; `guide refresh` only prepares it.
+- **Tiered orchestration is launched by people or sessions, not a scheduler.** Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier. The generated `.claude/agents` files and `claude-*-5-5` IDs were checked with `claude --model`, but the subagent `model:` frontmatter was not exercised in a live session.
+- **No VS Code UI or MCP tools yet for the guide, orchestration, tuning, evidence or sources.** They are CLI-driven; the panel shows the tasks, notes and a 'guide pending' attention item they produce. The report page does show the evidence table.
+- **No token or cost accounting.** Research OS does not record model usage; it is reported as unavailable.
+- **Ponytail import was not run against the live repository.** `research setup agents --approve ponytail` uses the existing skill importer, which is tested with a local fixture.
+
+#### Core
 
 - **ID collisions across git branches.** Counters are local. Two branches that create the same id produce a `conflict`
   event on rebuild, and one file must be renamed by hand. A future option is branch-safe ids (e.g. a short hash suffix).

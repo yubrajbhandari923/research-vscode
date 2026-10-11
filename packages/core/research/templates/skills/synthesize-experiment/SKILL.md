@@ -19,6 +19,9 @@ description: Turn finished runs into a synthesis, findings and (if warranted) de
      --supports EXP-00X RUN-XXXX A-XXXX --confidence low|medium|high \
      --limitations "<scope>" [--kind failure]
    ```
+   For every number a finding states, bind it to its source so it can be checked by software, not trusted:
+   `research evidence bind F-… --run RUN-… --metric NAME` (reads the value), or `--derive relative_improvement --input RUN-A:m --input RUN-B:m --claim 37.5`.
+   `research evidence verify F-…` must pass before review; a plausible explanation never fixes a mismatch (supersede with `--supersedes`).
 5. If the result changes how the project proceeds, record a decision linked to the finding.
 6. Mark the experiment: `research experiment complete EXP-00X` or `research experiment fail EXP-00X`.
 7. If the project has a Scientist Guide, `research guide status` shows it is now pending. An Opus-class synthesizer

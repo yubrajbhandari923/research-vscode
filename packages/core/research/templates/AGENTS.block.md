@@ -34,6 +34,8 @@ the human to open the project in VS Code with the Research Panel extension, or t
   preliminary, supported, contradicted or superseded.
 - Approved experiment specs and evaluation criteria are binding. Never tune on held-out test results; never loosen a
   check or tolerance just to pass. Quote numbers from run/metric records, not memory.
+- Bind every number in a finding to its record (`research evidence bind F-… --run RUN-… --metric NAME`, then `research evidence verify F-…`).
+  A mismatch blocks `supported`; correct it by superseding the binding, never by explanation. Verified numbers are not a reviewed interpretation.
 - Preserve the user's files, data, notebooks and unsaved work. Project-specific numerical/scientific rules belong in the
   user-authored part of this file, outside the markers.
 - Unfamiliar with the science? Read `docs/SCIENTIST_GUIDE.md` (`research skill show scientist-guide`). After synthesizing

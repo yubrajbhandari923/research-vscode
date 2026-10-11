@@ -466,6 +466,8 @@ research note       new|list|pin|link
 research skills     list|show|add|update|remove|set|link|new|duplicate        (alias: skill)
 research guide      init|status|refresh [--run]|done [SYN-ID…]                 (Scientist Guide)
 research setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe]
+research evidence   bind|verify|value|suggest|provenance|artifact|pin|status
+research source     add|mark|list                                              (literature; offline)
 research orchestrate route|dispatch|freeze|attempt|correct-test|delegate|status T-… [--tier opus|sonnet|haiku]
 research tuning     declare|trial|select|test EXP-…                           (validation-only; test is one-shot)
 
@@ -610,6 +612,32 @@ research tuning declare|trial|select|test EXP-001 …                     # vali
 ```
 Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempts, Sonnet 2, 2 escalations, 50 tuning evaluations).
 
+### Numerical evidence and provenance
+
+A finding can be linked to an experiment ID and still state a wrong number. **Bindings** make the number checkable by
+software instead of trusted. Prefer letting Research OS *read* the value:
+
+```bash
+research evidence value RUN-0002 --metric final_error          # the recorded value, unit, status
+research evidence bind F-004 --run RUN-0002 --metric final_error --partition design         # claim read from the record
+research evidence bind F-004 --derive ratio --input RUN-0002:final_error --input RUN-0003:final_error --claim 1140
+research evidence bind F-003 --run RUN-0002 --metric final_error --claim 0.0021             # a typed (wrong) number…
+research evidence verify F-003                                  # → MISMATCH: claimed 0.0021 but the recorded evidence gives 0.00123786
+research finding review F-003 --verdict supported --notes "…"   # → refused, even for a human, until the numbers verify
+research evidence bind F-003 … --supersedes F-003/B1            # correct by superseding; history stays
+```
+
+- Statuses: `verified · mismatch · missing · stale (an artifact changed) · unverifiable` (failed run, NaN, ambiguous step,
+  incompatible units). A plausible explanation never turns a mismatch into a pass.
+- Verified numbers are **not** a reviewed interpretation: `supported` still needs an independent reviewer and written notes.
+- Qualitative and legacy findings are untouched. `research evidence suggest F-…` lists unbound numbers in an old statement.
+- Artifacts: `research evidence artifact A-…` checks the registered hash (streamed); large files that were never hashed can be
+  pinned (`evidence pin`). Changes to cited artifacts show up as integrity warnings; registered metadata is never rewritten.
+- `research evidence provenance RUN-…` shows commit/dirty state, seeds, split identities and lockfile hashes, and lists what
+  was **not** recorded. `research source add|mark` keeps literature identity, examination and support separate (offline).
+- `research report` adds an evidence table under each finding that has bindings.
+- Worked example: [examples/alpha-sweep](examples/alpha-sweep) (`SCIENTIST_GUIDE.example.md`, `REPORT.example.md`).
+
 ### Verification gates
 
 - **Checks gate tasks.** If a task has checks (`cmd:…`, `file:…`, `metric:…`), `research task done` runs them first. A
@@ -622,7 +650,7 @@ Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempt
   - the same CLI in a different role (`claude/implementer` ≠ `claude/verifier`)
 
   A supported verdict needs linked evidence. *Needs work* and *contradicted* verdicts show up as "reviewer disagrees".
-- **You are never blocked.** Humans get warnings instead, unless `agent_policy.enforce_for_humans: true`.
+- **You are never blocked**, with one exception: a finding whose bound numbers fail verification can't be marked supported by anyone (see *Numerical evidence* below). Otherwise humans get warnings, unless `agent_policy.enforce_for_humans: true`.
 
 ### MCP: the same tools, natively
 
@@ -758,7 +786,10 @@ No open bugs are known as of 2026-10-07. That covers 104 automated tests, 71 che
 Claude Code session calling the MCP tools. Bugs found along the way are listed in
 [SPEC §22.1](docs/SPEC.md#22-known-issues-and-limitations).
 
-Limitations worth knowing:
+Limitations worth knowing (the evidence, Scientist Guide and orchestration layers are listed in full in [SPEC §22.2](docs/SPEC.md#22-known-issues-and-limitations)):
+- Numerical verification checks that a number matches a recorded metric or declared calculation; it does not prove the science is right. Free-form prose is not parsed, claims are compared after rounding, and large unhashed files can only be size-checked until pinned.
+- The Scientist Guide's prose is not machine-checked, and refreshing it requires an Opus agent to be run (`guide refresh` only prepares it).
+- Tiered orchestration has no VS Code UI or MCP tools, records no token/cost usage, and runs Sonnet→Haiku as a separate process because Claude Code subagents can't spawn subagents.
 - The review gate is a guard rail for honest agents, not a security boundary. Roles are self-declared, and hand edits
   of Markdown files count as human edits.
 - Nothing schedules work automatically: you dispatch agents, and plans don't complete themselves.
