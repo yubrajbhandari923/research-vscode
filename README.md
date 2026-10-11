@@ -59,11 +59,11 @@ You need **Python ≥ 3.8** on the machine that holds the files. Nothing else: t
 
 ```bash
 # VS Code extension (the Python core is bundled inside; no pip install needed for the panel)
-code --install-extension dist/research-panel-0.1.0.vsix
+code --install-extension dist/research-panel-0.2.0.vsix
 #   or: Extensions view → ⋯ → Install from VSIX…
 
 # Optional: the `research` CLI outside VS Code (HPC login nodes, sbatch scripts, notebooks)
-pip install dist/research_panel-0.1.0-py3-none-any.whl     # or, from a clone: pip install -e .
+pip install dist/research_panel-0.2.0-py3-none-any.whl     # or, from a clone: pip install -e .
 ```
 
 - **Every project gets its own CLI at `.research/bin/research`.** Agents run it directly, without installing

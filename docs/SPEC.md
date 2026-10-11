@@ -1,6 +1,6 @@
 # Research Panel — Features, Design and Technical Specification
 
-**Version:** 0.1.0 (+ plans/tasks + Research OS layer) · **Schema version:** 3 · **Last verified against code:** 2026-10-07 (uncommitted work on `main` after `f6db70c`)
+**Version:** 0.2.0 (+ plans/tasks + Research OS layer) · **Schema version:** 3 · **Last verified against code:** 2026-10-07 (uncommitted work on `main` after `f6db70c`)
 
 This is the single reference for **what Research Panel does, why it is designed that way, and exactly how it works**.
 A competent engineer should be able to re-implement it from this document alone. It also answers behaviour questions

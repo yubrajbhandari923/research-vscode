@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-11
 
 ### Numerical evidence, artifact integrity and provenance (optional; legacy findings unchanged)
 

@@ -55,3 +55,10 @@ research task complete T-001 --result "summary of what happened"   # runs the ta
 
 For skills: `research skill show <name>`. For details: `research show <ID>`.
 <!-- research:end -->
+
+## Release rule (project-specific)
+
+Every time a feature is added, bump the version in `pyproject.toml`, `package.json`, `packages/vscode-extension/package.json`
+(and the two `package-lock.json` headers) and `packages/core/research/__init__.py`, rename the CHANGELOG "Unreleased" heading
+to the new version, rebuild (`npm run package`), and reinstall the VSIX. Without a new version number VS Code cannot tell
+the builds apart and can keep the old extension.
