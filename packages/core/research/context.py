@@ -147,6 +147,14 @@ def research_home(p: Project) -> Dict[str, Any]:
     from .verification import attention_items as _verification_items
     attention_items.extend(_verification_items(p))
 
+    # Scientist Guide: only once the project has opted in by creating the file
+    from . import guide as _guide
+    _g = _guide.status(p)
+    if _g["enabled"] and _g["exists"] and _g["pending"]:
+        attention_items.append({"kind": "guide_pending", "severity": "low", "id": _g["pending"][0]["id"],
+                                "title": "Scientist Guide awaiting refresh",
+                                "message": f"{len(_g['pending'])} synthesis(es) not yet reflected: `research guide refresh`"})
+
     # Failed runs that haven't been reviewed
     for b in r.get("blockers", []):
         if b["kind"] == "run":

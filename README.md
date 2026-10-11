@@ -749,3 +749,21 @@ npm run demo                        # example project in examples/alpha-sweep/de
 | [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) | proposal, implemented differently | Planned an MCP-SDK server; the built one uses the standard library only (SPEC §7.8). |
 
 MIT licensed.
+
+## Scientist Guide (optional)
+
+A living, readable scientific narrative (`docs/SCIENTIST_GUIDE.md`) for an incoming scientist. It complements, and does
+not replace, `README.md`, the technical docs and `research report`. Every synthesis makes the guide *pending*; it is only
+*current* after an agent edits it and runs `research guide done`.
+
+```bash
+research guide init                  # bare-bones guide from goal + questions (never overwrites)
+research guide status                # pending syntheses + their findings' statuses
+research guide refresh               # prints the command for the configured Opus agent (guide.model in config.yaml)
+research guide refresh --run         # ...or starts it now; the agent follows the `scientist-guide` skill
+research guide done [SYN-ID …]       # agent records what it has reflected (default: all pending)
+```
+
+Existing projects: run `research init` once to copy the new `scientist-guide` and `scientific-handoff` skills and
+refresh the AGENTS.md block. Convert a researcher's discussion into a Question/Plan/Experiment/Tasks with the
+`scientific-handoff` skill.

@@ -21,4 +21,6 @@ description: Turn finished runs into a synthesis, findings and (if warranted) de
    ```
 5. If the result changes how the project proceeds, record a decision linked to the finding.
 6. Mark the experiment: `research experiment complete EXP-00X` or `research experiment fail EXP-00X`.
-7. `research context` to refresh `.research/context/current.md`.
+7. If the project has a Scientist Guide, `research guide status` shows it is now pending. An Opus-class synthesizer
+   follows the `scientist-guide` skill and runs `research guide done …`; otherwise leave it pending (never claim it was updated).
+8. `research context` to refresh `.research/context/current.md`.

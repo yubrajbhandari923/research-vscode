@@ -27,6 +27,18 @@ the human to open the project in VS Code with the Research Panel extension, or t
 - Large outputs stay where produced; just register paths
 - Exit code 3 means a policy blocked you: read the hint, don't work around it
 
+### Scientific practice
+- Read context in layers (`research current` → `task context` → `show <ID>`) and stop when you have enough. Search prior
+  findings and docs before repeating work.
+- Keep intent, implementation, observation, interpretation and supported conclusions distinct. Label findings
+  preliminary, supported, contradicted or superseded.
+- Approved experiment specs and evaluation criteria are binding. Never tune on held-out test results; never loosen a
+  check or tolerance just to pass. Quote numbers from run/metric records, not memory.
+- Preserve the user's files, data, notebooks and unsaved work. Project-specific numerical/scientific rules belong in the
+  user-authored part of this file, outside the markers.
+- Unfamiliar with the science? Read `docs/SCIENTIST_GUIDE.md` (`research skill show scientist-guide`). After synthesizing
+  an experiment, refresh it or leave it marked pending: `research guide status`. Hand-offs: `research skill show scientific-handoff`.
+
 ### Recording work
 ```bash
 # Run with provenance

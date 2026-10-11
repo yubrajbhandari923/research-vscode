@@ -64,6 +64,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "coordination": {"stale_task_hours": 4},
     "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
     "skills": {"link": ["claude", "agents"]},    # expose .research/skills to .claude/skills and .agents/skills
+    "guide": {"enabled": True, "path": "docs/SCIENTIST_GUIDE.md", "profile": None, "model": "opus"},
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
 }
 

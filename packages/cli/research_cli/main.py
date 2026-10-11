@@ -557,6 +557,9 @@ def cmd_experiment_synthesize(a, p) -> int:
     _done(a, s, msg=f"synthesis {s['id']} recorded ({len(s['runs_covered'])} runs covered)")
     if not a.json:
         print(dim("  promote reusable conclusions: research finding create \"…\" --supports " + normalize_id(a.id, "EXP")))
+        from research import guide as G
+        if G.settings(p).get("enabled", True) and os.path.exists(G.guide_path(p)):
+            print(yellow("  Scientist Guide is now out of date (not updated yet): research guide refresh"))
     return 0
 
 
@@ -901,6 +904,45 @@ def cmd_skills_duplicate(a, p) -> int:
 def cmd_agents_md(a, p) -> int:
     path = p.write_agents_md()
     _done(a, {"path": path}, msg=f"{os.path.relpath(path)} updated (research block only)")
+    return 0
+
+
+@mut
+def cmd_guide(a, p) -> int:
+    from research import guide as G
+    act = a.action
+    if act == "init":
+        r = G.init_guide(p)
+        _done(a, r, msg=f"{r['path']} " + ("created" if r["created"] else "already exists (left untouched)"))
+    elif act == "done":
+        r = G.mark_done(p, a.ids)
+        _done(a, r, msg=f"recorded; {len(r['pending'])} still pending")
+    elif act == "refresh":
+        r = G.refresh(p, a.profile, getattr(a, "model", None))
+        if a.json:
+            out_json(r)
+        elif r.get("up_to_date"):
+            print(green("✓ ") + "guide is up to date")
+        elif a.run:
+            print(f"running {r['profile']}/{r['role']} (model {r['model']}) on {len(r['pending'])} pending synthesis(es)", file=sys.stderr)
+            import subprocess
+            root = p.root
+            p.close()
+            return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
+        else:
+            print(f"{len(r['pending'])} pending: {', '.join(r['pending'])} — run this (nothing is marked done until the agent does):")
+            print(r["shell"])
+    else:
+        r = G.status(p)
+        if a.json:
+            out_json(r)
+        else:
+            print(f"{r['path']}  " + ("exists" if r["exists"] else "missing (research guide init)")
+                  + ("" if r["enabled"] else "  [disabled]"))
+            for s in r["pending"]:
+                print(yellow(f"  pending {s['id']}") + dim("  findings: " + (", ".join(f"{f['id']}[{f['status']}]" for f in s["findings"]) or "none")))
+            if r["up_to_date"]:
+                print(green("✓ ") + "all syntheses reflected")
     return 0
 
 
@@ -1453,6 +1495,12 @@ def build_parser() -> argparse.ArgumentParser:
     x = add(sub, "log", cmd_log, "audit log of recent changes")
     x.add_argument("--limit", type=int, default=30)
     add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")
+
+    x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…]")
+    x.add_argument("action", nargs="?", default="status", choices=["init", "status", "refresh", "done"])
+    x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending)")
+    x.add_argument("--run", action="store_true", help="refresh: start the agent now instead of printing the command")
+    x.add_argument("--profile")
 
     g = group("project", "project metadata")
     x = add(g, "set", cmd_project_set, "set name/goal/description")
