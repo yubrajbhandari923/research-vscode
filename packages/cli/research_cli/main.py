@@ -946,6 +946,79 @@ def cmd_guide(a, p) -> int:
     return 0
 
 
+def cmd_setup(a, p) -> int:
+    from research import setup_agents as SA
+    r = SA.setup(p, a.provider, a.preset, apply=a.apply and not a.dry_run, approve=a.approve or [], probe=a.probe)
+    if a.json:
+        out_json(r)
+        return 0
+    print(("applied" if r["applied"] else "dry run (add --apply)") + f" · claude {r['claude']['version'] or 'not found'}")
+    for f in r["agent_files"]:
+        print(f"  {f['state'].ljust(15)} {f['path']}  → {f['model']}")
+    for k in ("installed", "skipped", "unavailable", "recommended"):
+        for x in r[k]:
+            print(f"  {k}: {x}")
+    print(f"  routing: {r['routing_verified']}")
+    return 0
+
+
+def _orch_task(p, a):
+    return p.get("task", normalize_id(a.task, "T"))
+
+
+@mut
+def cmd_orchestrate(a, p) -> int:
+    from research import orchestrate as O
+    act = a.action
+    if act == "route":
+        r = O.route(p, _orch_task(p, a), a.tier, a.available)
+    elif act == "dispatch":
+        r = O.dispatch_task(p, a.task, a.tier, a.available, a.allow_unfrozen)
+        if not a.json and not a.run:
+            print(f"{r['tier']} ({r['model']}) brief → {r['brief']}" + (f"  ⚠ {r['route']['note']}" if r["degraded"] else ""))
+            print(r["shell"])
+            return 0
+        if a.run and not a.json:
+            import subprocess
+            root = p.root
+            p.close()
+            return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
+    elif act == "freeze":
+        r = O.freeze(p, a.task, a.rest)
+    elif act == "attempt":
+        r = O.record_attempt(p, a.task, a.tier, a.outcome, a.category, a.note)
+    elif act == "correct-test":
+        r = O.correct_test(p, a.task, a.rest[0], a.reason, a.tier)
+    elif act == "delegate":
+        r = O.delegate(p, a.task, a.rest[0], a.tier or "haiku", a.goal, a.acceptance, a.check)
+    elif act == "status":
+        r = O.status(p, a.task)
+    else:
+        raise ResearchError("unknown action")
+    _done(a, r, msg=json.dumps(r, default=str) if not a.json else None)
+    return 0
+
+
+@mut
+def cmd_tuning(a, p) -> int:
+    from research import orchestrate as O
+    cfg_ = json.loads(a.config) if getattr(a, "config", None) else None
+    if a.action == "declare":
+        rng = {}
+        for x in a.range or []:
+            k, v = x.split("=", 1)
+            rng[k] = v
+        r = O.tuning_declare(p, a.exp, a.objective, rng, a.strategy, a.selection, a.seed, a.budget)
+    elif a.action == "trial":
+        r = O.tuning_trial(p, a.exp, cfg_, a.split, a.value, a.run)
+    elif a.action == "select":
+        r = O.tuning_select(p, a.exp, cfg_, a.rationale or "")
+    else:
+        r = O.tuning_test(p, a.exp, a.value, a.run)
+    _done(a, r, msg=json.dumps(r, default=str) if not a.json else None)
+    return 0
+
+
 @mut
 def cmd_rebuild(a, p) -> int:
     counts = p.rebuild_index(backup=True)
@@ -1501,6 +1574,47 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending)")
     x.add_argument("--run", action="store_true", help="refresh: start the agent now instead of printing the command")
     x.add_argument("--profile")
+
+    x = add(sub, "setup", cmd_setup, "optional setup: `setup agents --provider claude --preset scientific [--apply]`")
+    x.add_argument("what", choices=["agents"])
+    x.add_argument("--provider", default="claude")
+    x.add_argument("--preset", default="scientific")
+    x.add_argument("--apply", action="store_true")
+    x.add_argument("--dry-run", action="store_true")
+    x.add_argument("--approve", nargs="+", choices=["ponytail"], help="approve third-party skill imports")
+    x.add_argument("--probe", action="store_true", help="also make one tiny live call per model")
+
+    x = add(sub, "orchestrate", cmd_orchestrate,
+            "route | dispatch | freeze | attempt | correct-test | delegate | status for tiered (Opus/Sonnet/Haiku) work")
+    x.add_argument("action", choices=["route", "dispatch", "freeze", "attempt", "correct-test", "delegate", "status"])
+    x.add_argument("task", help="task id (parent task for delegate)")
+    x.add_argument("rest", nargs="*", help="freeze: test files · correct-test: file · delegate: title")
+    x.add_argument("--tier", choices=["haiku", "sonnet", "opus"])
+    x.add_argument("--available", nargs="*", help="models known to be available (default: config)")
+    x.add_argument("--allow-unfrozen", metavar="REASON")
+    x.add_argument("--run", action="store_true", help="dispatch: start the agent now")
+    x.add_argument("--outcome", choices=["pass", "fail"])
+    x.add_argument("--category")
+    x.add_argument("--note")
+    x.add_argument("--reason")
+    x.add_argument("--goal")
+    x.add_argument("--acceptance")
+    x.add_argument("--check", action="append")
+
+    x = add(sub, "tuning", cmd_tuning, "declare | trial | select | test (held-out, once)")
+    x.add_argument("action", choices=["declare", "trial", "select", "test"])
+    x.add_argument("exp")
+    x.add_argument("--objective")
+    x.add_argument("--range", action="append", metavar="NAME=LO:HI")
+    x.add_argument("--strategy")
+    x.add_argument("--selection")
+    x.add_argument("--seed", type=int, default=0)
+    x.add_argument("--budget", type=int)
+    x.add_argument("--config", help="JSON parameter configuration")
+    x.add_argument("--split", choices=["design", "validation", "test"])
+    x.add_argument("--value", type=float)
+    x.add_argument("--run")
+    x.add_argument("--rationale")
 
     g = group("project", "project metadata")
     x = add(g, "set", cmd_project_set, "set name/goal/description")

@@ -95,6 +95,10 @@ def refresh(p: Project, profile: str = None, model: str = None) -> Dict[str, Any
     model = model or cfg.get("model")
     if not model:
         raise ResearchError("No guide model configured", hint="Set guide.model (e.g. opus) or pass --model.")
+    avail = as_list((p.config.get("orchestration") or {}).get("available"))
+    if avail and model not in avail:  # never run the narrative on a lesser model: leave it visibly pending
+        raise ResearchError(f"Guide model {model} is not available; the guide stays pending",
+                            hint="Fix orchestration.available / guide.model in .research/config.yaml.")
     init_guide(p)
     st = status(p)
     if st["up_to_date"]:

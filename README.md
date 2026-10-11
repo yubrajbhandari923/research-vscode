@@ -767,3 +767,24 @@ research guide done [SYN-ID …]       # agent records what it has reflected (de
 Existing projects: run `research init` once to copy the new `scientist-guide` and `scientific-handoff` skills and
 refresh the AGENTS.md block. Convert a researcher's discussion into a Question/Plan/Experiment/Tasks with the
 `scientific-handoff` skill.
+
+## Tiered agents: Opus → Sonnet → Haiku (optional)
+
+Routing by difficulty and verifiability, layered on the existing plans, tasks, checks and `dispatch`:
+Opus designs/synthesizes and maintains the Scientist Guide, Sonnet writes contracts + independent tests and reviews,
+Haiku implements fully specified, frozen-test units. Native Claude Code subagents cannot spawn subagents, so Opus→Sonnet and
+Opus→Haiku run in-session via `.claude/agents/research-*.md`, while Sonnet→Haiku runs as a separate `claude` process via
+`research orchestrate dispatch … --run`. Token/cost usage is not recorded by Research OS (reported as unavailable).
+
+```bash
+research setup agents --provider claude --preset scientific            # dry run: plan only
+research setup agents --provider claude --preset scientific --apply    # agents, skills, config (add --approve ponytail)
+research orchestrate route T-001                                        # which tier and model, and why
+research orchestrate delegate T-001 "parse_metrics()" --tier haiku --acceptance "…" --check "cmd:pytest -q tests/x.py"
+research orchestrate freeze T-002 tests/test_metrics.py                 # Sonnet freezes the oracle first
+research orchestrate dispatch T-002 --run                               # Haiku (refused without frozen tests)
+research orchestrate attempt T-002 --tier haiku --outcome fail --category incorrect_implementation
+research orchestrate correct-test T-002 tests/test_metrics.py --reason "…" --tier sonnet
+research tuning declare|trial|select|test EXP-001 …                     # validation-only tuning, one-shot held-out test
+```
+Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempts, Sonnet 2, 2 escalations, 50 tuning evaluations).

@@ -39,6 +39,10 @@ the human to open the project in VS Code with the Research Panel extension, or t
 - Unfamiliar with the science? Read `docs/SCIENTIST_GUIDE.md` (`research skill show scientist-guide`). After synthesizing
   an experiment, refresh it or leave it marked pending: `research guide status`. Hand-offs: `research skill show scientific-handoff`.
 
+### Tiered agents (optional)
+If `orchestration.enabled`: Opus = science/synthesis/guide, Sonnet = contracts + tests + review, Haiku = frozen-test
+implementation. `research orchestrate route T-001`; protocol: `research skill show engineering-loop`. Never edit frozen tests.
+
 ### Recording work
 ```bash
 # Run with provenance

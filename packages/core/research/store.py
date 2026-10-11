@@ -64,7 +64,19 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "coordination": {"stale_task_hours": 4},
     "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
     "skills": {"link": ["claude", "agents"]},    # expose .research/skills to .claude/skills and .agents/skills
-    "guide": {"enabled": True, "path": "docs/SCIENTIST_GUIDE.md", "profile": None, "model": "opus"},
+    "guide": {"enabled": True, "path": "docs/SCIENTIST_GUIDE.md", "profile": None, "model": "claude-opus-5-5"},
+    # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
+    "orchestration": {
+        "enabled": False,
+        "tiers": {
+            "opus": {"model": "claude-opus-5-5", "fallback": ["opus"]},
+            "sonnet": {"model": "claude-sonnet-5-5", "fallback": ["sonnet"]},
+            "haiku": {"model": "claude-haiku-5-5", "fallback": ["haiku"]},
+        },
+        "available": [],
+        "limits": {"haiku_attempts": 3, "sonnet_attempts": 2, "escalations": 2, "max_turns": None,
+                   "tuning_evaluations": 50},
+    },
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
 }
 

@@ -438,6 +438,8 @@ def complete_task(
     """Mark a task as done. If it has checks, they run first and gate completion (see verification)."""
     from . import verification as _v
     tid = normalize_id(task_id, "T")
+    from . import orchestrate as _o
+    _o.assert_frozen_intact(project, tid)
     warnings = _v.gate_task_completion(project, tid)
     updates = {
         "status": "done",
