@@ -940,7 +940,7 @@ def cmd_guide(a, p) -> int:
             print(f"{r['path']}  " + ("exists" if r["exists"] else "missing (research guide init)")
                   + ("" if r["enabled"] else "  [disabled]"))
             for s in r["pending"]:
-                print(yellow(f"  pending {s['id']}") + dim("  findings: " + (", ".join(f"{f['id']}[{f['status']}]" for f in s["findings"]) or "none")))
+                print(yellow(f"  pending {s['id']}") + dim("  findings: " + (", ".join(f"{f['id']}[{f['status']}, numbers {f['numerical']}]" for f in s["findings"]) or "none")))
             if r["up_to_date"]:
                 print(green("✓ ") + "all syntheses reflected")
     return 0
@@ -1016,6 +1016,73 @@ def cmd_tuning(a, p) -> int:
     else:
         r = O.tuning_test(p, a.exp, a.value, a.run)
     _done(a, r, msg=json.dumps(r, default=str) if not a.json else None)
+    return 0
+
+
+def _fmt_v(v) -> str:
+    c = {"verified": green, "mismatch": red, "missing": red, "stale": red, "unverifiable": yellow}.get(v["status"], str)
+    return f"{v['id']}  {c(v['status'].upper())}  claimed {v['claimed']:g} · recorded " + (f"{v['actual']:.6g}" if v["actual"] is not None else "—") \
+        + (f" {v['unit']}" if v.get("unit") else "") + "".join(f"\n    ✗ {i}" for i in v["issues"]) + "".join(f"\n    ⚠ {w}" for w in v["warnings"])
+
+
+@mut
+def cmd_evidence(a, p) -> int:
+    from research import evidence as E
+    act = a.action
+    if act == "bind":
+        r = E.bind(p, a.id, a.run, a.metric, a.step, a.select, a.claim, a.unit, a.derive, a.input, a.factor, a.rel_tol,
+                   a.artifact, a.partition, a.note, a.supersedes)
+        if a.json:
+            out_json(r)
+        else:
+            print(_fmt_v(r["verification"]))
+        return 0 if r["verification"]["status"] == "verified" else 1
+    if act == "value":
+        r = E.resolve_metric(p, normalize_id(a.id, "RUN"), a.metric, a.step, a.select)
+        if a.json:
+            out_json(r)
+        else:
+            print(f"{r['run']} {r['metric']} = " + (f"{r['value']:.10g}" if r["value"] is not None else "—") + (f" {r['unit']}" if r["unit"] else "")
+                  + f"  [{r['status']}]" + "".join(f"\n  {i}" for i in r["issues"]))
+        return 0 if r["status"] == "verified" else 1
+    if act == "verify":
+        r = E.verify_finding(p, a.id)
+        if a.json:
+            out_json(r)
+        else:
+            print(f"{r['finding']}: numerical evidence {r['status']}")
+            for b in r["bindings"]:
+                print("  " + _fmt_v(b))
+        return 0 if r["status"] in ("verified", "no_bindings") else 1
+    if act == "suggest":
+        r = E.suggest(p, a.id)
+    elif act == "provenance":
+        r = E.provenance(p, a.id)
+    elif act == "artifact":
+        r = E.artifact_integrity(p, a.id, deep=a.deep)
+    elif act == "pin":
+        r = E.pin_artifact(p, a.id)
+    else:
+        r = E.overview(p)
+    if a.json:
+        out_json(r)
+    else:
+        print(json.dumps(r, indent=1, default=str))
+    return 0
+
+
+@mut
+def cmd_source(a, p) -> int:
+    from research import evidence as E
+    if a.action == "add":
+        r = E.source_add(p, a.doi, a.arxiv, a.url, a.title)
+    elif a.action == "mark":
+        r = E.source_mark(p, a.id, a.identity_verified, a.examined, a.locator, a.finding, a.verdict, a.note)
+    else:
+        r = E.source_list(p, a.finding)
+    _done(a, r, msg=None)
+    if not a.json:
+        print(json.dumps(r, indent=1, default=str))
     return 0
 
 
@@ -1615,6 +1682,40 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--value", type=float)
     x.add_argument("--run")
     x.add_argument("--rationale")
+
+    x = add(sub, "evidence", cmd_evidence, "numerical evidence: bind | verify | value | suggest | provenance | artifact | pin | status")
+    x.add_argument("action", choices=["bind", "verify", "value", "suggest", "provenance", "artifact", "pin", "status"])
+    x.add_argument("id", nargs="?", help="F-… (bind/verify/suggest) · RUN-… (value/provenance) · A-… (artifact/pin)")
+    x.add_argument("--run")
+    x.add_argument("--metric")
+    x.add_argument("--step", type=int)
+    x.add_argument("--select", choices=["first", "last", "min", "max"])
+    x.add_argument("--claim", help="the number as stated; omit to READ it from the evidence")
+    x.add_argument("--unit")
+    x.add_argument("--factor", type=float, help="declared unit conversion applied to the recorded value")
+    x.add_argument("--rel-tol", type=float, help="exact comparison instead of rounding to the claim's decimals")
+    x.add_argument("--derive", choices=["mean", "sum", "min", "max", "std", "difference", "abs_difference", "ratio",
+                                        "relative_improvement", "relative_change"])
+    x.add_argument("--input", action="append", metavar="RUN-…:metric[@step]")
+    x.add_argument("--artifact")
+    x.add_argument("--partition", choices=["design", "validation", "test"])
+    x.add_argument("--note")
+    x.add_argument("--supersedes", metavar="F-…/B1")
+    x.add_argument("--deep", action="store_true", help="artifact: also compute the (streamed) hash")
+
+    x = add(sub, "source", cmd_source, "literature sources: add | mark | list (offline; identity, examination and support are separate)")
+    x.add_argument("action", choices=["add", "mark", "list"])
+    x.add_argument("id", nargs="?")
+    x.add_argument("--doi")
+    x.add_argument("--arxiv")
+    x.add_argument("--url")
+    x.add_argument("--title")
+    x.add_argument("--identity-verified", action="store_true", help="I checked that this identifier is the intended paper")
+    x.add_argument("--examined", action="store_true", help="I read the relevant part")
+    x.add_argument("--locator", help="section / page / figure")
+    x.add_argument("--finding")
+    x.add_argument("--verdict", choices=["supports", "partially_supports", "does_not_support"])
+    x.add_argument("--note")
 
     g = group("project", "project metadata")
     x = add(g, "set", cmd_project_set, "set name/goal/description")

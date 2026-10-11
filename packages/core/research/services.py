@@ -338,6 +338,9 @@ def update_finding(p: Project, fid: str, supports: Any = None, contradicts: Any 
         if ch["status"] != cur["status"]:
             from .verification import check_finding_status
             check_finding_status(p, ch["status"])
+            if ch["status"] == "supported":
+                from .evidence import assert_numerics_ok
+                assert_numerics_ok(p, fid)
     if ch.get("confidence") and ch["confidence"] not in CONFIDENCE:
         raise ResearchError(f"confidence must be one of {CONFIDENCE}")
     if "tags" in ch:
@@ -410,6 +413,9 @@ def set_status(p: Project, id_: str, status: str, reason: Optional[str] = None) 
         if t == "finding" and s != cur["status"]:
             from .verification import check_finding_status
             check_finding_status(p, s)
+            if s == "supported":
+                from .evidence import assert_numerics_ok
+                assert_numerics_ok(p, id_)
         return p.update_entity(t, id_, {"status": s}, action="status",
                                summary=f"{id_}: {cur['status']} → {s}" + (f" ({reason})" if reason else ""))
     if t == "run":

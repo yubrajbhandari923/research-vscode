@@ -138,6 +138,8 @@ def create_run(p: Project, experiment: str, command: Union[str, Sequence[str], N
     ts = now_iso()
     env = {"python": os.environ.get("CONDA_DEFAULT_ENV") or os.environ.get("VIRTUAL_ENV"),
            "user": os.environ.get("USER")}
+    from .evidence import lockfiles
+    env["lockfiles"] = lockfiles(p.root)  # environment reference at run time (hash prefixes)
     row = {
         "id": run_id, "experiment_id": exp_id, "label": label, "command": command_str(command),
         "working_dir": wd, "parameters": jdump(parameters or {}), "env": jdump({k: v for k, v in env.items() if v}),

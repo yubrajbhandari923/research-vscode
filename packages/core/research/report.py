@@ -135,6 +135,7 @@ def _finding_section(b: _Builder, fid: str) -> None:
     if f["evidence"]["contradicts"]:
         b.add("p", "**Contradicting evidence:** " + "; ".join(x["id"] for x in f["evidence"]["contradicts"]))
     b.add("p", f"**Limitations:** {f['limitations']}" if f.get("limitations") else None)
+    _evidence_block(b, fid)
     arts = list(f["artifacts"])
     if not any(a.get("type") in _IMG_TYPES for a in arts):  # fall back to plots of the supporting runs
         from .runs import list_artifacts
@@ -142,6 +143,28 @@ def _finding_section(b: _Builder, fid: str) -> None:
             if x["type"] == "run":
                 arts += list_artifacts(b.p, run=x["id"])
     b.images(arts, 3)
+
+
+def _evidence_block(b: _Builder, fid: str) -> None:
+    """Numbers bound to recorded evidence, re-verified now. Legacy/qualitative findings add nothing."""
+    from .evidence import list_bindings, verify_finding
+    v = verify_finding(b.p, fid)
+    bds = {y["id"]: y for y in list_bindings(b.p, fid)}
+    if not v["bindings"]:
+        return
+    rows = []
+    for x in v["bindings"]:
+        bd = bds[x["id"]]
+        s = bd["source"]
+        src = (f"{s['run']} · {s['metric']}" + (f"@{s['step']}" if s.get("step") is not None else "")) if bd["kind"] == "metric" else \
+            f"{s['op']}(" + ", ".join(f"{i['run']}:{i['metric']}" for i in s["inputs"]) + ")"
+        part = bd.get("partition") or "—"
+        a = (x.get("artifact") or {}).get("id") or (bd.get("artifact") or {}).get("id") or "—"
+        rows.append([_fmt(x["claimed"]) + (f" {x['unit']}" if x.get("unit") else ""), src, a, part, x["status"].upper(),
+                     "; ".join(x["issues"] + x["warnings"]) or "—"])
+    b.add("table", (["Value", "Source (run · metric / calculation)", "Artifact", "Partition", "Verification", "Notes"], rows))
+    b.add("p", "_Numbers are re-checked against the recorded evidence when this report is built. Verified numbers say nothing "
+               "about whether the interpretation is right; see the review status above._")
 
 
 def build(p: Project, scope: Optional[str] = None, out_dir: Optional[str] = None) -> Tuple[str, List[Block]]:

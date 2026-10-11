@@ -36,8 +36,12 @@ def _ledger(p: Project) -> Dict[str, str]:
 
 
 def _findings(p: Project, exp_id: str) -> List[Dict[str, Any]]:
-    return p.q("SELECT DISTINCT f.id, f.title, f.status, f.confidence, l.relation FROM findings f JOIN links l "
+    from .evidence import verify_finding
+    rows = p.q("SELECT DISTINCT f.id, f.title, f.status, f.confidence, l.relation FROM findings f JOIN links l "
                "ON l.src_id=f.id WHERE l.dst_id=? AND l.relation IN ('supports','contradicts') ORDER BY f.id", (exp_id,))
+    for r in rows:  # tells the guide writer which numbers may be quoted as verified
+        r["numerical"] = verify_finding(p, r["id"])["status"]
+    return rows
 
 
 def status(p: Project) -> Dict[str, Any]:

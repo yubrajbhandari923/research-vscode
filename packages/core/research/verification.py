@@ -244,7 +244,16 @@ def review_finding(p: Project, finding_id: str, verdict: str, notes: Optional[st
     if verdict == "supported" and pol.get("require_evidence_for_supported", True) and not f["links"].get("supports"):
         raise PolicyBlocked(f"{fid} has no supporting evidence, so it can't be marked supported.",
                             hint=f"Link evidence first: research finding update {fid} --add-supports EXP-… RUN-… A-…")
-    rec = record(p, fid, "review", verdict, notes or verdict, {"confidence": confidence} if confidence else None)
+    details: Dict[str, Any] = {"confidence": confidence} if confidence else {}
+    if verdict == "supported":  # numbers are checked by software; the interpretation is the reviewer's separate job
+        from . import evidence as _ev
+        num = _ev.assert_numerics_ok(p, fid)
+        if num and num["status"] == "verified":
+            if not (notes or "").strip():
+                raise ResearchError(f"{fid} has verified numerical bindings, but a supported verdict also needs your notes on the "
+                                    "scientific interpretation (--notes): verified numbers do not make the interpretation correct.")
+            details["numeric_verification"] = {"status": "verified", "bindings": [b["id"] for b in num["bindings"]]}
+    rec = record(p, fid, "review", verdict, notes or verdict, details or None)
     new_status = {"supported": "supported", "contradicted": "contradicted", "needs_work": "preliminary"}[verdict]
     changes: Dict[str, Any] = {"status": new_status}
     if confidence:
