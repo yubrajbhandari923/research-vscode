@@ -13,6 +13,9 @@ plus optional **plans → tasks** for tracking the work itself.
   **MCP server** with the research tools, task **checks** that gate completion, independent **reviews** before an agent's
   finding counts as supported, task claims and progress notes so several agents can share one queue, and project
   **skills** (import from a folder or GitHub) loaded where they're relevant.
+- Optional **Scientist Guide** (`docs/SCIENTIST_GUIDE.md`) kept current after each synthesis, a `scientific-handoff` skill, and
+  Opus → Sonnet → Haiku tiered routing with frozen acceptance tests (`research setup agents`, `research orchestrate`). These are
+  CLI-driven for now; the panel shows their tasks, notes and a "guide pending" attention item, but has no dedicated UI.
 - Compare two runs side by side, sweep parameters within the run budget, export a report with the evidence plots.
 - Gives every project its own CLI at `.research/bin/research`, which any agent can run without installing anything,
   including the Claude Code extension's Bash tool. Plain `research` is also on `PATH` in VS Code terminals. Agents follow

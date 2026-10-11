@@ -1466,6 +1466,21 @@ differences; VS Code shows the side-by-side page (§13.5).
 After every **mutating** command, `current.md` is regenerated. (`note` commands and `skills list/show/new/duplicate/link`
 are not counted as mutating.)
 
+### 10.x Scientist Guide, orchestration and tuning (optional layer)
+
+| Command | Purpose |
+|---|---|
+| `guide init\|status\|refresh [--run]\|done [SYN-ID…]` | Scientist Guide. Pending = syntheses not in `.research/guide.json`; `done` is the only way to clear them; `refresh` prepares the `guide.model` agent and never marks anything. |
+| `setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe]` | Dry run by default. Writes managed `.claude/agents/research-*.md`, copies first-party skills, enables `orchestration`. Never installs MCP servers, plugins or hooks. |
+| `orchestrate route T-… [--tier] [--available M…]` | Tier/model by verifiability, with fallback (never silently below Opus for Opus work). |
+| `orchestrate freeze T-… FILES` / `correct-test T-… FILE --reason … --tier sonnet` | Hash the acceptance tests; `task done` is blocked if they differ; only Sonnet+ may correct them, with a logged reason. |
+| `orchestrate dispatch T-… [--run] [--allow-unfrozen REASON]` | Prepare/start the routed session; Haiku needs frozen tests. Briefs tell Sonnet/Haiku to load `ponytail` if installed. |
+| `orchestrate attempt T-… --tier … --outcome pass\|fail --category …` | Bounded retries; returns retry / escalate / block / integration_review. |
+| `orchestrate delegate T-parent "title" --tier haiku` | Child task; parent gains it in `depends_on`. |
+| `tuning declare\|trial\|select\|test EXP-…` | Frozen plan; design/validation trials within a budget; one-shot held-out test after selection. |
+
+State: `.research/guide.json`, `.research/orchestration/<T-id>.json`, `.research/orchestration/tuning-<EXP>.json`. Not covered: VS Code UI, MCP tools, token/cost usage.
+
 ---
 
 ## 11. Python API reference
@@ -1940,6 +1955,12 @@ skills:
   link: [claude, agents]      # .claude/skills and .agents/skills; [] disables (§7.9)
 git:
   commit_checkpoints: false   # true → every checkpoint commits .research/ (§9.2)
+guide: {enabled: true, path: docs/SCIENTIST_GUIDE.md, profile: null, model: claude-opus-5-5}
+orchestration:                # opt-in via `research setup agents --apply`
+  enabled: false
+  tiers: {opus: {model: claude-opus-5-5, fallback: [opus]}, sonnet: {...}, haiku: {...}}
+  available: []               # [] = assume configured models exist
+  limits: {haiku_attempts: 3, sonnet_attempts: 2, escalations: 2, max_turns: null, tuning_evaluations: 50}
 ```
 
 Missing keys fall back to these defaults (deep merge), so old configs keep working.

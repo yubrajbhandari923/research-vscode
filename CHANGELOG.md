@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Scientist Guide, handoffs and tiered agents (all optional; existing projects keep working)
+
+- **Scientist Guide** (`docs/SCIENTIST_GUIDE.md`, path/model in `config.yaml → guide`): a living scientific narrative, separate
+  from README, `research report` and technical docs. Every synthesis makes it *pending* (derived from `syntheses`, tracked in
+  `.research/guide.json`); only `research guide done` clears it. `research guide init|status|refresh|done`. `refresh` prepares
+  an Opus agent and never marks anything done. Pending shows in Needs Attention once a guide file exists.
+- **Skills**: `scientist-guide`, `scientific-handoff` (discussion → Question/Plan/Experiment/Tasks), `engineering-loop`,
+  `parameter-tuning`. The AGENTS.md block gained a short "Scientific practice" and "Tiered agents" section.
+- **Opus → Sonnet → Haiku orchestration** (`config.yaml → orchestration`, enable with `research setup agents --apply`):
+  routing by verifiability (`research orchestrate route`), frozen acceptance tests that block `task done` if changed,
+  Haiku dispatch refused without frozen tests, bounded attempts/escalations with failure categories, parent/child delegation,
+  and validation-only tuning with a one-shot held-out test (`research tuning`). Verified model IDs: `claude-{opus,sonnet,haiku}-5-5`.
+- `research setup agents` writes managed `.claude/agents/research-*.md` (user-owned files are never overwritten), installs
+  first-party skills, and offers Ponytail only with `--approve ponytail`.
+- Not included: VS Code UI for these features, MCP tools for them, and token/cost recording.
+
 ### Project-local CLI
 
 - **`.research/bin/research`** is a copy of the CLI inside each project, so any agent can run it without `pip install`

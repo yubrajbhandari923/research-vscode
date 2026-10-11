@@ -464,6 +464,10 @@ research finding    review ID --verdict supported|contradicted|needs_work --note
 research run        compare A B | sweep EXP [--grid k=v1,v2] [--dry-run] -- CMD {k}
 research note       new|list|pin|link
 research skills     list|show|add|update|remove|set|link|new|duplicate        (alias: skill)
+research guide      init|status|refresh [--run]|done [SYN-ID…]                 (Scientist Guide)
+research setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe]
+research orchestrate route|dispatch|freeze|attempt|correct-test|delegate|status T-… [--tier opus|sonnet|haiku]
+research tuning     declare|trial|select|test EXP-…                           (validation-only; test is one-shot)
 
 research search "…"        research report [Q-…|PLAN-…|EXP-…]       research checkpoint --commit
 research dispatch ROLE [TARGET] [--objective "…"] [--profile P] [--print]     research agents
@@ -553,6 +557,58 @@ research agents                                             # profiles, roles, w
 - Everything a dispatched session records is attributed to `profile/role` (e.g. `codex/implementer`).
 - Nothing runs unattended: you start each session and can watch it.
 - In VS Code, **Dispatch to Agent…** picks the role and profile, then opens a terminal.
+
+### Scientist Guide (optional)
+
+A living, readable scientific narrative (`docs/SCIENTIST_GUIDE.md`) for an incoming scientist. It complements, and does
+not replace, `README.md`, the technical docs and `research report`. Every synthesis makes the guide *pending*; it is only
+*current* after an agent edits it and runs `research guide done`.
+
+```bash
+research guide init                  # bare-bones guide from goal + questions (never overwrites)
+research guide status                # pending syntheses + their findings' statuses
+research guide refresh               # prints the command for the configured Opus agent (guide.model in config.yaml)
+research guide refresh --run         # ...or starts it now; the agent follows the `scientist-guide` skill
+research guide done [SYN-ID …]       # agent records what it has reflected (default: all pending)
+```
+
+Existing projects: run `research init` once to copy the new `scientist-guide` and `scientific-handoff` skills and
+refresh the AGENTS.md block. Convert a researcher's discussion into a Question/Plan/Experiment/Tasks with the
+`scientific-handoff` skill.
+
+### Tiered agents: Opus → Sonnet → Haiku (optional)
+
+**Intended workflow.** The researcher agrees the science (possibly elsewhere) and hands it over with the
+`scientific-handoff` skill → Opus turns it into a Question, Plan, Experiment and bounded tasks → Sonnet writes the
+contract and independent tests, freezes them, and decides whether Haiku can implement → Haiku implements against the frozen
+tests (max 3 attempts) → Sonnet reviews and runs integration checks → `task done` (checks gate it) → Opus runs and
+synthesizes registered experiments, then refreshes the Scientist Guide. Skip any tier a task doesn't need. Ordinary unit tests
+are task checks; scientific computations are registered experiments and runs with their usual budgets.
+
+**What is and isn't automatic.** `setup agents` is opt-in and writes only Research OS-managed files. External code (Ponytail)
+needs `--approve ponytail`. No MCP servers, plugins, hooks or permission changes are ever installed. The VS Code extension has
+no UI for these yet; use the CLI (the records they create, such as notes, tasks and the guide attention item, appear in the
+panel as usual). Plain `research dispatch` is unchanged and does not route by tier.
+
+
+Routing by difficulty and verifiability, layered on the existing plans, tasks, checks and `dispatch`:
+Opus designs/synthesizes and maintains the Scientist Guide, Sonnet writes contracts + independent tests and reviews,
+Haiku implements fully specified, frozen-test units. Native Claude Code subagents cannot spawn subagents, so Opus→Sonnet and
+Opus→Haiku run in-session via `.claude/agents/research-*.md`, while Sonnet→Haiku runs as a separate `claude` process via
+`research orchestrate dispatch … --run`. Token/cost usage is not recorded by Research OS (reported as unavailable).
+
+```bash
+research setup agents --provider claude --preset scientific            # dry run: plan only
+research setup agents --provider claude --preset scientific --apply    # agents, skills, config (add --approve ponytail)
+research orchestrate route T-001                                        # which tier and model, and why
+research orchestrate delegate T-001 "parse_metrics()" --tier haiku --acceptance "…" --check "cmd:pytest -q tests/x.py"
+research orchestrate freeze T-002 tests/test_metrics.py                 # Sonnet freezes the oracle first
+research orchestrate dispatch T-002 --run                               # Haiku (refused without frozen tests)
+research orchestrate attempt T-002 --tier haiku --outcome fail --category incorrect_implementation
+research orchestrate correct-test T-002 tests/test_metrics.py --reason "…" --tier sonnet
+research tuning declare|trial|select|test EXP-001 …                     # validation-only tuning, one-shot held-out test
+```
+Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempts, Sonnet 2, 2 escalations, 50 tuning evaluations).
 
 ### Verification gates
 
@@ -744,47 +800,8 @@ npm run demo                        # example project in examples/alpha-sweep/de
 | **README.md** (this file) | current | Learning to use the system |
 | [**docs/SPEC.md**](docs/SPEC.md) | current | Every feature, the design rationale, data model, algorithms, CLI/API/RPC reference, extension behaviour |
 | [CHANGELOG.md](CHANGELOG.md) | current | What changed between versions |
-| [docs/ARCHITECTURE_AUDIT.md](docs/ARCHITECTURE_AUDIT.md), [docs/TRANSFORMATION_SUMMARY.md](docs/TRANSFORMATION_SUMMARY.md) | proposal, largely implemented | The "Research OS" redesign plan. Built: plans/tasks, tiered context, MCP tools, roles and dispatch, verification gates, Research Home, git snapshots. Deliberately not built: autonomous orchestration and direct model-API adapters. SPEC.md describes what exists. |
+| [docs/ARCHITECTURE_AUDIT.md](docs/ARCHITECTURE_AUDIT.md), [docs/TRANSFORMATION_SUMMARY.md](docs/TRANSFORMATION_SUMMARY.md) | proposal, largely implemented | The "Research OS" redesign plan. Built: plans/tasks, tiered context, MCP tools, roles and dispatch, verification gates, Research Home, git snapshots. Deliberately not built: unattended autonomous orchestration and direct model-API adapters (tiered orchestration exists, but a human or an agent session starts each step). SPEC.md describes what exists. |
 | [docs/PHASE_0_SPEC.md](docs/PHASE_0_SPEC.md) | proposal, implemented | The original design for plans and tasks. Where it differs from SPEC.md, SPEC.md is authoritative. |
 | [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) | proposal, implemented differently | Planned an MCP-SDK server; the built one uses the standard library only (SPEC §7.8). |
 
 MIT licensed.
-
-## Scientist Guide (optional)
-
-A living, readable scientific narrative (`docs/SCIENTIST_GUIDE.md`) for an incoming scientist. It complements, and does
-not replace, `README.md`, the technical docs and `research report`. Every synthesis makes the guide *pending*; it is only
-*current* after an agent edits it and runs `research guide done`.
-
-```bash
-research guide init                  # bare-bones guide from goal + questions (never overwrites)
-research guide status                # pending syntheses + their findings' statuses
-research guide refresh               # prints the command for the configured Opus agent (guide.model in config.yaml)
-research guide refresh --run         # ...or starts it now; the agent follows the `scientist-guide` skill
-research guide done [SYN-ID …]       # agent records what it has reflected (default: all pending)
-```
-
-Existing projects: run `research init` once to copy the new `scientist-guide` and `scientific-handoff` skills and
-refresh the AGENTS.md block. Convert a researcher's discussion into a Question/Plan/Experiment/Tasks with the
-`scientific-handoff` skill.
-
-## Tiered agents: Opus → Sonnet → Haiku (optional)
-
-Routing by difficulty and verifiability, layered on the existing plans, tasks, checks and `dispatch`:
-Opus designs/synthesizes and maintains the Scientist Guide, Sonnet writes contracts + independent tests and reviews,
-Haiku implements fully specified, frozen-test units. Native Claude Code subagents cannot spawn subagents, so Opus→Sonnet and
-Opus→Haiku run in-session via `.claude/agents/research-*.md`, while Sonnet→Haiku runs as a separate `claude` process via
-`research orchestrate dispatch … --run`. Token/cost usage is not recorded by Research OS (reported as unavailable).
-
-```bash
-research setup agents --provider claude --preset scientific            # dry run: plan only
-research setup agents --provider claude --preset scientific --apply    # agents, skills, config (add --approve ponytail)
-research orchestrate route T-001                                        # which tier and model, and why
-research orchestrate delegate T-001 "parse_metrics()" --tier haiku --acceptance "…" --check "cmd:pytest -q tests/x.py"
-research orchestrate freeze T-002 tests/test_metrics.py                 # Sonnet freezes the oracle first
-research orchestrate dispatch T-002 --run                               # Haiku (refused without frozen tests)
-research orchestrate attempt T-002 --tier haiku --outcome fail --category incorrect_implementation
-research orchestrate correct-test T-002 tests/test_metrics.py --reason "…" --tier sonnet
-research tuning declare|trial|select|test EXP-001 …                     # validation-only tuning, one-shot held-out test
-```
-Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempts, Sonnet 2, 2 escalations, 50 tuning evaluations).
