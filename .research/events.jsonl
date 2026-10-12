@@ -1,8 +1,0 @@
-{"action": "initialized", "author_name": "claude-code", "author_type": "agent", "entity_id": null, "entity_type": "project", "summary": "Initialized research project 'research-vscode'", "ts": "2026-10-05T22:02:35-04:00"}
-{"action": "created", "author_name": "claude-code", "author_type": "agent", "entity_id": "PLAN-001", "entity_type": "plan", "summary": "Plan created: Reproduce Paper X", "ts": "2026-10-05T22:02:36-04:00"}
-{"action": "created", "author_name": "release-review", "author_type": "agent", "entity_id": "PLAN-002", "entity_type": "plan", "summary": "Plan created: Independent 1.0 release engineering review", "ts": "2026-10-12T19:53:32-04:00"}
-{"action": "created", "author_name": "release-review", "author_type": "agent", "entity_id": "EXP-001", "entity_type": "experiment", "summary": "EXP-001 Release engineering verification", "ts": "2026-10-12T19:53:32-04:00"}
-{"action": "created", "author_name": "release-review", "author_type": "agent", "entity_id": "T-001", "entity_type": "task", "summary": "Task created: Audit and stabilize release candidate", "ts": "2026-10-12T19:53:38-04:00"}
-{"action": "updated", "author_name": "release-review", "author_type": "agent", "entity_id": "T-001", "entity_type": "task", "summary": "Task T-001 updated", "ts": "2026-10-12T19:53:38-04:00"}
-{"action": "created", "author_name": "release-review", "author_type": "agent", "entity_id": "RUN-0001", "entity_type": "run", "summary": "RUN-0001 registered under EXP-001 [baseline-tests]", "ts": "2026-10-12T19:53:51-04:00"}
-{"action": "status", "author_name": "release-review", "author_type": "agent", "entity_id": "EXP-001", "entity_type": "experiment", "summary": "EXP-001: proposed → running (RUN-0001 started)", "ts": "2026-10-12T19:53:51-04:00"}
