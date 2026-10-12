@@ -2,7 +2,7 @@
   "name": "research-panel",
   "displayName": "Research Panel",
   "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "publisher": "research-local",
   "license": "MIT",
   "engines": {
@@ -515,6 +515,58 @@
         "icon": "$(diff)"
       },
       {
+        "command": "research.setup.open",
+        "title": "Open Agent Setup",
+        "category": "Research",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "research.strategy.use",
+        "title": "Choose Model Strategy…",
+        "category": "Research",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "research.setup.agents",
+        "title": "Set Up Claude Code Agents…",
+        "category": "Research"
+      },
+      {
+        "command": "research.task.pin",
+        "title": "Pin Model for Task…",
+        "category": "Research"
+      },
+      {
+        "command": "research.task.unpin",
+        "title": "Use Strategy Default Model for Task",
+        "category": "Research"
+      },
+      {
+        "command": "research.hook.approve",
+        "title": "Review and Approve Harness Hooks…",
+        "category": "Research"
+      },
+      {
+        "command": "research.hook.run",
+        "title": "Run Harness Hook",
+        "category": "Research"
+      },
+      {
+        "command": "research.hook.toggle",
+        "title": "Enable or Disable Harness Hook",
+        "category": "Research"
+      },
+      {
+        "command": "research.experiment.check",
+        "title": "Check Experiment (Deterministic Validation)",
+        "category": "Research"
+      },
+      {
+        "command": "research.setup.openConfig",
+        "title": "Open Project Config",
+        "category": "Research"
+      },
+      {
         "command": "research.skill.import",
         "title": "Import Skills…",
         "category": "Research",
@@ -790,6 +842,46 @@
           "when": "research.initialized"
         },
         {
+          "command": "research.task.pin",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.task.unpin",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.hook.approve",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.hook.run",
+          "when": "false"
+        },
+        {
+          "command": "research.hook.toggle",
+          "when": "false"
+        },
+        {
+          "command": "research.experiment.check",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.setup.openConfig",
+          "when": "false"
+        },
+        {
+          "command": "research.setup.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.strategy.use",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.setup.agents",
+          "when": "research.initialized"
+        },
+        {
           "command": "research.skill.import",
           "when": "research.initialized"
         },
@@ -928,6 +1020,11 @@
           "command": "research.plan.withAgent",
           "when": "view == research.plans",
           "group": "navigation@1"
+        },
+        {
+          "command": "research.setup.open",
+          "when": "view == research.agent",
+          "group": "navigation@0"
         },
         {
           "command": "research.skill.import",

@@ -68,8 +68,10 @@ the human to open the project in VS Code with the Research Panel extension, or t
   block. Everything outside the two marker comments below is the project's — never rewrite it.
 
 ### Tiered agents (optional)
-If `orchestration.enabled`: Opus = science/synthesis/guide, Sonnet = contracts + tests + review, Haiku = frozen-test
-implementation. `research orchestrate route T-001`; protocol: `research skill show engineering-loop`. Never edit frozen tests.
+If `orchestration.enabled`: `research strategy show` says which model level does what (or the legacy Opus/Sonnet/Haiku tiers when no
+strategy is active). `research orchestrate route T-001`; protocol: `research skill show engineering-loop`. Never edit frozen tests.
+A delegated task has a contract (`research task context T-001`); check your work with `research orchestrate verify T-001 --tier LEVEL --record`.
+Project hooks (`research hook list`) are run by Research OS only after a human approves them; propose one with `research hook add`.
 
 ### Recording work
 ```bash

@@ -6,6 +6,7 @@ import { renderArtifact, renderCheckpoint, renderCompare, renderDecision, render
 import { FormSpec, renderForm } from './render/form';
 import { renderHome, renderOverviewHome } from './render/home';
 import { renderResume } from './render/resume';
+import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
 const TITLES: Record<string, string> = {
@@ -38,7 +39,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'resume' | 'form' | 'compare';
+  kind: 'entity' | 'resume' | 'form' | 'compare' | 'setup';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -81,6 +82,7 @@ export class Panels implements vscode.Disposable {
       if (kind === 'resume') this.renderResume(ep);
       else if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
       else if (kind === 'compare') this.renderComparison(ep).catch(() => undefined);
+      else if (kind === 'setup') this.renderSetup(ep).catch(() => undefined);
     });
     panel.webview.onDidReceiveMessage((m) => this.onMessage(ep, m));
     return ep;
@@ -92,6 +94,20 @@ export class Panels implements vscode.Disposable {
     ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Research Home' });
     if (!this.model.resume) await this.model.refresh();
     this.renderResume(ep);
+  }
+
+  async openSetup() {
+    const ep = this.create('setup', 'Agent setup', 'hubot', 'setup');
+    if (!ep.panel.webview.html) ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Agent setup' });
+    await this.renderSetup(ep);
+  }
+
+  private async renderSetup(ep: EntityPanel) {
+    try {
+      this.post(ep, renderSetup(await this.model.client.request('agent_setup')));
+    } catch (e: any) {
+      this.post(ep, `<div class="page"><div class="banner" style="--c:var(--red)"><i class="codicon codicon-error"></i><div class="grow">${esc(e.message)}</div></div></div>`);
+    }
   }
 
   async openEntity(id: string, side = false) {
@@ -141,6 +157,7 @@ export class Panels implements vscode.Disposable {
       if (ep.kind === 'resume') this.renderResume(ep);
       else if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
       else if (ep.kind === 'compare' && ep.panel.visible) this.renderComparison(ep).catch(() => undefined);
+      else if (ep.kind === 'setup' && ep.panel.visible) this.renderSetup(ep).catch(() => undefined);
     }
   }
 

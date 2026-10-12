@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from . import gitinfo, mirrors, schema, yamlio
+from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
 from .util import NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
 
@@ -70,6 +71,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
             "codex": {"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
             "gemini": {"command": "gemini", "args": [], "model": None, "model_flag": "-m", "prompt_flag": "-i"},
+            # Model profiles the built-in strategies point at (levels fast/balanced/deep). Swap a model here, not in routing.
+            "claude-fast": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-haiku-5-5", "model_flag": "--model", "prompt_flag": None},
+            "claude-balanced": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-sonnet-5-5", "model_flag": "--model", "prompt_flag": None},
+            "claude-deep": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-opus-5-5", "model_flag": "--model", "prompt_flag": None},
         },
     },
     "verification": {
@@ -92,9 +97,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "haiku": {"model": "claude-haiku-5-5", "fallback": ["haiku"]},
         },
         "available": [],
+        "active_strategy": None,    # null → legacy tier routing above; else a name from `strategies` (research strategy use)
+        "strategies": _BUILTIN_STRATEGIES,
         "limits": {"haiku_attempts": 3, "sonnet_attempts": 2, "escalations": 2, "max_turns": None,
                    "tuning_evaluations": 50},
     },
+    # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
+    "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
+                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300},   # hooks: see hooks.py (human approval required)
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
 }
 

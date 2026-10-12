@@ -90,13 +90,25 @@ def mark_done(p: Project, ids: Any = None) -> Dict[str, Any]:
     return status(p)
 
 
-def refresh(p: Project, profile: str = None, model: str = None) -> Dict[str, Any]:
+def _guide_level(p: Project, strategy: str = None) -> str:
+    from . import strategy as S
+    return S.definition(p, S.active_name(p, strategy))["guide"]
+
+
+def refresh(p: Project, profile: str = None, model: str = None, strategy: str = None) -> Dict[str, Any]:
     """Prepare (never run) an agent session for the configured guide model. Does not mark anything done."""
     from . import agents
     cfg = settings(p)
     if not cfg.get("enabled", True):
         raise ResearchError("The Scientist Guide is disabled", hint="Set guide.enabled: true in .research/config.yaml.")
-    model = model or cfg.get("model")
+    from . import strategy as S
+    policy = None
+    if S.active_name(p, strategy):  # the strategy owns the guide's model; explicit --profile/--model still win
+        policy = S.select(p, "analyst", "scientific", "scientist guide", level=_guide_level(p, strategy), strategy=strategy,
+                          profile=profile, model=model)
+        model = policy["model"]
+    else:
+        model = model or cfg.get("model")
     if not model:
         raise ResearchError("No guide model configured", hint="Set guide.model (e.g. opus) or pass --model.")
     avail = as_list((p.config.get("orchestration") or {}).get("available"))
@@ -111,5 +123,5 @@ def refresh(p: Project, profile: str = None, model: str = None) -> Dict[str, Any
     obj = (f"Refresh the Scientist Guide at {st['path']} with `research skill show scientist-guide`. Pending syntheses: "
            f"{', '.join(ids)}. Process them together. Only after the guide is edited, run "
            f"`research guide done {' '.join(ids)}`; if you cannot finish, leave them pending and say why.")
-    d = agents.dispatch(p, "analyst", None, obj, profile or cfg.get("profile"), model)
+    d = agents.dispatch(p, "analyst", None, obj, profile or cfg.get("profile"), model, policy=policy)
     return {**d, "pending": ids, "path": st["path"]}

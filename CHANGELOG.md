@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.7.0 — 2026-10-12
+
+- **Executable harness hooks** (`harness.hooks`, `research hook …`): preflight, post-implementation, pre-experiment and
+  post-experiment commands with timeouts and a results ledger. A hook runs only after a human approves its exact command
+  (agents get exit 3; editing revokes approval). `pre_experiment` failures block run creation.
+- **Structured task contracts** (`orchestrate contract`, flags on `delegate`) and **`orchestrate verify`**: frozen tests, file
+  boundary, approved hooks and task checks, with diagnostics returned to the worker and bounded next steps via `--record`.
+  No verifier running is never a pass.
+- **Automatic usage accounting**: `--headless` dispatch records provider-reported tokens/cost to `.research/usage.jsonl`;
+  `research usage --by strategy|model|task|level`; manual `--usage` kept. Missing values are never zero.
+- **Per-task model overrides** (`orchestrate pin`), applied in dispatch and recorded in provenance.
+- **Strategy-aware agent files**: `research-<level>.md` generated from the active strategy; managed legacy tier files retired
+  to the cache; user-owned files untouched.
+- **`research experiment check`**: deterministic validation separated from interpretation; can prepare a synthesis session.
+- **Agent Setup page** gains work in flight (overrides, contracts, verification), hooks (approve / run / enable), experiment
+  validation and usage by strategy.
+- No migration required: all new config keys are optional and default to off/empty.
+
+## 0.6.0 — 2026-10-12
+
+### Named model-allocation strategies (opt-in; legacy projects unchanged)
+
+- **`research strategy list|show|use|validate|route`** and `orchestration.active_strategy`. Four built-ins —
+  `sonnet_first`, `opus_first`, `haiku_max`, `sonnet_heavy` — map logical levels (fast/balanced/deep) to
+  `agents.profiles`, route tasks deterministically, and define retry limits and escalation. Custom strategies use
+  `extends:` and per-key overrides through the existing default ← machine ← project config layers.
+- **One resolver** (`strategy.select`) for `research dispatch`, `orchestrate route|dispatch|delegate` and
+  `guide refresh`; `--strategy/--level/--profile/--agent-model` override one dispatch. Missing profiles or unavailable
+  models fail with a hint instead of substituting another model.
+- **Safeguards keyed to roles, not model names**: frozen tests are required whenever the implementer is not the
+  test-authoring coordinator level; implementers cannot correct their own frozen tests; verifier dispatch avoids the
+  implementer's profile+model and records `independent: false` when it cannot.
+- **Provenance**: each dispatch snapshots the resolved policy (`*.policy.json`, task ledger `dispatches`, env vars);
+  switching strategies logs an event and rewrites nothing. `orchestrate attempt --usage` records only real usage.
+- **`harness:` config** carries project-owned skills, context, an instructions file and verification commands into
+  briefs, independent of the strategy. References only; Research OS runs and interprets none of it.
+- **Agent setup page** (VS Code: *Research: Open Agent Setup*, or Agent → Agent setup): the active strategy with its
+  level → model table and escalation limits, one-click switching, the project harness (missing references flagged),
+  skills (import / always-on / update / remove), MCP server registration per client, and managed agent files.
+- Fix: replacing a list-valued key (`harness.skills`) in `config.yaml` left the old `- item` lines behind and corrupted
+  the file; the surgical editor now replaces the whole block and no longer swallows trailing blank lines.
+
 ## 0.5.0 — 2026-10-12
 
 ### Layered, sparse, comment-preserving configuration

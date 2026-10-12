@@ -14,7 +14,7 @@ import json
 import os
 import sys
 import traceback
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from . import __version__
 from . import context as C
@@ -395,6 +395,97 @@ class Server:
         from . import mcp as MCP
         return MCP.install(self.project(sync=False).root, clients)
 
+    # agent setup: strategy, harness, skills, MCP, orchestration (one read for the UI) -----------------
+    def m_agent_setup(self) -> Dict[str, Any]:
+        from . import agents as AG
+        from . import harness as H
+        from . import hooks as HK
+        from . import mcp as MCP
+        from . import usage as U
+        from . import orchestrate as O
+        from . import setup_agents as SA
+        from . import strategy as S
+        p = self.project(sync=False)
+        p.config = p.load_config()
+        cur = S.active_name(p)
+        files = [{k: v for k, v in f.items() if k != "_text"} for f in SA.plan_agent_files(p)]
+        hr = H.resolve(p)
+        return {"strategy": S.show(p) if cur else None, "strategies": [
+                    {**s, "ok": S.validate(p, s["name"])["ok"], "routes": S.definition(p, s["name"])["route"]} for s in S.listing(p)],
+                "harness": hr, "harness_warnings": H.warnings(p),
+                "skills": [{**{k: s.get(k) for k in ("name", "dir", "description", "path", "source", "always", "applies_to")},
+                            "in_harness": s["name"] in hr["skills"]} for s in SK.list_skills(p)],
+                "mcp": MCP.status(p.root),
+                "orchestration": {"enabled": bool(O.cfg(p).get("enabled")), "limits": O.limits(p), "tiers": O.cfg(p).get("tiers"),
+                                  "available": O.cfg(p).get("available"), "agent_files": files},
+                "hooks": HK.listing(p), "usage": U.summary(p, "strategy"), "tasks": self._task_rows(p, cur),
+                "experiments": self._experiment_rows(p),
+                "profiles": [{"name": x["name"], "model": x["model"], "available": x["available"]} for x in AG.list_profiles(p)["profiles"]]}
+
+    def _task_rows(self, p: Project, strat: Optional[str]) -> List[Dict[str, Any]]:
+        from . import orchestrate as O
+        from . import strategy as S
+        rows = []
+        for t in p.q("SELECT * FROM tasks WHERE status IN ('todo','running','verify','blocked') ORDER BY id LIMIT 40"):
+            t = p.get("task", t["id"])
+            led = O.ledger(p, t["id"])
+            r = None
+            if strat:
+                try:
+                    x = S.route_task(p, t, led)
+                    r = {"level": x["level"], "model": x["model"], "why": x["why"]}
+                except ResearchError:
+                    pass
+            rows.append({"id": t["id"], "title": t["title"], "status": t["status"], "override": led.get("override"), "route": r,
+                         "contract": led.get("contract") or {}, "checks": len(t.get("checks") or []),
+                         "frozen": sorted(led.get("frozen") or {}), "attempts": len(led.get("attempts") or [])})
+        return rows
+
+    def _experiment_rows(self, p: Project) -> List[Dict[str, Any]]:
+        out = []
+        for e in p.q("SELECT id, title, status FROM experiments WHERE status != 'abandoned' ORDER BY id DESC LIMIT 15"):
+            ev = p.q1("SELECT ts, summary FROM events WHERE entity_id=? AND action='validated' ORDER BY id DESC LIMIT 1", (e["id"],))
+            out.append({**e, "state": S.experiment_state(p, e["id"]), "validation": ev})
+        return out
+
+    def m_hook_approve(self, names: Any = None) -> Dict[str, Any]:
+        from . import hooks as HK
+        return HK.approve(self.project(sync=False), names)
+
+    def m_hook_toggle(self, name: str, enabled: bool) -> Dict[str, Any]:
+        from . import hooks as HK
+        return HK.set_enabled(self.project(sync=False), name, enabled)
+
+    def m_hook_run(self, name: str) -> Dict[str, Any]:
+        from . import hooks as HK
+        p = self.project(sync=False)
+        return HK.run(p, HK.specs(p)[name]["stage"], names=[name])
+
+    def m_task_pin(self, id: str, level: Optional[str] = None, profile: Optional[str] = None, clear: bool = False) -> Dict[str, Any]:
+        from . import orchestrate as O
+        return O.set_override(self.project(sync=False), id, level, profile, None, clear)
+
+    def m_experiment_check(self, id: str, request_synthesis: bool = False) -> Dict[str, Any]:
+        from . import expcheck
+        return expcheck.check(self.project(), id, request_synthesis)
+
+    def m_strategy_use(self, name: str, dry_run: bool = False) -> Dict[str, Any]:
+        from . import strategy as S
+        p = self.project(sync=False)
+        p.config = p.load_config()
+        v, prev = S.validate(p, name), S.active_name(p)
+        if not v["ok"]:
+            raise ResearchError(f"Strategy {name} is invalid: {v['errors'][0]}", hint="Fix it in .research/config.yaml.")
+        if not dry_run and prev != name:
+            p.save_config({"orchestration.active_strategy": name})
+            p.event("project", None, "strategy_changed",
+                    f"allocation strategy {prev or 'legacy'} → {name}@{S.fingerprint(p, name)} (applies to future dispatches only)")
+        return {"previous": prev, "active": name, "dry_run": dry_run, "warnings": v["warnings"]}
+
+    def m_setup_agents(self, apply: bool = False, strategy: Optional[str] = None) -> Dict[str, Any]:
+        from . import setup_agents as SA
+        return SA.setup(self.project(sync=False), apply=apply, strategy=strategy)
+
     # skills ------------------------------------------------------------------------------------
     def m_skills_add(self, source: str, only: Any = None, force: bool = False, always: Optional[bool] = None,
                      applies_to: Any = None, list_only: bool = False) -> Dict[str, Any]:
@@ -424,7 +515,8 @@ MUTATING = {"create", "update", "set_status", "set_baseline", "synthesize", "sup
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
-            "review_finding", "report", "dispatch", "skills_add", "skills_remove", "skills_update", "skills_set"}
+            "review_finding", "report", "dispatch", "skills_add", "skills_remove", "skills_update", "skills_set",
+            "strategy_use", "setup_agents", "hook_approve", "hook_toggle", "hook_run", "task_pin", "experiment_check"}
 
 
 def serve(root: str, stdin=None, stdout=None) -> None:

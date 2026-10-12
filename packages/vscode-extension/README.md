@@ -14,8 +14,9 @@ plus optional **plans → tasks** for tracking the work itself.
   finding counts as supported, task claims and progress notes so several agents can share one queue, and project
   **skills** (import from a folder or GitHub) loaded where they're relevant.
 - Optional **Scientist Guide** (`docs/SCIENTIST_GUIDE.md`) kept current after each synthesis, a `scientific-handoff` skill, and
-  Opus → Sonnet → Haiku tiered routing with frozen acceptance tests (`research setup agents`, `research orchestrate`). These are
-  CLI-driven for now; the panel shows their tasks, notes and a "guide pending" attention item, but has no dedicated UI.
+  named model-allocation strategies (`sonnet_first`, `opus_first`, `haiku_max`, `sonnet_heavy`), tiered routing with frozen acceptance tests,
+  task contracts, approved project hooks, per-task model pins and usage summaries (`research strategy|orchestrate|hook|usage`). The
+  **Agent setup** page (*Research: Open Agent Setup*) shows and drives them, plus skills and MCP registration.
 - **Numerical evidence**: findings can bind their numbers to recorded metrics (`research evidence …`); a failed binding blocks `supported`,
   and `research report` shows the verification table. CLI-driven; no dedicated panel UI yet.
 - Compare two runs side by side, sweep parameters within the run budget, export a report with the evidence plots.

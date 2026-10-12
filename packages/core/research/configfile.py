@@ -206,7 +206,8 @@ def check(project_raw: Dict[str, Any], defaults: Dict[str, Any], text: Optional[
     for dotted, v in sorted(_flat(project_raw).items()):
         if dotted not in inherited_flat:
             # Cluster profiles are user-named, so their sub-keys are legitimately absent from the defaults.
-            if re.match(r"^hpc\.clusters\.[^.]+\.", dotted):
+            if re.match(r"^hpc\.clusters\.[^.]+\.", dotted) or re.match(r"^orchestration\.strategies\.[^.]+\.", dotted) \
+                    or re.match(r"^harness\.hooks(_approved)?\.[^.]+", dotted):
                 continue
             out["unknown"].append({"key": dotted, "value": v})
         elif inherited_flat[dotted] == v and dotted not in ALWAYS_KEEP:
@@ -430,8 +431,8 @@ def _set_one(text: str, dotted: str, value: Any) -> str:
             block = [(" " * indent) + b for b in block]
             end = _block_end(lines, idx, indent)
             lines[idx:end] = block
-        else:
-            lines[idx] = f"{' ' * indent}{leaf}: {_render_value(value)}{comment}"
+        else:   # an old block value (e.g. a `- item` list) must go with the key's line, or it is left dangling
+            lines[idx:_block_end(lines, idx, indent)] = [f"{' ' * indent}{leaf}: {_render_value(value)}{comment}"]
         return newline.join(lines)
 
     # Not present: insert under the deepest existing parent, creating the rest.
@@ -476,9 +477,11 @@ def _block_end(lines: List[str], idx: int, indent: int) -> int:
         line = lines[j]
         if line.strip() and not line.lstrip().startswith("#"):
             ind = len(line) - len(line.lstrip())
-            if ind <= indent:
+            if ind < indent or (ind == indent and not line.lstrip().startswith("- ")):   # a list may sit at its key's indent
                 break
         j += 1
+    while j > idx + 1 and (not lines[j - 1].strip() or lines[j - 1].lstrip().startswith("#")):
+        j -= 1                              # trailing blank/comment lines belong to what follows
     return j
 
 

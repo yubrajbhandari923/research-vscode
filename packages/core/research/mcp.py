@@ -368,3 +368,22 @@ def install(root: str, clients: Optional[List[str]] = None, command: Optional[st
         except ValueError as e:
             raise ResearchError(str(e))
     return {"installed": done, "command": f"{command} mcp"}
+
+
+def status(root: str) -> Dict[str, Any]:
+    """Which agent clients have the `research` server registered, and every other server they list. Read-only."""
+    spec = [("claude", ".mcp.json", "mcpServers"), ("vscode", ".vscode/mcp.json", "servers"),
+            ("cursor", ".cursor/mcp.json", "mcpServers"), ("gemini", ".gemini/settings.json", "mcpServers")]
+    clients, others = [], []
+    for name, rel, key in spec:
+        path, servers, err = os.path.join(root, rel), {}, None
+        if os.path.isfile(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    servers = (json.load(f) or {}).get(key) or {}
+            except (ValueError, OSError) as e:
+                err = f"unreadable: {e}"
+        clients.append({"client": name, "file": rel, "exists": os.path.isfile(path), "registered": "research" in servers, "error": err})
+        others += [{"client": name, "name": n, "command": " ".join([str(s.get("command") or s.get("url") or "")] + [str(a) for a in s.get("args") or []]).strip()}
+                   for n, s in servers.items() if n != "research" and isinstance(s, dict)]
+    return {"clients": clients, "others": others, "codex": "per-user: `codex mcp add research -- research mcp`"}

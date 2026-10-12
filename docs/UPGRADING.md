@@ -9,7 +9,7 @@ Run it from the project root (the directory containing `.research/`).
 
 ```bash
 # VS Code extension (the Python core is bundled inside it)
-code --install-extension dist/research-panel-0.3.0.vsix
+code --install-extension dist/research-panel-X.Y.Z.vsix
 
 # and/or the CLI, if you use it outside VS Code (HPC login nodes, sbatch scripts, notebooks)
 pip install -e /path/to/research-vscode
@@ -20,7 +20,7 @@ pip install -e /path/to/research-vscode
 `.research/` is text. If the project is in git, commit it; if not, copy it.
 
 ```bash
-git add .research AGENTS.md && git commit -m "Before Research OS 0.3.0 upgrade" || cp -a .research .research.before-0.3.0
+git add .research AGENTS.md && git commit -m "Before Research OS X.Y.Z upgrade" || cp -a .research .research.before-X.Y.Z
 ```
 
 ## 2. See what the upgrade would change
@@ -50,6 +50,21 @@ refuse rather than guess.
 ```
 
 Safe to re-run. Edited metadata files are backed up to `.research/cache/upgrade-<timestamp>/`.
+
+## 4b. Optional: model strategies, hooks and usage (0.6 / 0.7)
+
+Nothing here is required; every new setting defaults to off. Existing projects keep the legacy tier routing until you choose a strategy.
+
+```bash
+.research/bin/research strategy list            # built-in strategies
+.research/bin/research strategy use sonnet_first --dry-run
+.research/bin/research strategy use sonnet_first
+.research/bin/research setup agents --apply     # regenerates .claude/agents/research-<level>.md; managed legacy files are moved aside, yours are untouched
+.research/bin/research agents-md --diff         # the managed AGENTS.md block gained strategy/contract/hook pointers
+```
+
+Hooks stay inert until you run `research hook approve`. Running agent sessions keep the configuration they started with, so stop them
+before switching if you want a clean cut-over.
 
 ## 5. Prove nothing was lost
 
@@ -110,7 +125,7 @@ Then:
 Nothing is destroyed, so you can always go back:
 
 ```bash
-git checkout .research AGENTS.md          # or: rm -rf .research && mv .research.before-0.3.0 .research
+git checkout .research AGENTS.md          # or: rm -rf .research && mv .research.before-X.Y.Z .research
 ```
 
 An older Research OS refuses to open a project migrated to a newer schema rather than damaging it, so

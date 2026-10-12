@@ -378,6 +378,8 @@ export function agentRoots(m: Model): Node[] {
   }));
   const list = (k: 'context' | 'prompts' | 'templates') => t.agent[k].map((f) => file(f.path, `ag/${k}/${f.name}`, f.name, undefined, I(k === 'context' ? 'symbol-structure' : k === 'prompts' ? 'comment' : 'file-code')));
   return [
+    { key: 'ag/setup', label: 'Agent setup', description: 'strategy · harness · skills · MCP', icon: I('hubot', 'charts.blue'), context: 'agentsetup',
+      command: { command: 'research.setup.open', title: 'Open Agent Setup' } },
     file('AGENTS.md', 'ag/agents', 'AGENTS.md', 'agent instructions', I('book', 'charts.blue')),
     file('.research/config.yaml', 'ag/config', 'config.yaml', 'your overrides · check · effective', I('gear')),
     group('ag/skills', 'Skills', skills, I('mortar-board'), true),

@@ -15,12 +15,14 @@ session (RESEARCH_AGENT=<profile>, RESEARCH_AGENT_ROLE=<role>), so everything it
 """
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
 import time
 from typing import Any, Dict, List, Optional
 
+from . import gitinfo
 from .schema import normalize_id, type_of
 from .store import Project, _atomic_write
 from .util import ResearchError, as_list
@@ -218,14 +220,36 @@ def build_brief(p: Project, role: str, target: Optional[str] = None, objective: 
 
 
 def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
-             profile: Optional[str] = None, model: Optional[str] = None, instructions: Optional[str] = None) -> Dict[str, Any]:
-    """Prepare an agent session: write the brief, build argv + env. Does not start anything."""
+             profile: Optional[str] = None, model: Optional[str] = None, instructions: Optional[str] = None,
+             strategy: Optional[str] = None, level: Optional[str] = None, policy: Optional[Dict[str, Any]] = None,
+             headless: bool = False) -> Dict[str, Any]:
+    """Prepare an agent session: write the brief, build argv + env. Does not start anything.
+
+    With an active (or `strategy=`) allocation strategy the profile comes from `strategy.select`; callers that already
+    routed (orchestrate, guide) pass that decision as `policy` so it is resolved exactly once. Explicit profile/model win.
+    """
+    from . import harness as H
+    from . import strategy as S
     role = role or default_role(p, target)
     if role not in ROLES:
         raise ResearchError(f"role must be one of {', '.join(ROLES)}")
     if role == "planner" and not (objective or target):
         raise ResearchError("The planner needs an objective (--objective \"…\") or a plan id")
-    name, prof = profile_for(p, role, profile)
+    if policy is None and S.active_name(p, strategy):
+        cls = led = None
+        if target and type_of(target) == "task":
+            from . import orchestrate as O
+            cls = S.task_class(p.get("task", normalize_id(target, "T")))[0] if role == "implementer" else None
+            led = O.ledger(p, normalize_id(target, "T"))
+        policy = S.select(p, role, cls, level=level, strategy=strategy, profile=profile, model=model, led=led)
+    if policy:
+        name, prof = profile_for(p, role, policy["profile"])
+        model = policy["model"]
+    else:
+        name, prof = profile_for(p, role, profile)
+    hb = H.brief_md(p)
+    if hb:
+        instructions = (instructions + "\n\n" if instructions else "") + hb
     brief = build_brief(p, role, target, objective, instructions)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     label = normalize_id(target) if target else role
@@ -237,6 +261,11 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
               "Use the `research` CLI for every record.")
     cmd = prof.get("command") or name
     argv: List[str] = [cmd, *[str(a) for a in as_list(prof.get("args"))]]
+    if headless:
+        if not prof.get("headless_args"):
+            raise ResearchError(f"Profile {name!r} has no headless_args, so its usage cannot be captured",
+                                hint="Set agents.profiles.<name>.headless_args and usage_parser (see claude-fast).")
+        argv += [str(a) for a in as_list(prof["headless_args"])]
     mdl = model or prof.get("model")
     if mdl and prof.get("model_flag"):
         argv += [prof["model_flag"], str(mdl)]
@@ -246,8 +275,50 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": p.root, "RESEARCH_BRIEF": rel}
     if mdl:
         env["RESEARCH_AGENT_MODEL"] = str(mdl)
+    snap = None
+    if policy:
+        hr = H.resolve(p)
+        snap = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "project": p.name, "project_root": p.root, "task": label if target else None,
+                "role": role, "strategy": policy["strategy"], "strategy_origin": policy["origin"],
+                "fingerprint": policy["fingerprint"], "class": policy["class"], "level": policy["level"], "profile": name,
+                "provider": cmd, "model": mdl, "why": policy["why"], "overrides": policy["overrides"],
+                "independent": policy["independent"], "harness": {"name": hr["name"], "fingerprint": hr["fingerprint"]},
+                "revision": gitinfo.info(p.root).get("commit"), "brief": rel, "status": "prepared",
+                "usage": {"status": "unavailable", "note": "not exposed by the agent CLI; never recorded as zero"}}
+        _atomic_write(path[:-3] + ".policy.json", json.dumps(snap, indent=1, sort_keys=True, default=str) + "\n")
+        if target and type_of(target) == "task":
+            from . import orchestrate as O
+            O.record_dispatch(p, normalize_id(target, "T"), snap)
+        env.update(RESEARCH_STRATEGY=policy["strategy"], RESEARCH_STRATEGY_FINGERPRINT=policy["fingerprint"],
+                   RESEARCH_AGENT_LEVEL=policy["level"])
     p.event(type_of(label) if target else "agent", label if target else None, "dispatched",
-            f"Dispatched {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else ""))
-    return {"role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel,
+            f"Dispatched {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else "")
+            + (f" [strategy {policy['strategy']}@{policy['fingerprint']} level {policy['level']} model {mdl}]" if policy else ""))
+    return {"role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel, "policy": snap,
+            "target": label if target else None, "headless": headless, "usage_parser": prof.get("usage_parser"),
             "available": bool(shutil.which(cmd)),
             "shell": " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " + " ".join(shlex.quote(a) for a in argv)}
+
+
+def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None) -> Dict[str, Any]:
+    """Run a prepared headless dispatch to completion and record the usage the provider reports (if any).
+
+    Only providers whose profile sets `usage_parser` yield usage; otherwise it is recorded as unavailable, never zero."""
+    import subprocess
+    from . import usage as U
+    if not d.get("headless"):
+        raise ResearchError("run_headless needs a dispatch prepared with headless=True")
+    t0 = time.time()
+    try:
+        r = subprocess.run(d["argv"], cwd=p.root, env={**os.environ, **d["env"]}, capture_output=True, text=True, timeout=timeout)
+        code, out, err, timed_out = r.returncode, r.stdout, r.stderr, False
+    except subprocess.TimeoutExpired as e:
+        code, out, err, timed_out = None, (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), "", True
+    parser = U.PARSERS.get(d.get("usage_parser") or "")
+    parsed = parser(out) if parser else {}
+    pol = d.get("policy") or {}
+    rec = U.record(p, d["usage_parser"], parsed, task=d.get("target"), role=d["role"], strategy=pol.get("strategy"),
+                   fingerprint=pol.get("fingerprint"), level=pol.get("level"), profile=d["profile"], model=d["model"],
+                   wall_seconds=round(time.time() - t0, 1)) if parsed else None
+    return {"exit_code": code, "timed_out": timed_out, "result": parsed.get("result_text") or out[-4000:], "stderr": err[-1000:],
+            "usage": rec or "unavailable (the provider reported no usage for this session)"}

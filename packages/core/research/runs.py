@@ -130,6 +130,9 @@ def create_run(p: Project, experiment: str, command: Union[str, Sequence[str], N
     if status not in schema.STATUSES["run"]:
         raise ResearchError(f"Invalid run status {status!r}")
     warnings = check_run_budget(p, exp_id, override)
+    if status == "queued" and backend != "manual":   # a run about to execute: project preflight first (approved hooks only)
+        from . import hooks
+        hooks.gate(p, "pre_experiment", experiment=exp_id)
     g = gitinfo.info(p.root)
     run_id = p.next_id("RUN")
     run_dir = p.rel(p.path("runs", run_id))

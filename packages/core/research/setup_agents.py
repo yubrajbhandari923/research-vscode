@@ -56,7 +56,30 @@ def _recommend(p: Project) -> List[str]:
     return out
 
 
+def _state(path: str, text: str) -> str:
+    if not os.path.exists(path):
+        return "create"
+    cur = open(path, encoding="utf-8").read()
+    return "unchanged" if cur == text else ("update" if MARK in cur else "skip-user-owned")
+
+
 def plan_agent_files(p: Project) -> List[Dict[str, Any]]:
+    """Agent files for the active strategy's levels (or the legacy tiers). Legacy managed files left over from before a
+    strategy was chosen are reported as `retire`; user-owned files are never touched."""
+    from . import strategy as S
+    name = S.active_name(p)
+    if name:
+        sd, res = S.definition(p, name), []
+        for lv in sd["levels"]:
+            text = S.agent_doc(p, name, lv, MARK)
+            path = os.path.join(p.root, ".claude", "agents", f"research-{lv}.md")
+            res.append({"tier": lv, "path": os.path.relpath(path, p.root), "state": _state(path, text),
+                        "model": S.profile_for_level(p, sd, lv)["model"], "_text": text})
+        for tier in O.TIERS:
+            path = os.path.join(p.root, ".claude", "agents", f"research-{tier}.md")
+            if tier not in sd["levels"] and os.path.exists(path) and MARK in open(path, encoding="utf-8").read():
+                res.append({"tier": tier, "path": os.path.relpath(path, p.root), "state": "retire", "model": None, "_text": ""})
+        return res
     res = []
     for tier in O.TIERS:
         model = O.resolve(p, tier)["model"] or O.cfg(p)["tiers"][tier]["model"]
@@ -72,11 +95,27 @@ def plan_agent_files(p: Project) -> List[Dict[str, Any]]:
 
 
 def setup(p: Project, provider: str = "claude", preset: str = "scientific", apply: bool = False,
-          approve: List[str] = (), probe: bool = False) -> Dict[str, Any]:
+          approve: List[str] = (), probe: bool = False, strategy: str = None) -> Dict[str, Any]:
+    prev = O.cfg(p).get("active_strategy")
+    try:
+        if strategy:   # plan against the strategy being requested; saved only on --apply (below)
+            p.config.setdefault("orchestration", {})["active_strategy"] = strategy
+        return _setup(p, provider, preset, apply, approve, probe, strategy, prev)
+    finally:
+        if not (apply and strategy):
+            p.config.setdefault("orchestration", {})["active_strategy"] = prev
+
+
+def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) -> Dict[str, Any]:
     if provider != "claude" or preset != "scientific":
         raise ResearchError("Only --provider claude --preset scientific is implemented",
                             hint="Other providers keep using explicit `research dispatch --profile …`.")
     cli = _claude()
+    if strategy:
+        from . import strategy as S
+        v = S.validate(p, strategy)
+        if not v["ok"]:
+            raise ResearchError(f"Strategy {strategy} is invalid: {v['errors'][0]}", hint="`research strategy validate`.")
     files = plan_agent_files(p)
     from .skills import list_skills
     have = {s["name"] for s in list_skills(p)}
@@ -102,19 +141,29 @@ def setup(p: Project, provider: str = "claude", preset: str = "scientific", appl
         if f["state"] == "skip-user-owned":
             r["skipped"].append(f"{f['path']}: user-owned, left untouched")
     disp = {}
-    for t in O.TIERS:  # verify routing offline: dispatch prepares argv only
+    from . import strategy as S
+    sname = S.active_name(p)
+    names = list(S.definition(p, sname)["levels"]) if sname else O.TIERS
+    model_of = (lambda t: S.select(p, "implementer", level=t)["model"]) if sname else (lambda t: O.resolve(p, t)["model"])
+    for t in names:  # verify routing offline: dispatch prepares argv only
         try:
             from . import agents
-            d = agents.dispatch(p, "analyst", None, "routing check", None, O.resolve(p, t)["model"], None) if apply else None
-            disp[t] = bool(d and O.resolve(p, t)["model"] in d["argv"]) if d else "dry-run"
+            m = model_of(t)
+            d = agents.dispatch(p, "analyst", None, "routing check", None, m, None) if apply else None
+            disp[t] = bool(d and m in d["argv"]) if d else "dry-run"
         except ResearchError as e:
             disp[t] = f"failed: {e}"
     r["routing_verified"] = disp
     if probe and cli["available"]:
-        r["live_probe"] = {t: _probe(O.resolve(p, t)["model"]) for t in O.TIERS}
+        r["live_probe"] = {t: _probe(model_of(t)) for t in names}
     if not apply:
         return r
     for f in files:
+        if f["state"] == "retire":   # a managed legacy file: moved aside (not deleted) so the old tier names stop competing
+            dst = p.path("cache", "removed-agents", os.path.basename(f["path"]))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(os.path.join(p.root, f["path"]), dst)
+            r["installed"].append(f"{f['path']} (retired to {p.rel(dst)})")
         if f["state"] in ("create", "update"):
             os.makedirs(os.path.dirname(os.path.join(p.root, f["path"])), exist_ok=True)
             _atomic_write(os.path.join(p.root, f["path"]), f["_text"])
@@ -131,5 +180,7 @@ def setup(p: Project, provider: str = "claude", preset: str = "scientific", appl
     if not O.cfg(p).get("enabled"):
         p.config.setdefault("orchestration", {})["enabled"] = True
         p.save_config()
+    if strategy and prev != strategy:  # only on request; never changes an existing choice silently
+        p.save_config({"orchestration.active_strategy": strategy})
     p.event("project", None, "agents_setup", f"agent setup applied ({provider}/{preset})")
     return r

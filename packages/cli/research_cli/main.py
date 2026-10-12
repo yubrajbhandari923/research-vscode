@@ -1056,7 +1056,7 @@ def cmd_guide(a, p) -> int:
         r = G.mark_done(p, a.ids)
         _done(a, r, msg=f"recorded; {len(r['pending'])} still pending")
     elif act == "refresh":
-        r = G.refresh(p, a.profile, getattr(a, "model", None))
+        r = G.refresh(p, a.profile, getattr(a, "model", None), getattr(a, "strategy", None))
         if a.json:
             out_json(r)
         elif r.get("up_to_date"):
@@ -1086,7 +1086,8 @@ def cmd_guide(a, p) -> int:
 
 def cmd_setup(a, p) -> int:
     from research import setup_agents as SA
-    r = SA.setup(p, a.provider, a.preset, apply=a.apply and not a.dry_run, approve=a.approve or [], probe=a.probe)
+    r = SA.setup(p, a.provider, a.preset, apply=a.apply and not a.dry_run, approve=a.approve or [], probe=a.probe,
+                 strategy=a.strategy)
     if a.json:
         out_json(r)
         return 0
@@ -1100,6 +1101,208 @@ def cmd_setup(a, p) -> int:
     return 0
 
 
+@mut
+def cmd_strategy(a, p) -> int:
+    """`research strategy list|show|use|validate|route` — named model-allocation strategies."""
+    from research import harness as H
+    from research import orchestrate as O
+    from research import strategy as S
+    act, name = a.action, a.name
+    if act == "list":
+        r = {"active": S.active_name(p), "strategies": S.listing(p)}
+        if a.json:
+            out_json(r)
+            return 0
+        print(dim("  active: ") + (r["active"] or "none (legacy tier routing)"))
+        for s_ in r["strategies"]:
+            print(f"  {'*' if s_['active'] else ' '} {s_['name'].ljust(14)} {dim(s_['origin'].ljust(9))} {s_['description'] or ''}")
+        return 0
+    if act == "show":
+        r = S.show(p, name)
+        r["harness"] = {k: v for k, v in H.resolve(p).items() if k not in ("skills_detail", "context_detail")}
+        if a.json:
+            out_json(r)
+            return 0
+        if not r.get("name"):
+            print(r["legacy"])
+            return 0
+        print(f"{r['name']} [{r['origin']}] @{r['fingerprint']}" + (f" extends {r['extends']}" if r["extends"] else ""))
+        d = r["definition"]
+        print(dim("  " + (d.get("description") or "")))
+        for lv, x in r["resolved_levels"].items():
+            print(f"  level {lv.ljust(9)} → {x.get('profile')} ({x.get('model') or 'cli default'})")
+        print("  route    " + ", ".join(f"{c}→{lv}" for c, lv in d["route"].items()))
+        print(f"  coordinator {d['coordinator']} · guide {d['guide']} · scientific-assumption → {d['on_scientific_assumption']}")
+        print("  attempts " + ", ".join(f"{k}:{v}" for k, v in d["attempts"].items()) + " · escalate " +
+              ", ".join(f"{k}→{v}" for k, v in d["escalate"].items()) + f" · max escalations {d['max_escalations']}")
+        for e in r["validation"]["errors"]:
+            print(red("✗ ") + e)
+        for w in r["validation"]["warnings"] + H.warnings(p):
+            print(yellow("⚠ ") + w)
+        return 0
+    if act == "validate":
+        names = [name] if name else ([S.active_name(p)] if S.active_name(p) else sorted(p.config["orchestration"]["strategies"]))
+        rs = [S.validate(p, n) for n in names]
+        hw = H.warnings(p)
+        if a.json:
+            out_json({"results": rs, "harness_warnings": hw})
+        else:
+            for r in rs:
+                print((green("✓ ") if r["ok"] else red("✗ ")) + r["strategy"])
+                for e in r["errors"]:
+                    print(red("    ✗ ") + e)
+                for w in r["warnings"]:
+                    print(yellow("    ⚠ ") + w)
+            for w in hw:
+                print(yellow("⚠ ") + w)
+        return 0 if all(r["ok"] for r in rs) else 1
+    if act == "route":
+        if not name:
+            raise ResearchError("route needs a task id: research strategy route T-001 [--strategy NAME] [--level L]")
+        r = S.route_task(p, p.get("task", normalize_id(name, "T")), O.ledger(p, normalize_id(name, "T")),
+                         level=a.level, strategy=a.strategy, profile=a.profile, model=a.agent_model)
+        if a.json:
+            out_json(r)
+        else:
+            print(f"{r['task']}: {r['level']} → {r['profile']} ({r['model'] or 'cli default'}) as {r['role']}")
+            print(dim(f"  strategy {r['strategy']}@{r['fingerprint']} · class {r['class']} · {r['why']}"))
+            if r.get("warning"):
+                print(yellow("⚠ " + r["warning"]))
+        return 0
+    # use
+    if not name:
+        raise ResearchError("use needs a strategy name: research strategy use sonnet_first")
+    v = S.validate(p, name)
+    prev = S.active_name(p)
+    if not v["ok"]:
+        if a.json:
+            out_json({"applied": False, **v})
+        else:
+            for e in v["errors"]:
+                print(red("✗ ") + e)
+        return 1
+    if not a.dry_run and prev != name:
+        p.save_config({"orchestration.active_strategy": name})
+        p.config.setdefault("orchestration", {})["active_strategy"] = name
+        p.event("project", None, "strategy_changed",
+                f"allocation strategy {prev or 'legacy'} → {name}@{S.fingerprint(p, name)} (applies to future dispatches only)")
+    r = {"applied": not a.dry_run and prev != name, "dry_run": a.dry_run, "previous": prev, "active": name if not a.dry_run else prev,
+         "would_activate": name, **{k: v[k] for k in ("warnings",)}}
+    _done(a, r, msg=f"{'would switch' if a.dry_run else 'strategy'}: {prev or 'legacy'} → {name}" + dim("  (running sessions keep their snapshot)"))
+    return 0
+
+
+def _contract_fields(a) -> dict:
+    m = {"objective": a.objective, "context": a.context, "expected_outputs": a.expected_output, "allowed_files": a.allowed_file,
+         "constraints": a.constraint, "verification": a.require}
+    return {k: v for k, v in m.items() if v}
+
+
+@mut
+def cmd_hook(a, p) -> int:
+    """`research hook list|add|enable|disable|approve|revoke|run|results` — project harness hooks."""
+    from research import hooks as HK
+    act = a.action
+    if act == "list":
+        r = HK.listing(p)
+        if a.json:
+            out_json(r)
+            return 0
+        if not r:
+            print(dim("no hooks. Register one: research hook add NAME --stage post_implementation --command \"pytest tests/oracle -q\""))
+        for h in r:
+            st = green("approved") if h["approved"] else yellow("needs approval")
+            last = h["last"]
+            print(f"  {h['name'].ljust(16)} {h['stage'].ljust(20)} {st if h['enabled'] else dim('disabled')}  "
+                  + (dim(("passed" if last["ok"] else "FAILED") + " " + last["ts"][:16]) if last else dim("never run")))
+            print(dim(f"      {h['command']}  (timeout {h['timeout']:g}s{'' if h['required'] else ', advisory'})"))
+        return 0
+    if act == "results":
+        r = HK.results(p, a.name, a.limit)
+        if a.json:
+            out_json(r)
+        for x in ([] if a.json else r):
+            print(f"{x['ts'][:19]} {x['hook']} {green('ok') if x['ok'] else red('FAIL')} {x['seconds']}s" + ("" if x["ok"] else "\n" + x["output"][-600:]))
+        return 0
+    if act == "add":
+        if not (a.name and a.stage and a.command):
+            raise ResearchError("add needs NAME --stage STAGE --command CMD")
+        r = HK.add(p, a.name, a.stage, a.command, a.timeout, not a.advisory, a.description)
+        _done(a, r, msg=f"hook {a.name} registered; it will not run until a human runs `research hook approve {a.name}`")
+        return 0
+    if act in ("enable", "disable"):
+        _done(a, HK.set_enabled(p, a.name, act == "enable"), msg=f"hook {a.name} {act}d")
+        return 0
+    if act == "approve":
+        r = HK.approve(p, [a.name] if a.name else None)
+        _done(a, r, msg="approved: " + ", ".join(r["approved"]))
+        return 0
+    if act == "revoke":
+        _done(a, HK.revoke(p, a.name), msg=f"approval for {a.name} revoked")
+        return 0
+    r = HK.run(p, a.stage or "post_implementation", a.task, a.experiment, names=[a.name] if a.name else None)
+    if a.json:
+        out_json(r)
+    else:
+        for x in r["ran"]:
+            print((green("✓ ") if x["ok"] else red("✗ ")) + f"{x['hook']} ({x['seconds']}s)" + ("" if x["ok"] else "\n" + x["output"][-800:]))
+        for s_ in r["skipped"]:
+            print(yellow(f"⚠ {s_['hook']} skipped: {s_['reason']}"))
+    return 0 if r["ok"] else 1
+
+
+def cmd_usage(a, p) -> int:
+    from research import usage as U
+    if a.action == "import":
+        parser = U.PARSERS.get(a.parser)
+        if not parser or not a.file:
+            raise ResearchError("usage import FILE [--parser claude_json] [--task T-…] [--level L]")
+        with open(a.file, encoding="utf-8") as f:
+            parsed = parser(f.read())
+        rec = U.record(p, a.parser, parsed, task=a.task, level=a.level, strategy=a.strategy, model=a.agent_model)
+        _done(a, rec or {"recorded": False}, msg="usage recorded" if rec else "that file reports no usage; nothing recorded")
+        return 0 if rec else 1
+    r = U.summary(p, a.by, a.task)
+    if a.json:
+        out_json(r)
+        return 0
+    if not r["groups"]:
+        print(dim("no usage recorded yet. `orchestrate dispatch --headless` records it when the provider reports it."))
+    for k, g in sorted(r["groups"].items()):
+        def f(m):
+            x = g[m]
+            return "—" if x["total"] is None else f"{x['total']:,.4g}" + dim(f" ({x['reported']}/{g['records']})")
+        print(f"  {k.ljust(16)} {g['records']} records · {g['tasks']} tasks · in {f('input_tokens')} · out {f('output_tokens')} · "
+              f"cache r/w {f('cache_read_tokens')}/{f('cache_write_tokens')} · cost $ {f('cost_usd')}")
+    print(dim("  (n/m = records that reported the field; missing is never counted as zero)"))
+    return 0
+
+
+@mut
+def cmd_experiment_check(a, p) -> int:
+    from research import expcheck
+    r = expcheck.check(p, a.id, a.request_synthesis)
+    if a.json:
+        out_json(r)
+        return 0 if r["deterministic"]["all_passed"] else 1
+    d = r["deterministic"]
+    print(bold(r["experiment"]) + dim(f"  runs checked: {', '.join(r['runs_checked']) or 'none'}"))
+    print(green("Verified by programs"))
+    for x in d["validated"]:
+        print(f"  ✓ {x}")
+    for x in d["failed"]:
+        print(red(f"  ✗ {x['run']}: {x['problem']}"))
+    for x in d["pending"]:
+        print(yellow(f"  … {x['run']} {x['state']} — {x['next']}"))
+    print(yellow("Needs your interpretation") if r["needs_human"] else dim("Nothing needs human interpretation right now"))
+    for x in r["needs_human"]:
+        print(f"  ? {x}")
+    sd = r["synthesis"]["dispatch"]
+    if sd:
+        print(green("✓ ") + f"analyst session prepared ({sd['model']}): {sd['shell']}")
+    return 0 if d["all_passed"] else 1
+
+
 def _orch_task(p, a):
     return p.get("task", normalize_id(a.task, "T"))
 
@@ -1109,9 +1312,16 @@ def cmd_orchestrate(a, p) -> int:
     from research import orchestrate as O
     act = a.action
     if act == "route":
-        r = O.route(p, _orch_task(p, a), a.tier, a.available)
+        r = O.route(p, _orch_task(p, a), a.tier, a.available, a.strategy, a.profile, a.agent_model)
     elif act == "dispatch":
-        r = O.dispatch_task(p, a.task, a.tier, a.available, a.allow_unfrozen)
+        r = O.dispatch_task(p, a.task, a.tier, a.available, a.allow_unfrozen, a.strategy, a.profile, a.agent_model, a.headless)
+        if a.headless:
+            from research import agents as AG
+            h = AG.run_headless(p, r)
+            _done(a, h, msg=f"headless session finished (exit {h['exit_code']}); usage: {h['usage'] if isinstance(h['usage'], str) else 'recorded'}")
+            if not a.json:
+                print(h["result"])
+            return h["exit_code"] or 0
         if not a.json and not a.run:
             print(f"{r['tier']} ({r['model']}) brief → {r['brief']}" + (f"  ⚠ {r['route']['note']}" if r["degraded"] else ""))
             print(r["shell"])
@@ -1124,11 +1334,30 @@ def cmd_orchestrate(a, p) -> int:
     elif act == "freeze":
         r = O.freeze(p, a.task, a.rest)
     elif act == "attempt":
-        r = O.record_attempt(p, a.task, a.tier, a.outcome, a.category, a.note)
+        r = O.record_attempt(p, a.task, a.tier, a.outcome, a.category, a.note, json.loads(a.usage) if a.usage else None)
     elif act == "correct-test":
         r = O.correct_test(p, a.task, a.rest[0], a.reason, a.tier)
     elif act == "delegate":
-        r = O.delegate(p, a.task, a.rest[0], a.tier or "haiku", a.goal, a.acceptance, a.check)
+        r = O.delegate(p, a.task, a.rest[0], a.tier, a.goal, a.acceptance, a.check)
+        cf = _contract_fields(a)
+        if cf:
+            O.set_contract(p, r["id"], **cf)
+    elif act == "contract":
+        cf = _contract_fields(a)
+        r = O.set_contract(p, a.task, **cf) if cf else {"task": a.task, "contract": O.ledger(p, a.task).get("contract") or {}}
+    elif act == "verify":
+        r = O.verify_work(p, a.task, a.tier, a.record)
+        if not a.json:
+            print((green("✓ ") + "verified") if r["passed"] else (red("✗ ") + "not verified"))
+            for d in r["diagnostics"]:
+                print("  " + d.replace("\n", "\n    "))
+            for s_ in r["hooks_skipped"]:
+                print(yellow(f"  ⚠ hook {s_['hook']} skipped: {s_['reason']}"))
+            if r.get("next"):
+                print(dim(f"  next: {r['next']['action']}" + (f" → {r['next']['tier']}" if r["next"].get("tier") else "")))
+            return 0 if r["passed"] else 1
+    elif act == "pin":
+        r = O.set_override(p, a.task, a.level, a.profile, a.agent_model, a.clear)
     elif act == "status":
         r = O.status(p, a.task)
     else:
@@ -2067,7 +2296,16 @@ def cmd_dispatch(a, p) -> int:
     from research import agents as AG
     target = getattr(a, "target", None)
     d = AG.dispatch(p, getattr(a, "role", None), target, getattr(a, "objective", None), a.profile, a.agent_model,
-                    getattr(a, "instructions", None))
+                    getattr(a, "instructions", None), strategy=getattr(a, "strategy", None), level=getattr(a, "level", None),
+                    headless=getattr(a, "headless", False))
+    if d["headless"] and not a.print:
+        h = AG.run_headless(p, d)
+        if a.json:
+            out_json({**d, "run": h})
+        else:
+            print(h["result"])
+            print(dim("usage: " + (h["usage"] if isinstance(h["usage"], str) else "recorded in .research/usage.jsonl")), file=sys.stderr)
+        return h["exit_code"] or 0
     if a.json:
         out_json(d)
         return 0
@@ -2315,6 +2553,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending)")
     x.add_argument("--run", action="store_true", help="refresh: start the agent now instead of printing the command")
     x.add_argument("--profile")
+    x.add_argument("--strategy", help="refresh: use this allocation strategy for this call only")
 
     x = add(sub, "setup", cmd_setup, "optional setup: `setup agents --provider claude --preset scientific [--apply]`")
     x.add_argument("what", choices=["agents"])
@@ -2324,13 +2563,28 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--dry-run", action="store_true")
     x.add_argument("--approve", nargs="+", choices=["ponytail"], help="approve third-party skill imports")
     x.add_argument("--probe", action="store_true", help="also make one tiny live call per model")
+    x.add_argument("--strategy", help="also select this allocation strategy for the project (e.g. sonnet_first)")
 
     x = add(sub, "orchestrate", cmd_orchestrate,
-            "route | dispatch | freeze | attempt | correct-test | delegate | status for tiered (Opus/Sonnet/Haiku) work")
-    x.add_argument("action", choices=["route", "dispatch", "freeze", "attempt", "correct-test", "delegate", "status"])
+            "route | dispatch | freeze | attempt | correct-test | delegate | status | contract | verify | pin")
+    x.add_argument("action", choices=["route", "dispatch", "freeze", "attempt", "correct-test", "delegate", "status", "contract", "verify", "pin"])
     x.add_argument("task", help="task id (parent task for delegate)")
     x.add_argument("rest", nargs="*", help="freeze: test files · correct-test: file · delegate: title")
-    x.add_argument("--tier", choices=["haiku", "sonnet", "opus"])
+    x.add_argument("--tier", help="legacy: haiku|sonnet|opus · with an active strategy: one of its levels")
+    x.add_argument("--strategy", help="route/dispatch with this strategy for this call only")
+    x.add_argument("--profile", help="explicit agent profile (beats strategy routing)")
+    x.add_argument("--agent-model", help="explicit model (beats strategy routing)")
+    x.add_argument("--headless", action="store_true", help="dispatch: run the session non-interactively and record the usage the provider reports")
+    x.add_argument("--record", action="store_true", help="verify: log the result as an attempt and return the bounded next step")
+    x.add_argument("--clear", action="store_true", help="pin: remove the task's model override")
+    x.add_argument("--level", help="pin: strategy level for this task's implementer")
+    x.add_argument("--objective", help="contract: what the worker must achieve")
+    x.add_argument("--context", help="contract: background the worker needs")
+    x.add_argument("--expected-output", action="append", help="contract: a file or result the worker must produce")
+    x.add_argument("--allowed-file", action="append", help="contract: file/glob/dir the worker may modify (everything else is a violation)")
+    x.add_argument("--constraint", action="append", help="contract: a rule the worker must respect")
+    x.add_argument("--require", action="append", help="contract: verification the worker must satisfy")
+    x.add_argument("--usage", metavar="JSON", help="attempt: usage the caller really has, e.g. '{\"input_tokens\": 1200}'")
     x.add_argument("--available", nargs="*", help="models known to be available (default: config)")
     x.add_argument("--allow-unfrozen", metavar="REASON")
     x.add_argument("--run", action="store_true", help="dispatch: start the agent now")
@@ -2341,6 +2595,37 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--goal")
     x.add_argument("--acceptance")
     x.add_argument("--check", action="append")
+
+    x = add(sub, "strategy", cmd_strategy, "model-allocation strategies: list | show [NAME] | use NAME | validate [NAME] | route T-…")
+    x.add_argument("action", choices=["list", "show", "use", "validate", "route"])
+    x.add_argument("name", nargs="?", help="strategy name (route: task id)")
+    x.add_argument("--dry-run", action="store_true", help="use: validate and report, change nothing")
+    x.add_argument("--strategy", help="route: evaluate under this strategy instead of the active one")
+    x.add_argument("--level")
+    x.add_argument("--profile")
+    x.add_argument("--agent-model")
+
+    x = add(sub, "hook", cmd_hook, "project harness hooks: list | add | enable | disable | approve | revoke | run | results")
+    x.add_argument("action", choices=["list", "add", "enable", "disable", "approve", "revoke", "run", "results"])
+    x.add_argument("name", nargs="?")
+    x.add_argument("--stage", help="add/run: preflight | post_implementation | pre_experiment | post_experiment")
+    x.add_argument("--command")
+    x.add_argument("--timeout", type=float)
+    x.add_argument("--advisory", action="store_true", help="add: a failure is reported but does not block")
+    x.add_argument("--description")
+    x.add_argument("--task")
+    x.add_argument("--experiment")
+    x.add_argument("--limit", type=int, default=10)
+
+    x = add(sub, "usage", cmd_usage, "model usage: `usage [--by strategy|model|task|level]` · `usage import FILE`")
+    x.add_argument("action", nargs="?", choices=["summary", "import"], default="summary")
+    x.add_argument("file", nargs="?")
+    x.add_argument("--by", default="strategy")
+    x.add_argument("--task")
+    x.add_argument("--parser", default="claude_json")
+    x.add_argument("--level")
+    x.add_argument("--strategy")
+    x.add_argument("--agent-model")
 
     x = add(sub, "tuning", cmd_tuning, "declare | trial | select | test (held-out, once)")
     x.add_argument("action", choices=["declare", "trial", "select", "test"])
@@ -2467,6 +2752,9 @@ def build_parser() -> argparse.ArgumentParser:
     x = add(g, "baseline", cmd_experiment_baseline, "mark as the current baseline")
     x.add_argument("id", nargs="?")
     x.add_argument("--unset", action="store_true")
+    x = add(g, "check", cmd_experiment_check, "validate runs deterministically, list what needs interpretation, optionally prepare synthesis")
+    x.add_argument("id")
+    x.add_argument("--request-synthesis", action="store_true", help="prepare (not run) an analyst session when synthesis is due")
     x = add(g, "synthesize", cmd_experiment_synthesize, "record a synthesis of the experiment's runs", aliases=["synth"])
     x.add_argument("id")
     x.add_argument("--happened", help="what happened")
@@ -2784,6 +3072,9 @@ def _dispatch_args(x) -> None:
     x.add_argument("--objective", help="for the planner: what the plan should achieve")
     x.add_argument("--profile", help="agent profile (default from config roles)")
     x.add_argument("--agent-model", help="override the profile's model for this session")
+    x.add_argument("--strategy", help="use this allocation strategy for this dispatch only")
+    x.add_argument("--level", help="use this strategy level (e.g. fast|balanced|deep) for this dispatch only")
+    x.add_argument("--headless", action="store_true", help="run non-interactively and record the usage the provider reports")
     x.add_argument("--instructions", help="extra instructions added to the brief")
     x.add_argument("--print", action="store_true", help="print the command instead of starting the agent")
 

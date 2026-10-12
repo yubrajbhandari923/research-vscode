@@ -46,6 +46,7 @@ Screens: [experiment](docs/screens/experiment.png) · [finding](docs/screens/fin
 8. [Working with AI agents](#8-working-with-ai-agents)
 9. [SLURM and Remote SSH](#9-slurm-and-remote-ssh)
 10. [HPC: remote execution and portable bundles](#10-hpc-remote-execution-and-portable-bundles)
+    · [Configuration (layers, machine file)](#10a-configuration)
 11. [Full context export and safe upgrades](#11-full-context-export-and-safe-upgrades)
 12. [Files on disk, git and backups](#12-files-on-disk-git-and-backups)
 13. [Troubleshooting](#13-troubleshooting)
@@ -61,11 +62,11 @@ You need **Python ≥ 3.8** on the machine that holds the files. Nothing else: t
 
 ```bash
 # VS Code extension (the Python core is bundled inside; no pip install needed for the panel)
-code --install-extension dist/research-panel-0.2.0.vsix
+code --install-extension dist/research-panel-0.7.0.vsix
 #   or: Extensions view → ⋯ → Install from VSIX…
 
 # Optional: the `research` CLI outside VS Code (HPC login nodes, sbatch scripts, notebooks)
-pip install dist/research_panel-0.2.0-py3-none-any.whl     # or, from a clone: pip install -e .
+pip install dist/research_panel-0.7.0-py3-none-any.whl     # or, from a clone: pip install -e .
 ```
 
 - **Every project gets its own CLI at `.research/bin/research`.** Agents run it directly, without installing
@@ -81,7 +82,7 @@ pip install dist/research_panel-0.2.0-py3-none-any.whl     # or, from a clone: p
 - **Uninstall:** `code --uninstall-extension research-local.research-panel` and `pip uninstall research-panel`. Your
   `.research/` folders are left untouched.
 
-No `dist/` yet? Build it with `npm install && npm run package` (see [Development](#13-development)).
+No `dist/` yet? Build it with `npm install && npm run package` (see [Development](#15-development)).
 
 ---
 
@@ -381,7 +382,7 @@ Open the **Research** icon (flask) in the activity bar.
 | **Experiments** | In progress / Completed / Failed. Runs are collapsed under each experiment and artifacts sit under runs. ⚠ marks experiments that need synthesis, and the view badge counts them. |
 | **Findings** | Established · Preliminary · Failed directions · Contradicted & superseded. |
 | **Decisions · Checkpoints · Notes · Artifacts** | Lists. Missing artifact files are flagged red. |
-| **Agent Context** | `AGENTS.md`, `config.yaml`, skills (★ = always on), `context/current.md`, prompts and templates. Title bar: **Import Skills…** and **Register MCP Server…**. Right-click a skill: Toggle Always-On, Update from Source, Remove. |
+| **Agent Context** | **Agent setup** (opens the page below), `AGENTS.md`, `config.yaml`, skills (★ = always on), `context/current.md`, prompts and templates. Title bar: **Open Agent Setup**, **Import Skills…** and **Register MCP Server…**. Right-click a skill: Toggle Always-On, Update from Source, Remove. |
 
 ### Pages
 
@@ -401,6 +402,11 @@ Open the **Research** icon (flask) in the activity bar.
   **reviews**, history. Actions: **Review…** · **Ask agent to review** · Edit · Decision from this.
 - **Run:** copyable command, parameters, metrics, SLURM info, artifacts, tails of stdout and stderr. **Compare with…**
   opens the comparison page: metric deltas, changed parameters, code diff between the commits, outputs side by side.
+- **Agent setup** (*Research: Open Agent Setup*): the active model strategy with its work → level → model table and escalation limits
+  (**Change strategy…**), open tasks with their routed model, pins, checks and contract (**Pin a model…**), the project harness and its
+  **hooks** (stage, approval, last result; **Review and approve…**, **Run now**, enable/disable), experiment validation (**Check**),
+  model usage by strategy, skills, MCP registration per client, and the managed agent files. Changes use quick-picks and confirmations;
+  strategy definitions and hook commands are edited in `config.yaml` or with `research hook add`.
 - **Artifact:** previews for images, CSV/TSV, JSON, Markdown, text and logs, NPY headers and directory listings. Other formats show metadata with Open, Reveal and Copy path.
 - **Plan:** progress bar, objective and success criteria, task list with dependencies. Actions: **Add Task** ·
   **Dispatch** the next ready task · **Refine with planner…** · **Report**.
@@ -467,10 +473,14 @@ research run        compare A B | sweep EXP [--grid k=v1,v2] [--dry-run] -- CMD 
 research note       new|list|pin|link
 research skills     list|show|add|update|remove|set|link|new|duplicate        (alias: skill)
 research guide      init|status|refresh [--run]|done [SYN-ID…]                 (Scientist Guide)
-research setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe]
+research setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe] [--strategy NAME]
 research evidence   bind|verify|value|suggest|provenance|artifact|pin|status
 research source     add|mark|list                                              (literature; offline)
-research orchestrate route|dispatch|freeze|attempt|correct-test|delegate|status T-… [--tier opus|sonnet|haiku]
+research orchestrate route|dispatch|freeze|attempt|correct-test|delegate|status|contract|verify|pin T-… [--tier LEVEL|opus|sonnet|haiku] [--headless]
+research strategy   list|show [NAME]|use NAME [--dry-run]|validate|route T-…   (named model-allocation strategies)
+research hook       list|add|enable|disable|approve|revoke|run|results         (project harness hooks; approval is human-only)
+research usage      [--by strategy|model|task|level] | import FILE            (provider-reported usage; missing is never zero)
+research experiment check EXP-… [--request-synthesis]                         (deterministic validation, kept apart from interpretation)
 research tuning     declare|trial|select|test EXP-…                           (validation-only; test is one-shot)
 
 research search "…"        research report [Q-…|PLAN-…|EXP-…]       research checkpoint --commit
@@ -583,7 +593,7 @@ not replace, `README.md`, the technical docs and `research report`. Every synthe
 ```bash
 research guide init                  # bare-bones guide from goal + questions (never overwrites)
 research guide status                # pending syntheses + their findings' statuses
-research guide refresh               # prints the command for the configured Opus agent (guide.model in config.yaml)
+research guide refresh               # prints the command for the guide agent (the active strategy's `guide` level, else guide.model)
 research guide refresh --run         # ...or starts it now; the agent follows the `scientist-guide` skill
 research guide done [SYN-ID …]       # agent records what it has reflected (default: all pending)
 ```
@@ -592,9 +602,9 @@ Existing projects: run `research init` once to copy the new `scientist-guide` an
 refresh the AGENTS.md block. Convert a researcher's discussion into a Question/Plan/Experiment/Tasks with the
 `scientific-handoff` skill.
 
-### Tiered agents: Opus → Sonnet → Haiku (optional)
+### Orchestration: strategies, tiers, contracts and hooks (optional)
 
-**Intended workflow.** The researcher agrees the science (possibly elsewhere) and hands it over with the
+**Intended workflow** (written with the legacy Opus/Sonnet/Haiku tiers; under a strategy read them as its deep / coordinator / fast levels). The researcher agrees the science (possibly elsewhere) and hands it over with the
 `scientific-handoff` skill → Opus turns it into a Question, Plan, Experiment and bounded tasks → Sonnet writes the
 contract and independent tests, freezes them, and decides whether Haiku can implement → Haiku implements against the frozen
 tests (max 3 attempts) → Sonnet reviews and runs integration checks → `task done` (checks gate it) → Opus runs and
@@ -602,16 +612,17 @@ synthesizes registered experiments, then refreshes the Scientist Guide. Skip any
 are task checks; scientific computations are registered experiments and runs with their usual budgets.
 
 **What is and isn't automatic.** `setup agents` is opt-in and writes only Research OS-managed files. External code (Ponytail)
-needs `--approve ponytail`. No MCP servers, plugins, hooks or permission changes are ever installed. The VS Code extension has
-no UI for these yet; use the CLI (the records they create, such as notes, tasks and the guide attention item, appear in the
-panel as usual). Plain `research dispatch` is unchanged and does not route by tier.
+needs `--approve ponytail`. No MCP servers, plugins, Claude Code hooks or permission changes are ever installed (project harness hooks
+are different: they are yours, and run only after you approve them). The VS Code **Agent setup** page (*Research: Open Agent Setup*)
+shows and drives strategy, hooks, per-task pins, usage, skills and MCP registration; everything else stays CLI-driven. Plain
+`research dispatch` is unchanged and does not route by tier unless an allocation strategy is active (then it uses the same resolver).
 
 
-Routing by difficulty and verifiability, layered on the existing plans, tasks, checks and `dispatch`:
+**Legacy tier routing** (what you get until you choose a strategy), by difficulty and verifiability, layered on the existing plans, tasks, checks and `dispatch`:
 Opus designs/synthesizes and maintains the Scientist Guide, Sonnet writes contracts + independent tests and reviews,
 Haiku implements fully specified, frozen-test units. Native Claude Code subagents cannot spawn subagents, so Opus→Sonnet and
 Opus→Haiku run in-session via `.claude/agents/research-*.md`, while Sonnet→Haiku runs as a separate `claude` process via
-`research orchestrate dispatch … --run`. Token/cost usage is not recorded by Research OS (reported as unavailable).
+`research orchestrate dispatch … --run`. Usage is recorded only for `--headless` runs and manual records (see below).
 
 ```bash
 research setup agents --provider claude --preset scientific            # dry run: plan only
@@ -625,6 +636,143 @@ research orchestrate correct-test T-002 tests/test_metrics.py --reason "…" --t
 research tuning declare|trial|select|test EXP-001 …                     # validation-only tuning, one-shot held-out test
 ```
 Limits live in `.research/config.yaml → orchestration.limits` (Haiku 3 attempts, Sonnet 2, 2 escalations, 50 tuning evaluations).
+
+#### Allocation strategies (which model does which part)
+
+Three independent layers, so each can change without the others:
+
+| Layer | Owns | Where |
+|---|---|---|
+| **Profile** | an executable + model (`claude-fast`, `codex`, …) | `agents.profiles` |
+| **Strategy** | which *level* (`fast` / `balanced` / `deep` — the strategy's own names) handles which kind of task, retry limits, escalation | `orchestration.strategies.<name>`, selected by `orchestration.active_strategy` |
+| **Harness** | how *this project* prepares and verifies work: skills, context files, an instructions file, verification commands, hooks | `harness:` (references are carried into briefs and never interpreted; only approved hooks execute, see below) |
+
+A strategy never names a vendor model; it maps levels to profiles (`levels: {fast: claude-fast, …}`), so a new model
+replaces one profile, not the routing. A project with no `active_strategy` keeps the legacy Opus/Sonnet/Haiku tier routing
+above, unchanged.
+
+| Strategy | Coordinator / tests | Checkable work | Unchecked work | Scientific synthesis | Retries → escalation |
+|---|---|---|---|---|---|
+| `sonnet_first` (recommended for new projects) | balanced | fast | balanced | **deep** | fast×3 → balanced ×2 → human |
+| `opus_first` | balanced; **deep plans** | fast | balanced | deep | fast×3 → balanced ×2 → deep → human |
+| `haiku_max` | balanced | fast | balanced | balanced (deep only with `--level deep`) | fast×4 → balanced ×2 → human |
+| `sonnet_heavy` | balanced | **balanced** (fast only for `task_type: mechanical`) | balanced | deep | fast×2 → balanced ×2 → human |
+
+Defaults: `fast`=`claude-haiku-5-5`, `balanced`=`claude-sonnet-5-5`, `deep`=`claude-opus-5-5` (profiles `claude-fast|balanced|deep`).
+"Checkable" means the task has both checks and acceptance criteria; routing is deterministic from task metadata, with no LLM
+classifier.
+
+```bash
+research strategy list                          # built-in / global / project, and which is active
+research strategy show sonnet_first             # resolved levels → profiles → models, routes, limits, fingerprint
+research strategy use sonnet_first              # this project only (--dry-run validates and reports, changes nothing)
+research strategy use opus_first                # switch; applies to future dispatches only
+research strategy validate                      # unknown profiles, escalation cycles, missing routes, harness refs
+research strategy route T-001 [--strategy haiku_max] [--level deep]   # which model, and why — launches nothing
+research orchestrate dispatch T-001 --strategy haiku_max               # one dispatch only; config untouched
+research setup agents --apply --strategy sonnet_first                  # opt a project in while setting up agents
+```
+
+**Define your own** (project file `.research/config.yaml`, or the machine file for all your projects):
+
+```yaml
+orchestration:
+  active_strategy: pravah
+  strategies:
+    pravah:
+      extends: haiku_max            # inherit everything, change only what differs
+      attempts: {fast: 2}           # dicts merge key by key; lists and scalars replace — nothing is concatenated
+      route: {unchecked: fast}
+harness:                            # independent of the strategy above
+  name: numerical_research
+  skills: [pde-conventions]         # .research/skills/pde-conventions (project-local, not installed globally)
+  context: [docs/conventions.md]
+  instructions: docs/AGENT_NOTES.md
+  checks: ["pytest tests/oracle -q"]
+```
+
+*Precedence* (highest first): explicit `--profile`/`--agent-model` > `--level` > `--strategy` for one dispatch > project file
+> machine file > built-in. A strategy name defined in several layers is merged key by key, the highest layer winning per key.
+Two projects never share state: each reads its own file, and a project edit never writes the machine file or the built-ins.
+
+*Delegation and dispatch use one resolver.* `research dispatch`, `orchestrate dispatch|delegate|route` and `guide refresh` all
+call the same `strategy.select`, so a balanced-level coordinator running `orchestrate delegate T-1 "…" --acceptance … --check …`
+reaches the fast worker without repeating a model id, and an unchecked child stays at balanced. The Scientist Guide uses the
+strategy's `guide` level (an explicit `--profile`/`--model` still wins). If a level's profile is missing or its model is not in
+`orchestration.available`, dispatch fails with a hint; it never substitutes another model.
+
+*Verification and escalation.* Frozen tests are required whenever the implementer is not the coordinator level (the test
+author), and `task done` still refuses while frozen tests differ; neither depends on a model name. A level that implemented a
+task cannot `correct-test` it. A verifier dispatch moves to a level whose profile+model differs from the task's implementers;
+if none does, the brief and record say `independent: false` and a human must confirm. After a failure the strategy returns
+retry / escalate / block / integration_review; an escalation to `human` becomes `block`; `max_escalations` bounds the loop;
+cycles are rejected by `validate`. Scientific-assumption failures follow `on_scientific_assumption`. Run budgets, tuning
+budgets and numerical-evidence gates are untouched.
+
+*Provenance and active sessions.* Every strategy dispatch writes `.research/cache/dispatch/<name>.policy.json` (strategy,
+fingerprint of the resolved policy and profiles, level, profile, provider, model, reason, overrides, independence, harness
+fingerprint, git revision, status), appends a copy to the task ledger (`dispatches`), and puts `RESEARCH_STRATEGY`,
+`RESEARCH_STRATEGY_FINGERPRINT`, `RESEARCH_AGENT_LEVEL` in the session env. Switching strategy logs a `strategy_changed` event
+and changes nothing else: no task, run, finding, review or frozen test is rewritten, and a running session keeps what it
+started with. `orchestrate attempt --usage '{"input_tokens": 1200}'` records only usage you actually have; `orchestrate status`
+sums only what was reported and otherwise says `unavailable` (never 0).
+
+*Not implemented / manual:* hot-swapping a running session, per-strategy regeneration happens only when you re-run `research setup agents --apply`,
+and the items listed under **Not implemented** below. Strategy dispatch passes the model explicitly and never writes or overwrites
+user-owned agent files or skills.
+
+#### Hooks, task contracts, usage, overrides, agent files, experiment checks (0.7.0)
+
+**Harness hooks** run project commands at fixed stages, so programs, not model tokens, verify what a program can verify.
+```yaml
+harness:
+  hooks:
+    conservation: {stage: post_implementation, command: "pytest tests/oracle -q", timeout: 120, required: true}
+    data-present: {stage: preflight, command: "test -f data/mesh.h5"}
+```
+Stages: `preflight` (before `orchestrate dispatch`), `post_implementation` (in `orchestrate verify`), `pre_experiment` (before any
+run is created: a failure blocks it, exit 3, and registers nothing), `post_experiment` (in `experiment check`). The orchestrator may
+propose a hook with `research hook add NAME --stage … --command …`; **nothing runs until a human runs `research hook approve`**
+(agents get exit 3). Approval is a hash of stage + command + timeout, so editing a command revokes it. Hooks have timeouts (process
+group killed), truncated output, an `--advisory` mode, and every run is appended to `.research/hooks/results.jsonl`. An unapproved or
+disabled hook is reported as skipped, never as passed. `research hook list|enable|disable|run|results|revoke`.
+
+**Task contracts** live in the task's orchestration ledger: `research orchestrate contract T-001 --objective … --context …
+--expected-output … --allowed-file 'src/*.py' --constraint … --require …` (or the same flags on `delegate`). The worker's brief carries
+the contract. `research orchestrate verify T-001 --tier fast [--record]` checks frozen-test integrity, the file boundary (files changed
+since dispatch outside `allowed_files`), approved `post_implementation` hooks and the task's checks, prints the diagnostics for the
+worker, and with `--record` logs an attempt and returns the bounded next step (retry within the strategy's limit, then escalate). If no
+deterministic verifier ran at all the result is *not a pass*. Frozen tests and independent verification are unchanged.
+
+**Usage accounting.** `research orchestrate dispatch T-001 --headless` (or `research dispatch … --headless`) runs the session with the
+profile's `headless_args` and records what the provider reports (`usage_parser: claude_json` for the `claude-*` profiles: input, output,
+cache read/write tokens, cost) in `.research/usage.jsonl` with strategy, fingerprint, level, profile, model and task.
+`research usage [--by strategy|model|task|level|profile] [--task T]` compares them; `research usage import FILE` ingests a saved
+`claude -p --output-format json` result; `orchestrate attempt --usage '{…}'` is the manual fallback and is also ledgered. Absent values
+stay absent: totals sum only records that reported the field and show `reported/records`; cost is provider-reported, never calculated.
+Interactive sessions expose no usage, so none is recorded for them. Headless Claude runs cannot answer permission prompts: add the
+flags you trust (e.g. `--permission-mode acceptEdits`) to the profile's `headless_args`.
+
+**Per-task model overrides.** `research orchestrate pin T-001 --level deep` (or `--profile P`, `--agent-model M`), `… pin T-001 --clear`;
+`research orchestrate route T-001` shows the effect. A pin applies to that task's *implementer* dispatches under the active strategy
+(verifier dispatch keeps its independence rule), beats the strategy, loses to per-dispatch `--level/--profile/--agent-model`, and is
+recorded in the dispatch snapshot (`overrides.task_override`) and the task notes.
+
+**Strategy-aware agent files.** With an active strategy, `research setup agents --apply` writes `.claude/agents/research-<level>.md`
+for each level (coordinator / worker / scientist derived from the strategy, the level table, escalation limits, delegation, and
+pointers to `research task context` and `research hook list` instead of copied project data). Managed legacy `research-haiku|sonnet|opus.md`
+files are moved to `.research/cache/removed-agents/`; files without the managed marker and your own agents are never touched. A strategy
+change makes the generated files `update` (re-run setup to refresh).
+
+**Experiment-aware orchestration.** `research experiment check EXP-001 [--request-synthesis]` verifies with programs: runs reached a
+terminal state and completed, metrics were logged, registered artifacts still match their hashes, approved `post_experiment` hooks pass
+(pending HPC runs point at `research hpc sync`). It lists separately what needs *your interpretation* (unreviewed failed runs, due
+synthesis, unapproved hooks), writes a `validated` event, and with `--request-synthesis` only *prepares* the analyst session. Existing run
+and synthesis budgets are unchanged.
+
+**Not implemented:** automatic invocation of `experiment check` when a run finishes, hook stages for HPC bundle import, price-table cost
+calculation, live-verified `claude -p` JSON parsing (the parser follows the documented result shape and ignores anything missing), and
+usage for interactive sessions.
 
 ### Numerical evidence and provenance
 
@@ -674,8 +822,10 @@ research mcp install                        # writes .mcp.json (Claude Code) + .
 research mcp install --client cursor --client gemini --client codex   # codex: prints `codex mcp add research -- research mcp`
 ```
 
-- Agents get 28 typed tools, including `research_current`, `task_next`, `task_context`, `task_start`, `task_done`,
-  `run_start`, `finding_create`, `finding_review`, `runs_compare` and `skill_show`.
+- Agents get 33 typed tools, including `research_current`, `task_next`, `task_context`, `task_start`, `task_done`,
+  `run_start`, `finding_create`, `finding_review`, `runs_compare`, `skill_show`, `dispatch_prepare` (follows the active strategy),
+  `report_full`, `upgrade_preview` and `hpc_doctor` / `hpc_sync` / `hpc_bundle`. Strategies, hooks, contracts, usage and experiment check
+  are CLI-only for now.
 - Policy blocks come back as tool errors with the hint, so the agent knows what to do.
 - The server is `research mcp` (stdio). It needs `research` on the agent's PATH. VS Code terminals already have it;
   elsewhere, `pip install` the wheel.
@@ -891,6 +1041,10 @@ built-in defaults  ←  ~/.config/research-os/config.yaml  ←  .research/config
                        (optional, shared by every project on this machine)
 ```
 
+Allocation strategies (`orchestration.strategies`), agent `profiles` and `harness` defaults can live in the machine file too: a project then
+sets only `orchestration.active_strategy` or the one key it overrides. Hook approvals (`harness.hooks_approved`) are per project and never
+inherited, so a machine-level hook still needs approval in each project.
+
 ```bash
 research config show                  # just this project's overrides
 research config show --effective      # every value actually in force
@@ -1040,14 +1194,15 @@ AGENTS.md                      ← only the block between research markers is ma
 
 ## 14. Known issues
 
-No open bugs are known as of 2026-10-07. That covers 104 automated tests, 71 checks inside a real VS Code, and a real
-Claude Code session calling the MCP tools. Bugs found along the way are listed in
+No open bugs are known as of 2026-10-12. That covers 432 automated tests and the TypeScript typecheck. The real-VS-Code harness and a real
+Claude Code session calling the MCP tools were last run before 0.5, so the Agent setup page and `--headless` usage capture have not been
+exercised in a live VS Code or a live `claude -p` session. Bugs found along the way are listed in
 [SPEC §22.1](docs/SPEC.md#22-known-issues-and-limitations).
 
 Limitations worth knowing (the evidence, Scientist Guide and orchestration layers are listed in full in [SPEC §22.2](docs/SPEC.md#22-known-issues-and-limitations)):
 - Numerical verification checks that a number matches a recorded metric or declared calculation; it does not prove the science is right. Free-form prose is not parsed, claims are compared after rounding, and large unhashed files can only be size-checked until pinned.
 - The Scientist Guide's prose is not machine-checked, and refreshing it requires an Opus agent to be run (`guide refresh` only prepares it).
-- Tiered orchestration has no VS Code UI or MCP tools, records no token/cost usage, and runs Sonnet→Haiku as a separate process because Claude Code subagents can't spawn subagents.
+- Orchestration has a VS Code page (Agent setup) but no MCP tools; usage is recorded only for `--headless` runs and manual records; Sonnet→Haiku runs as a separate process because Claude Code subagents can't spawn subagents.
 - The review gate is a guard rail for honest agents, not a security boundary. Roles are self-declared, and hand edits
   of Markdown files count as human edits.
 - Nothing schedules work automatically: you dispatch agents, and plans don't complete themselves.
@@ -1061,7 +1216,7 @@ Limitations worth knowing (the evidence, Scientist Guide and orchestration layer
 pip install -e ".[dev]"             # editable `research` CLI + pytest
 npm install                         # extension dev dependencies
 npm run build                       # bundle the extension (esbuild)
-npm test                            # 104 pytest tests + TypeScript typecheck
+npm test                            # 432 pytest tests + TypeScript typecheck
 npm run package                     # → dist/research-panel-X.Y.Z.vsix, dist/*.whl
 bash scripts/clean_install_test.sh  # release check: fresh venv, full protocol, moved copy, path-leak scan
 npm run demo                        # example project in examples/alpha-sweep/demo-project
@@ -1070,11 +1225,11 @@ npm run demo                        # example project in examples/alpha-sweep/de
 - **Run the extension from source:** open `packages/vscode-extension` in VS Code and press F5. The dev build uses `packages/core` directly.
 - **UI end-to-end:** `python scripts/e2e_code_server.py <project> <shots-dir>` drives the real UI in code-server with Playwright.
 - **Real VS Code harness:** `RESEARCH_TEST_WORKSPACE=<demo> npm run test:ext` downloads VS Code, installs the VSIX and runs
-  71 checks. It needs network access. From a terminal inside VS Code, prefix it with `env -i HOME=$HOME PATH=$PATH`.
+  its checks (last run before 0.5). It needs network access. From a terminal inside VS Code, prefix it with `env -i HOME=$HOME PATH=$PATH`.
 
 | Path | Contents |
 |---|---|
-| `packages/core/research/` | Python core: schema, store, services, runs, plans, context, views, RPC, runner, backends |
+| `packages/core/research/` | Python core: schema, store, config layers, services, runs, plans, context, views, verification, evidence, guide, agents, strategy, orchestrate, harness, hooks, usage, MCP, RPC, runner, backends, `hpc/` (module map in SPEC §20) |
 | `packages/cli/research_cli/` | `research` CLI (argparse) |
 | `packages/vscode-extension/` | Extension: `src/` (TypeScript), `src/render/` (HTML), `media/` (CSS/JS) |
 | `tests/python/` | pytest suites |
@@ -1089,6 +1244,7 @@ npm run demo                        # example project in examples/alpha-sweep/de
 | **README.md** (this file) | current | Learning to use the system |
 | [**docs/SPEC.md**](docs/SPEC.md) | current | Every feature, the design rationale, data model, algorithms, CLI/API/RPC reference, extension behaviour |
 | [CHANGELOG.md](CHANGELOG.md) | current | What changed between versions |
+| [docs/UPGRADING.md](docs/UPGRADING.md) | current | A copy-pasteable upgrade sequence for an existing project (including the optional strategy/hook steps) |
 | [docs/ARCHITECTURE_AUDIT.md](docs/ARCHITECTURE_AUDIT.md), [docs/TRANSFORMATION_SUMMARY.md](docs/TRANSFORMATION_SUMMARY.md) | proposal, largely implemented | The "Research OS" redesign plan. Built: plans/tasks, tiered context, MCP tools, roles and dispatch, verification gates, Research Home, git snapshots. Deliberately not built: unattended autonomous orchestration and direct model-API adapters (tiered orchestration exists, but a human or an agent session starts each step). SPEC.md describes what exists. |
 | [docs/PHASE_0_SPEC.md](docs/PHASE_0_SPEC.md) | proposal, implemented | The original design for plans and tasks. Where it differs from SPEC.md, SPEC.md is authoritative. |
 | [docs/MCP_INTEGRATION.md](docs/MCP_INTEGRATION.md) | proposal, implemented differently | Planned an MCP-SDK server; the built one uses the standard library only (SPEC §7.8). |

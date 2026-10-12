@@ -1012,6 +1012,77 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     const lines = Object.entries(r).map(([k, v]: any) => `${k}: ${v.linked.length} linked${v.skipped.length ? `, left alone: ${v.skipped.join(', ')}` : ''}`);
     vscode.window.showInformationMessage(lines.join(' · ') || 'Skill linking is off (config skills.link).');
   });
+  reg('research.setup.open', () => panels.openSetup());
+  const taskArg = async (a: any): Promise<string | undefined> => (typeof a === 'string' ? a : a?.id) || (await vscode.window.showQuickPick(
+    ((await rpc('agent_setup')).tasks as any[]).map((t) => ({ label: t.title, description: t.id, id: t.id })), { placeHolder: 'Which task?' }) as any)?.id;
+  reg('research.task.pin', async (a?: any) => {
+    const id = await taskArg(a);
+    if (!id) return;
+    const setup = await rpc('agent_setup');
+    if (!setup.strategy) return vscode.window.showInformationMessage('Choose a model strategy first; a pin picks one of its levels.');
+    const lv: any[] = Object.entries(setup.strategy.resolved_levels).map(([k, v]: any) => ({ label: k, description: v.model || 'CLI default', detail: v.profile }));
+    const pick: any = await vscode.window.showQuickPick(lv, { placeHolder: `Which level should ${id} use for implementation? (overrides ${setup.strategy.name})` });
+    if (!pick) return;
+    await rpc('task_pin', { id, level: pick.label });
+    model.schedule(0);
+  });
+  reg('research.task.unpin', async (a?: any) => {
+    const id = await taskArg(a);
+    if (id) { await rpc('task_pin', { id, clear: true }); model.schedule(0); }
+  });
+  reg('research.hook.approve', async () => {
+    const hs = ((await rpc('agent_setup')).hooks as any[]).filter((h) => !h.approved);
+    if (!hs.length) return vscode.window.showInformationMessage('All hooks are approved.');
+    const go = await vscode.window.showWarningMessage(`Allow ${hs.length} hook${hs.length > 1 ? 's' : ''} to run shell commands on this machine, in this project folder?`,
+      { modal: true, detail: hs.map((h) => `${h.name} (${h.stage}, ${h.timeout}s):\n  ${h.command}`).join('\n\n') + '\n\nEditing a command later revokes its approval.' }, 'Approve');
+    if (go !== 'Approve') return;
+    await rpc('hook_approve', { names: hs.map((h) => h.name) });
+    model.schedule(0);
+  });
+  reg('research.hook.run', async (name: string) => {
+    const r = await rpc('hook_run', { name });
+    const x = r.ran[0];
+    if (x) (x.ok ? vscode.window.showInformationMessage : vscode.window.showWarningMessage)(`Hook ${name} ${x.ok ? 'passed' : 'failed'} (${x.seconds}s)${x.ok ? '' : ': ' + x.output.trim().slice(-300)}`);
+    model.schedule(0);
+  });
+  reg('research.hook.toggle', async (name: string, enabled: boolean) => { await rpc('hook_toggle', { name, enabled }); model.schedule(0); });
+  reg('research.experiment.check', async (id: string) => {
+    const r = await rpc('experiment_check', { id });
+    const d = r.deterministic;
+    const msg = `${id}: ${d.validated.length} checks passed, ${d.failed.length} failed, ${d.pending.length} pending` + (r.needs_human.length ? ` — needs you: ${r.needs_human[0]}${r.needs_human.length > 1 ? ` (+${r.needs_human.length - 1})` : ''}` : '');
+    (d.failed.length ? vscode.window.showWarningMessage : vscode.window.showInformationMessage)(msg, ...(r.synthesis.due ? ['Prepare synthesis'] : [])).then(async (c) => {
+      if (c === 'Prepare synthesis') { const s = await rpc('experiment_check', { id, request_synthesis: true }); vscode.window.showInformationMessage(s.synthesis.dispatch ? `Analyst session prepared (${s.synthesis.dispatch.model}); start it from the terminal: ${s.synthesis.dispatch.shell}` : 'Runs are still pending.'); }
+    });
+    model.schedule(0);
+  });
+  reg('research.setup.openConfig', () => openPath(model.root, '.research/config.yaml'));
+  reg('research.strategy.use', async (name?: string) => {
+    const list: any[] = (await rpc('agent_setup')).strategies;
+    if (typeof name !== 'string') {
+      const pick: any = await vscode.window.showQuickPick(list.map((s) => ({
+        label: s.name, description: `${s.origin}${s.active ? ' · active' : ''}${s.ok ? '' : ' · invalid'}`, detail: s.description, name: s.name })),
+        { placeHolder: 'Which model strategy should this project use?', matchOnDetail: true });
+      if (!pick) return;
+      name = pick.name as string;
+    }
+    const pre = await rpc('strategy_use', { name, dry_run: true });
+    if (pre.previous === name) return vscode.window.showInformationMessage(`${name} is already the active strategy.`);
+    const go = await vscode.window.showInformationMessage(`Switch to ${name}? It applies to future dispatches; running agent sessions and all research records are unchanged.`
+      + (pre.warnings.length ? ` Note: ${pre.warnings[0]}` : ''), { modal: true }, 'Switch');
+    if (go !== 'Switch') return;
+    await rpc('strategy_use', { name });
+    model.schedule(0);
+  });
+  reg('research.setup.agents', async () => {
+    const plan = await rpc('setup_agents', { apply: false });
+    const lines = plan.agent_files.map((f: any) => `${f.state.padEnd(15)} ${f.path}`).join('\n');
+    const go = await vscode.window.showInformationMessage('Set up Claude Code agents? Only Research OS-managed files are written; files you own are left alone. No MCP servers, plugins or hooks are installed.',
+      { modal: true, detail: lines }, 'Apply');
+    if (go !== 'Apply') return;
+    await rpc('setup_agents', { apply: true });
+    model.schedule(0);
+    vscode.window.showInformationMessage('Agent files are up to date.');
+  });
   reg('research.mcp.install', async () => {
     const picks: any = await vscode.window.showQuickPick([
       { label: 'claude', description: '.mcp.json (Claude Code)', picked: true },
@@ -1022,6 +1093,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     ], { canPickMany: true, placeHolder: 'Register the research MCP server for which agents?' });
     if (!picks || !picks.length) return;
     const r = await rpc('mcp_install', { clients: picks.map((x: any) => x.label) });
+    model.schedule(0);
     const codex = r.installed.codex;
     const msg = Object.entries(r.installed).filter(([k]) => k !== 'codex').map(([k, v]) => `${k}: ${v}`).join(' · ');
     const c = await vscode.window.showInformationMessage(`MCP server registered${msg ? ' — ' + msg : ''}. Agents started from a VS Code terminal find \`research\` on PATH.`, ...(codex ? ['Copy Codex command'] : []));

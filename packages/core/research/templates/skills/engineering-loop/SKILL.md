@@ -7,6 +7,10 @@ description: Specification → tests → implementation loop across Opus/Sonnet/
 
 Assign by difficulty and verifiability, not label: `research orchestrate route T-…` shows the tier. Not every task needs all three.
 
+With an allocation strategy active (`research strategy show`), read "Opus/Sonnet/Haiku" below as the strategy's deep/coordinator/fast levels:
+the coordinator sets the task contract (`research orchestrate contract`), the worker checks itself with
+`research orchestrate verify T-… --tier LEVEL --record` (frozen tests, file boundary, approved hooks, task checks), and `--tier` takes level names.
+
 1. **Opus** gives a bounded task: scientific intent, assumptions, acceptance criteria. Unclear science → stays with Opus.
 2. **Sonnet** reads the interface and writes the contract (inputs, outputs, units, invariants, edge cases, errors).
 3. **Sonnet** writes an independent test suite that checks behavior, invariants and numerical properties, not a copy of

@@ -1,13 +1,13 @@
 # Research context — research-vscode
 
-> Generated from .research/ by `research current`. Do not edit; it is overwritten. ~308 tokens.
-> Generated 2026-10-07T17:21:58-04:00. Details: `research show <ID>` · `research search "…"` · `research task context T-…`.
+> Generated from .research/ by `research current`. Do not edit; it is overwritten. ~385 tokens.
+> Generated 2026-10-12T19:53:38-04:00. Details: `research show <ID>` · `research search "…"` · `research task context T-…`.
 
 ## Goal
 
 _(not set — `research project set --goal …`)_
 
-Git: `main` @ `f6db70cc28` (uncommitted changes)
+Git: `main` @ `de69079328` (uncommitted changes)
 
 ## Latest checkpoint
 
@@ -31,10 +31,12 @@ _none_
 
 ## Current experiments
 
-_none_
+- EXP-001 [proposed] Release engineering verification — runs 0
 
 ## Active plans
 
+- PLAN-002 Independent 1.0 release engineering review — 0/1 tasks done · objective: Audit, harden, verify and document the existing product; release only on evidence
+  - running: T-001 Audit and stabilize release candidate (claimed by release-review)
 - PLAN-001 Reproduce Paper X — 0/0 tasks done · objective: Reproduce Table 1
 
 ## Active decisions
