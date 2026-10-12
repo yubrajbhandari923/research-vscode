@@ -76,6 +76,11 @@
 
 ### Fixes found while building the above
 
+- **The full export counted artifacts attached to neither a run nor an experiment but never rendered them.**
+  Found by running `--check` against a real project (`pravah`), whose standalone `stage1_*.csv` outputs are
+  registered without `--run`/`-e`: coverage verification correctly failed on 5 records. They now appear under
+  "Artifacts not attached to a run or experiment" in section 10.
+
 - **`rebuild` was not idempotent**: it replayed `events.jsonl` on top of an already-populated index, so each rebuild
   inflated the audit log (2 → 6 → 11 events) and turned every entity import into a false "duplicate id" conflict. The
   index tables are now cleared before the replay, and imports during a rebuild no longer re-log their own events —

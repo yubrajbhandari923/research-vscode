@@ -249,6 +249,23 @@ def test_unknown_future_fields_are_preserved(proj):
     assert "cosmic_ray_flux" in text and "42 Sv" in text
 
 
+def test_artifacts_attached_to_nothing_are_still_emitted(proj):
+    """A standalone artifact has no owning run or experiment, so it needs a section of its own.
+
+    Found on a real project (pravah) whose `stage1_*.csv` outputs were registered without --run/-e:
+    they were counted in the manifest but never rendered, which coverage correctly flagged.
+    """
+    loose = os.path.join(proj.root, "stage1_summary.csv")
+    open(loose, "w").write("a,b\n1,2\n")
+    art = R.register_artifact(proj, loose, description="registered against nothing in particular")
+    assert art["run_id"] is None and art["experiment_id"] is None
+    snap, text = FR.export(proj)
+    assert snap["counts"]["artifact"] == 1
+    assert f"<!-- research:record artifact {art['id']} -->" in text
+    assert "not attached to a run or experiment" in text
+    assert FR.coverage(snap, text)["ok"]
+
+
 def test_notes_are_included_verbatim(rich):
     _, text = FR.export(rich)
     assert "Tried α | 0.1 ünïcode" in text

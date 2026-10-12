@@ -858,6 +858,12 @@ def render(snap: Dict[str, Any], *, stamp: bool = False) -> str:
             d.code(n["text"] or "")
         else:
             d.para(f"**File could not be read:** {n.get('read_error')}")
+    if snap["loose_artifacts"]:
+        # Artifacts registered against neither a run nor an experiment. They would otherwise have no
+        # section to appear in, since every other artifact is listed under its owner.
+        d.h(3, "Artifacts not attached to a run or experiment")
+        d.para("Registered standalone, so they belong to the project rather than to one experiment.")
+        _artifact_table(d, snap["loose_artifacts"])
     if snap["sources"]:
         d.h(3, "Literature sources")
         d.table(["id", "title", "doi", "arxiv", "url", "identity", "examined", "assessments"],
