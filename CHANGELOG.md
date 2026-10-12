@@ -41,6 +41,21 @@
 - Tests now assert that every declared command is implemented, that each feature has a non-palette menu
   home, and that every `rpc('…')` call in the extension names a method that exists.
 
+### HPC is now self-documenting for agents
+
+- **New `hpc-setup` skill** (`research skill show hpc-setup`), installed by `research init` and added to
+  existing projects by `research upgrade`: how to read `doctor`, which config layer a cluster belongs in,
+  what each failing check means, and the login-shell/module trap in detail. It also tells an agent what
+  *not* to do — invent storage paths, assume `$HOME`, ssh to the cluster by hand, resubmit an uncertain
+  job, or put credentials in a Research OS file.
+- `doctor` now searches `module avail` when Slurm is missing and names the module in its fix hint, instead
+  of only reporting the absence. Every failing check carries an actionable fix (a test enforces this).
+- The "No HPC cluster is configured" error names both config layers and points at the skill.
+- `research hpc config --example` says where to put the profile, warns that `$HOME` is rarely right for
+  data, and documents `login_shell` and what `slurm.setup` is for.
+- README has a "When `doctor` says something is wrong" section with the two commands that show the
+  non-interactive vs login-shell difference.
+
 ### Fixes
 
 - **Remote commands now run through a login shell.** `ssh host cmd` gets a non-interactive shell, which on

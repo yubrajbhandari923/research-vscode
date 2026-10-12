@@ -801,6 +801,38 @@ research hpc submit EXP-001 --cluster duke --dry-run   # shows exactly what it w
 research hpc submit EXP-001 --cluster duke --yes       # bundles, uploads, verifies, sbatch, records the job id
 ```
 
+### When `doctor` says something is wrong
+
+Every failing check prints its own fix, and the last line says what still works
+(`ready: ssh-slurm, bundle` → everything; `bundle` only → portable bundles, which need no connection).
+Agents have a procedure for this: `research skill show hpc-setup`.
+
+The one that trips everyone up:
+
+```text
+✗ slurm    sbatch=NO, squeue=NO, sacct=NO
+```
+
+…while `ssh <host>` followed by `sbatch` works fine by hand. `ssh host <cmd>` gets a **non-interactive**
+shell, which on many clusters skips the profile scripts (and auto-loaded modules) that put Slurm on
+`PATH`. Research OS runs remote commands through `bash -lc` so they see the same environment you do, and
+when Slurm is still missing it searches `module avail` and names the module in its fix hint. Compare the
+two yourself:
+
+```bash
+ssh <host> 'command -v sbatch; echo $PATH'               # non-interactive: often a bare PATH
+ssh <host> 'bash -lc "command -v sbatch; module list"'   # login shell: what you get interactively
+```
+
+Set `login_shell: false` for a cluster whose profile is slow or unwanted non-interactively, and put the
+needed `module load` lines in `slurm.setup` instead. `slurm.setup` runs **inside every job**, which is
+where your code's own modules (python, cuda, compilers) belong — a compute node does not inherit the
+login node's environment.
+
+Other checks: `ssh connectivity` failing usually means `BatchMode` cannot answer a password or MFA prompt
+(use a key or an agent); a path that "does not exist yet" is created by `research hpc init` if its parent
+is writable; a read-only `shared_data` is fine; without `scancel` only `research hpc cancel` is affected.
+
 ### Recipe: reconnect after a multi-day job
 
 Slurm keeps running while your laptop is closed. Research OS catches up on demand:

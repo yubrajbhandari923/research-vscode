@@ -42,8 +42,12 @@ the human to open the project in VS Code with the Research Panel extension, or t
   an experiment, refresh it or leave it marked pending: `research guide status`. Hand-offs: `research skill show scientific-handoff`.
 
 ### Remote execution (optional; only when `hpc.clusters` is configured)
-- `research hpc doctor` first: it says whether SSH/Slurm works and which modes are usable. Never `ssh` by hand —
-  the `research hpc` commands enforce the approved paths, resource limits and provenance.
+- `research hpc doctor` first: it says whether SSH/Slurm works and which modes are usable, and every failing
+  check prints its own fix. Never `ssh` by hand — the `research hpc` commands enforce the approved paths,
+  resource limits and provenance.
+- Setting it up, or doctor reporting a problem? Read `research skill show hpc-setup` before changing config.
+  Common trap: `sbatch=NO` while an interactive `ssh` finds it — a non-interactive shell skips the profile
+  that loads Slurm. Ask the user for approved paths; never invent a storage location.
 - `research hpc submit EXP-001 --cluster NAME --dry-run`, then `--yes`. Submission is expensive: never submit twice.
 - If a submission is reported uncertain, run `research hpc sync` — it adopts a job that is already queued. Do not resubmit.
 - No direct execution available, or a human will run it? `research hpc bundle EXP-001` → they run it → `research hpc import <archive>`.

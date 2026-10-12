@@ -866,3 +866,110 @@ def test_cli_import_round_trip(hp, tmp_path):
     assert out["run"] == "RUN-0001" and out["status"] == "completed"
     again = json.loads(_cli(root, "hpc", "import", archive, "--json").stdout)
     assert not again["changed"]
+
+
+# =========================================================================== discoverability
+#
+# An agent on a fresh project must be able to work out why remote execution is not working and how to
+# configure it, without the user explaining it. These tests pin that guidance in place.
+
+def _skill(name):
+    from research.store import TEMPLATES
+    return (TEMPLATES / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+
+
+def _agents_block():
+    from research.store import TEMPLATES
+    return (TEMPLATES / "AGENTS.block.md").read_text(encoding="utf-8")
+
+
+def test_a_fresh_project_gets_the_hpc_setup_skill(proj):
+    """The skill must be installed by `research init`, not just exist in the templates."""
+    import os
+    path = os.path.join(proj.root, ".research", "skills", "hpc-setup", "SKILL.md")
+    assert os.path.isfile(path)
+    from research import skills as SK
+    assert "hpc-setup" in {s["name"] for s in SK.list_skills(proj)}
+
+
+def test_the_agents_block_points_at_the_skill_and_names_the_login_shell_trap():
+    block = _agents_block()
+    assert "research skill show hpc-setup" in block
+    assert "sbatch=NO" in block                       # the symptom an agent will actually see
+    assert "never invent a storage location" in block.lower()
+
+
+def test_the_skill_documents_the_login_shell_failure_mode():
+    """The one failure that looks like a Research OS bug but is an environment difference."""
+    s = _skill("hpc-setup")
+    assert "non-interactive" in s and "bash -lc" in s
+    assert "module avail" in s and "slurm.setup" in s
+    assert "login_shell" in s
+
+
+def test_the_skill_tells_the_agent_not_to_invent_paths_or_ssh_by_hand():
+    s = _skill("hpc-setup").lower()
+    assert "never invent" in s
+    assert "never `ssh` to the cluster" in s or "never ssh to the cluster" in s
+    assert "$home" in s                               # warns against assuming $HOME for data
+    assert "~/.ssh/config" in s                       # and where auth actually lives
+
+
+def test_the_skill_explains_which_config_layer_to_use():
+    s = _skill("hpc-setup")
+    assert "~/.config/research-os/config.yaml" in s
+    assert "config show --sources" in s
+    assert "project.slug" in s
+
+
+def test_the_skill_covers_every_doctor_check():
+    """A check whose failure the skill cannot explain is a dead end for an agent."""
+    s = _skill("hpc-setup").lower()
+    for topic in ("ssh connectivity", "slurm", "python", "scancel", "shared_data", "bundle"):
+        assert topic in s, topic
+
+
+def test_the_unconfigured_error_names_both_layers_and_the_skill(proj):
+    """The first thing an agent hits on a project without HPC must say where config goes."""
+    with pytest.raises(ResearchError) as e:
+        HC.get(proj)
+    hint = e.value.hint or ""
+    assert "~/.config/research-os/config.yaml" in hint      # the shared layer
+    assert ".research/config.yaml" in hint                  # and the per-project one
+    assert "hpc-setup" in hint                              # and the procedure
+    assert "opt-in" in hint
+
+
+def test_the_example_config_warns_about_paths_and_auth():
+    assert "approved storage" in HC.EXAMPLE
+    assert "$HOME is rarely right" in HC.EXAMPLE
+    assert "never stores passwords" in HC.EXAMPLE
+    assert "login_shell" in HC.EXAMPLE
+    assert "research hpc doctor" in HC.EXAMPLE
+
+
+def test_doctor_failures_all_carry_an_actionable_fix(hp, cluster):
+    """A red check with no fix line leaves the user guessing."""
+    cluster.offline = True
+    d = RM.doctor(hp)
+    for c in d["checks"]:
+        if c["ok"] is False:
+            assert c.get("fix"), c
+    assert d["summary"]
+
+
+def test_doctor_suggests_a_module_when_slurm_is_missing(hp, cluster):
+    """The fix hint should name the module that would supply Slurm, not just say it is absent."""
+    import os
+    import shutil
+    for tool in ("sbatch", "squeue", "sacct"):
+        os.remove(os.path.join(cluster.bin, tool))
+    modavail = os.path.join(cluster.bin, "module")
+    with open(modavail, "w") as f:
+        f.write("#!/bin/sh\necho 'slurm/slurm/21.08.8 cuda11.2/toolkit' >&2\n")
+    os.chmod(modavail, 0o755)
+    d = RM.doctor(hp)
+    slurm = next(c for c in d["checks"] if c["check"] == "slurm")
+    assert slurm["ok"] is False
+    assert "module load slurm" in slurm["fix"]
+    assert "bundle" in d["usable_modes"]           # and says what still works

@@ -81,8 +81,10 @@ def get(p: Project, name: Optional[str] = None) -> Dict[str, Any]:
     if not all_:
         raise ResearchError(
             "No HPC cluster is configured for this project.",
-            hint="Add one under `hpc.clusters` in .research/config.yaml, then run `research hpc doctor`. "
-                 "See `research hpc config --example`. HPC support is opt-in; nothing else needs it.")
+            hint="`research hpc config --example` prints a profile to fill in. Put it in "
+                 "~/.config/research-os/config.yaml to share it with every project on this machine, or in "
+                 ".research/config.yaml for this project alone, then run `research hpc doctor`. "
+                 "Agents: `research skill show hpc-setup`. HPC is opt-in; nothing else needs it.")
     chosen = name or default_name(p)
     if not chosen:
         raise ResearchError(f"Several clusters are configured ({', '.join(sorted(all_))}) and no default is set.",
@@ -220,8 +222,13 @@ def _gb(mem: str) -> Optional[float]:
         return None
 
 
-EXAMPLE = """# Add this to .research/config.yaml and replace the paths with your cluster's approved storage.
-# Authentication stays in ~/.ssh/config: `ssh_host` is an alias you can already `ssh` to.
+EXAMPLE = """# Where to put this:
+#   ~/.config/research-os/config.yaml   shared by every project on this machine (usually what you want;
+#                                       each project then only adds hpc.clusters.<name>.project.slug)
+#   .research/config.yaml               this project only
+# Replace every path with your cluster's approved storage — $HOME is rarely right for data.
+# Authentication stays in ~/.ssh/config: `ssh_host` is an alias you can already `ssh` to. Research OS
+# never stores passwords, private keys or tokens. Check the result with `research hpc doctor`.
 hpc:
   default_cluster: duke
   clusters:
@@ -237,14 +244,18 @@ hpc:
       execution:
         use_slurm: true
         auto_submit: false
+      # Remote commands run through `bash -lc` so they see the same environment as an interactive
+      # ssh (many sites load Slurm from a profile script or module). Set false only if your site's
+      # profile is slow or does something unwanted non-interactively.
+      # login_shell: true
       slurm:
-        partition: null
+        partition: null                  # set these if your site requires them
         account: null
         time: "04:00:00"
         cpus: 4
         mem: 16G
         gpus: 1
-        setup:
+        setup:                           # runs inside every job, on the compute node
           - module load python/3.11
       limits:
         max_cpus: 64
