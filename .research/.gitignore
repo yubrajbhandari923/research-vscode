@@ -9,3 +9,8 @@ runs/*/stdout.log
 runs/*/stderr.log
 # project-local CLI (per machine, recreated automatically)
 bin/
+
+# generated reports and HPC staging: regenerable, and the full export can be large
+reports/
+hpc/bundles/
+hpc/incoming/

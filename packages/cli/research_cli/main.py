@@ -364,11 +364,11 @@ def print_task(task: Dict[str, Any]) -> None:
 
 # ----------------------------------------------------------------------------- command impls
 
-def _proj(a) -> Project:
+def _proj(a, sync: bool = True) -> Project:
     auth = detect_author(a.agent, a.model, a.as_) if (a.agent or a.model or a.as_) else None
     if a.root:
-        return Project(a.root, author=auth)
-    return Project.find(author=auth)
+        return Project(a.root, author=auth, sync=sync)
+    return Project.find(author=auth, sync=sync)
 
 
 MUTATING = set()
@@ -377,6 +377,12 @@ MUTATING = set()
 def mut(fn):
     MUTATING.add(fn.__name__)
     return fn
+
+
+def _is_readonly(a) -> bool:
+    """True when this invocation must not mutate the project: no hand-edit import, no run reconciliation,
+    no Slurm polling, no event log. `report --full` and `upgrade --dry-run` depend on this."""
+    return bool(getattr(a, "full", False) or getattr(a, "dry_run_readonly", False))
 
 
 def _done(a, obj: Any, printer=None, msg: Optional[str] = None) -> None:
@@ -902,8 +908,112 @@ def cmd_skills_duplicate(a, p) -> int:
 
 
 def cmd_agents_md(a, p) -> int:
-    path = p.write_agents_md()
-    _done(a, {"path": path}, msg=f"{os.path.relpath(path)} updated (research block only)")
+    from research import agentsmd as AM
+    if a.preview:
+        st = AM.state(p)
+        if a.json:
+            out_json({k: st[k] for k in ("path", "action", "problem", "up_to_date", "new")})
+        else:
+            print(st["new"])
+        return 1 if st["problem"] else 0
+    if a.diff:
+        st = AM.state(p)
+        if st["problem"]:
+            print(red("✗ ") + f"refusing to touch AGENTS.md: {st['problem']}", file=sys.stderr)
+            print(dim("  Keep exactly one `<!-- research:begin … -->` and one `<!-- research:end -->` line."),
+                  file=sys.stderr)
+            return 1
+        d = AM.diff(p)
+        if a.json:
+            out_json({"path": st["path"], "action": st["action"], "up_to_date": st["up_to_date"], "diff": d})
+        elif d:
+            sys.stdout.write(d)
+        else:
+            print(dim("AGENTS.md managed block is already up to date"))
+        return 0
+    r = AM.apply(p)
+    _done(a, r, msg=(f"{os.path.relpath(r['path'])} already up to date" if not r["changed"]
+                     else f"{os.path.relpath(r['path'])}: managed block {r['action']}d "
+                          "(bytes outside the markers untouched)"))
+    return 0
+
+
+def cmd_upgrade(a, p=None) -> int:
+    """Bring an existing project up to the installed Research OS. --dry-run touches nothing."""
+    from research import upgrade as UP
+    root = a.root or None
+    if a.status:
+        r = UP.status(root)
+        if a.json:
+            out_json(r)
+            return 0
+        print(bold("Research OS upgrade status"))
+        kv("project root", r["root"])
+        kv("research version", r["tool_version"])
+        kv("project schema", r["project_schema"])
+        kv("target schema", r["target_schema"])
+        kv("AGENTS.md block", "up to date" if r["agents_md"]["up_to_date"] else r["agents_md"]["action"])
+        if r["downgrade_refused"]:
+            print(red("✗ ") + r["downgrade_refused"])
+            return 1
+        print(green("✓ up to date") if r["up_to_date"] else yellow(f"{r['changes']} change(s) pending — "
+                                                                   "run `research upgrade --dry-run`"))
+        return 0
+    if a.apply:
+        r = UP.apply(root)
+        if a.json:
+            out_json(r)
+        else:
+            _print_upgrade(r, applied=True)
+        return 0 if r.get("ok", True) else 1
+    r = UP.plan(root)
+    if a.json:
+        out_json(r)
+    else:
+        _print_upgrade(r, applied=False)
+    return 1 if r["downgrade_refused"] else 0
+
+
+_UPGRADE_SIGIL = {"create": "+", "add": "+", "build": "+", "migrate": "~", "merge": "~", "replace": "~",
+                  "add_block": "~", "refresh": "~", "refuse": "!"}
+
+
+def _print_upgrade(r, applied: bool) -> None:
+    print(bold("Research OS Upgrade " + ("Result" if applied else "Preview")))
+    print()
+    print(f"  Current project schema: {r['project_schema']}")
+    print(f"  Target project schema:  {r['target_schema']}")
+    print(f"  Research OS version:    {r['tool_version']}")
+    if r["downgrade_refused"]:
+        print()
+        print(red("✗ ") + r["downgrade_refused"])
+        return
+    steps = r.get("applied") if applied else r["steps"]
+    if not steps:
+        print("\n" + green("✓ ") + "already up to date; nothing to do")
+    else:
+        print("\n  " + bold("Applied:" if applied else "Required:"))
+        for s in steps:
+            sig = _UPGRADE_SIGIL.get(s["change"], "~")
+            line = f"  {sig} {s.get('path') or s['kind']}"
+            detail = s.get("detail") or (f"add {len(s['keys'])} key(s)" if s.get("keys") else "")
+            print(f"{line}" + (dim(f"  ({detail})") if detail else ""))
+    for s in (r.get("refused") or [s for s in r["steps"] if s["change"] == "refuse"]):
+        print(red(f"  ! {s.get('path')}: {s.get('detail')}"))
+        print(dim("    Fix the markers by hand; everything else still upgrades."))
+    for s in r.get("failed") or []:
+        print(red(f"  ✗ {s.get('path') or s['kind']} failed: {s.get('error')}"))
+    if r["preserved"]:
+        print("\n  " + bold("Preserved:"))
+        for x in r["preserved"]:
+            print(f"  = {x}")
+        print(f"  = {dim('user-authored AGENTS.md sections, custom config values, unknown config keys')}")
+    print("\n  " + r["note"])
+    if r.get("backup"):
+        print(dim(f"  backup of edited metadata files: {r['backup']}"))
+    if not applied and steps:
+        print("\n" + dim("  Nothing was changed. Run `research upgrade --apply` to apply, or "
+                         "`research agents-md --diff` to review the AGENTS.md block first."))
     return 0
 
 
@@ -1416,11 +1526,371 @@ def cmd_run_sweep(a, p) -> int:
     return 0
 
 
+# ----------------------------------------------------------------------------- hpc
+def cmd_hpc(a, p) -> int:
+    """`research hpc <action>`: remote execution on a configured cluster. All of it is opt-in."""
+    from research.hpc import bundle as HB
+    from research.hpc import config as HC
+    from research.hpc import datasets as HD
+    from research.hpc import remote as HR
+    from research.hpc import results as HRES
+    act = a.action
+    if not act:                      # bare `research hpc` → show what it can do
+        a._hpc_parser.print_help()
+        return 0
+    cl = getattr(a, "cluster", None)
+
+    if act == "config":
+        if a.example:
+            print(HC.EXAMPLE)
+            return 0
+        names = HC.names(p)
+        if a.json:
+            out_json({"default": HC.default_name(p), "clusters": HC.clusters(p)})
+            return 0
+        if not names:
+            print(yellow("No HPC cluster is configured.") + dim("  HPC support is opt-in."))
+            print(dim("  See a worked example: research hpc config --example"))
+            return 0
+        for name, c in sorted(HC.clusters(p).items()):
+            mark = green(" (default)") if name == HC.default_name(p) else ""
+            print(f"{bold(name)}{mark}  {c.get('transport')} → {c.get('ssh_host') or '—'}")
+            for k, v in sorted((c.get("paths") or {}).items()):
+                if v:
+                    kv(k, v)
+            kv("slurm", {k: v for k, v in (c.get("slurm") or {}).items() if v not in (None, [], "")})
+        return 0
+
+    if act == "clusters":
+        names = HC.names(p)
+        if a.json:
+            out_json({"clusters": names, "default": HC.default_name(p)})
+        elif not names:
+            print(dim("(none configured — `research hpc config --example`)"))
+        else:
+            for n in names:
+                print(f"  {bold(n)}" + (green("  (default)") if n == HC.default_name(p) else ""))
+        return 0
+
+    if act == "doctor":
+        d = HR.doctor(p, cl)
+        if a.json:
+            out_json(d)
+            return 0
+        print(bold(f"HPC doctor — cluster {d['cluster']} ({d.get('ssh_host') or d.get('transport')})"))
+        for c in d["checks"]:
+            mark = green("✓") if c["ok"] else (red("✗") if c["ok"] is False else yellow("•"))
+            print(f"  {mark} {c['check'].ljust(20)} {c['detail']}")
+            if c.get("fix"):
+                print(dim(f"      → {c['fix']}"))
+        print()
+        print((green("✓ ") if d["ok"] else yellow("⚠ ")) + d["summary"])
+        return 0 if d["ok"] else 1
+
+    if act == "init":
+        r = HR.init_workspace(p, cl, dry_run=a.dry_run)
+        if a.json:
+            out_json(r)
+        elif a.dry_run:
+            print(bold("Would create:"))
+            for x in r["would_create"]:
+                print(f"  + {x}")
+            for x in r["existing"]:
+                print(dim(f"  = {x} (exists; left alone)"))
+            print(dim("\n  Nothing was created."))
+        else:
+            for x in r["created"]:
+                print(green("✓ ") + x)
+            for x in r["existing"]:
+                print(dim(f"  = {x} (already there)"))
+            print(dim("  Existing datasets, code, runs and results were not touched."))
+        return 0
+
+    if act == "inspect":
+        r = HR.inspect(p, cluster_name=cl, project_slug=a.project)
+        if a.json:
+            out_json(r)
+            return 0
+        print(bold(f"Cluster {r['cluster']}"))
+        kv("project dir", r["paths"]["project"])
+        if r.get("datasets"):
+            section(f"Datasets ({len(r['datasets'])})")
+            for d in r["datasets"]:
+                print(f"  {d['id'].ljust(24)} {st(d.get('status') or 'unknown')}"
+                      + (dim(f"  v{d['version']}") if d.get("version") else "")
+                      + ("" if d.get("has_manifest") else yellow("  (no manifest)")))
+        section(f"Code deployments ({len(r['deployments'])})")
+        for d in r["deployments"]:
+            print(f"  {d['experiment']}/{d['run']}  {dim((d.get('token') or '')[:12])}")
+        section(f"Remote runs ({len(r['remote_runs'])})")
+        for x in r["remote_runs"]:
+            s = (x.get("status") or {}).get("state") or "—"
+            print(f"  {x['run'].ljust(12)} {st(s)}")
+        if r["discrepancies"]:
+            section(yellow("Discrepancies"))
+            for d in r["discrepancies"]:
+                print(f"  {d['run']}: {d['issue']}")
+                print(dim(f"    → {d['do']}"))
+        return 0
+
+    if act == "datasets":
+        return _cmd_hpc_datasets(a, p, HC, HD)
+
+    if act == "bundle":
+        cluster = HC.get(p, cl) if (cl or HC.names(p)) else None
+        res = (HC.check_resources(cluster, _slurm_opts(a)) if cluster else _slurm_opts(a))
+        r = HB.build(p, a.id, command=" ".join(_cmd_list(a)) or None, fmt=a.format,
+                     cluster=cluster, resources=res)
+        if a.json:
+            out_json({k: v for k, v in r.items() if k != "manifest"})
+            return 0
+        print(green("✓ ") + f"bundle: {r['path']}  {dim(human_size(r['bytes']))}")
+        kv("experiment", r["experiment"])
+        kv("runs", r["runs"])
+        kv("token", r["token"])
+        skipped = (r["manifest"].get("source") or {}).get("skipped") or []
+        if skipped:
+            print(yellow(f"  {len(skipped)} file(s) not packaged:"))
+            for s_ in skipped[:5]:
+                print(dim(f"    {s_['path']}: {s_['reason']}"))
+        print(dim(f"\n  tar -xzf {os.path.basename(r['path'])} && cd {os.path.basename(r['dir'])}"))
+        print(dim("  bash scripts/preflight.sh && bash scripts/submit.sh"))
+        print(dim(f"  # then: bash scripts/collect.sh  →  research hpc import results-{r['runs'][0]}.tar.gz"))
+        return 0
+
+    if act == "submit":
+        r = HR.submit(p, a.id, cluster_name=cl, command=" ".join(_cmd_list(a)) or None,
+                      dry_run=a.dry_run, approve=a.yes, resources=_slurm_opts(a),
+                      stage_datasets=a.stage_datasets, deep_verify=a.deep)
+        if a.json:
+            out_json(r)
+            return 0
+        if r.get("dry_run"):
+            print(bold(f"Would submit {r['experiment']} to {r['cluster']}"))
+            kv("command", r["command"])
+            kv("resources", {k: v for k, v in r["resources"].items() if v not in (None, [], "")})
+            for w in r["would"]:
+                print(f"  · {w}")
+            print(dim("\n  " + r["note"] + "  Re-run with --yes to submit."))
+            return 0
+        print(green("✓ ") + f"{r['run']} submitted to {r['cluster']} as slurm job {r['slurm_job_id']}")
+        kv("experiment", r["experiment"])
+        kv("remote code", r["remote"]["code"])
+        kv("token", r["token"])
+        print(dim(f"\n  research hpc status {r['run']}    # or just `research hpc sync` later"))
+        return 0
+
+    if act == "status":
+        r = HR.status(p, a.id, cluster_name=cl)
+        if a.json:
+            out_json(r)
+            return 0
+        print(f"{bold(r['run'])}  {dim(r['experiment'])}  local [{st(r['local_status'])}]")
+        kv("cluster", r["cluster"])
+        kv("slurm job", r.get("slurm_job_id"))
+        if r.get("slurm"):
+            kv("slurm state", f"{r['slurm'].get('slurm_state')} (via {r['slurm'].get('source')})")
+            if r["slurm"].get("note"):
+                print(yellow("  " + r["slurm"]["note"]))
+        if r.get("remote_status"):
+            kv("remote state", r["remote_status"].get("state"))
+            kv("exit code", r["remote_status"].get("exit_code"))
+        kv("remote run dir", r.get("remote_run_dir"))
+        return 0
+
+    if act == "sync":
+        r = HR.sync(p, cluster_name=cl, collect_results=not a.no_collect)
+        if a.json:
+            out_json(r)
+            return 0
+        print(f"checked {r['checked']} run(s)" + (f" on {', '.join(r['clusters'])}" if r["clusters"] else "")
+              + (dim(f", skipped {r['skipped']} already settled") if r["skipped"] else ""))
+        for x in r["recovered"]:
+            print(green("✓ ") + f"{x['run']}: submission confirmed after the fact — slurm job "
+                                f"{x['slurm_job_id']} (not resubmitted)")
+        for x in r["updated"]:
+            print(f"  {x['run']} → [{st(x['status'])}]" + dim(f"  job {x['slurm_job_id']}"))
+        for x in r["collected"]:
+            print(green("  ↓ ") + f"{x['run']} results imported"
+                  + dim(f"  {x['metrics_added']} new metric entries, {x['artifacts']} artifact(s)"))
+        for x in r["needs_attention"]:
+            print(yellow(f"  ⚠ {x['run']}: {x['why']}"))
+            print(dim(f"     → {x['do']}"))
+        for e in r["errors"]:
+            print(red(f"  ✗ {e.get('run') or e.get('cluster')}: {e['error']}"))
+        if r["next_tasks"]:
+            section("Ready for interpretation")
+            for t in r["next_tasks"]:
+                print(f"  {t['experiment']}  {t['title']}  "
+                      + dim(f"{t['unsynthesized_runs']} unsynthesized run(s)"))
+                print(dim(f"    → {t['do']}"))
+            print(dim("\n  No agent was started: scientific interpretation stays a human/agent decision."))
+        return 0
+
+    if act == "collect":
+        r = HR.collect(p, a.id, cluster_name=cl, max_bytes=a.max_bytes)
+        _done(a, r, msg=f"{r['run']}: {r['metrics_added']} new metric entries, "
+                        f"{len(r.get('artifacts') or [])} artifact(s), status {r['status']}")
+        if not a.json:
+            for w in r.get("warnings") or []:
+                print(yellow("  ⚠ " + w))
+            for ref in r.get("referenced") or []:
+                print(dim(f"  → {ref['artifact']} stays on the cluster at {ref['remote_path']}"))
+        return 0
+
+    if act == "import":
+        r = HRES.import_archive(p, a.id, dry_run=a.dry_run)
+        if a.json:
+            out_json(r)
+            return 0
+        if r["dry_run"]:
+            print(bold(f"Would import into {r['run']} ({r['experiment']}):"))
+            for f_ in r["would_import"]:
+                print(f"  {f_}")
+            print(dim("\n  Nothing was changed."))
+            return 0
+        print(green("✓ ") + f"{r['run']}: status {r['status']}, {r['metrics_added']} new metric entries, "
+                            f"{len(r['artifacts'])} artifact(s), {len(r['logs'])} log(s)")
+        for w in r["warnings"]:
+            print(yellow("  ⚠ " + w))
+        if not r["changed"]:
+            print(dim("  (nothing new — this archive was already imported)"))
+        return 0
+
+    if act == "cancel":
+        r = HR.cancel(p, a.id, cluster_name=cl)
+        _done(a, r, msg=f"{r['run']}: slurm job {r['slurm_job_id']} cancelled on {r['cluster']}")
+        return 0
+
+    raise ResearchError(f"unknown hpc action {act!r}")
+
+
+def _cmd_hpc_datasets(a, p, HC, HD) -> int:
+    """`research hpc datasets <list|inspect|check|fetch|adopt>` — the filesystem is the source of truth."""
+    sub = a.id or "list"
+    cluster = HC.get(p, getattr(a, "cluster", None))
+    if sub == "list":
+        r = HD.list_datasets(p, cluster)
+        if a.json:
+            out_json(r)
+            return 0
+        print(bold(f"{r['shared_data']}  ({r['count']} dataset(s))"))
+        for d in r["datasets"]:
+            line = f"  {d['id'].ljust(26)} {st(d.get('status') or 'unknown')}"
+            if d.get("version"):
+                line += dim(f"  v{d['version']}")
+            if not d.get("has_manifest"):
+                line += yellow("  no manifest")
+            print(line)
+            if d.get("problem"):
+                print(dim(f"      {d['problem']}"))
+        print(dim("\n  " + r["note"]))
+        return 0
+    ident = a.dataset
+    if not ident:
+        raise ResearchError(f"`research hpc datasets {sub}` needs a dataset id",
+                            hint="`research hpc datasets list` shows what is on the cluster.")
+    if sub == "inspect":
+        r = HD.inspect(p, cluster, ident, files=True)
+        if a.json:
+            out_json(r)
+            return 0
+        print(f"{bold(r['id'])}  {r['path']}")
+        kv("status", r.get("status"))
+        kv("version", r.get("version"))
+        kv("source", r.get("source"))
+        if r.get("problem"):
+            print(yellow("  " + r["problem"]))
+        for f_ in (r.get("files_listing") or [])[:20]:
+            print(dim(f"    {f_}"))
+        n = len(r.get("files_listing") or [])
+        if n > 20:
+            print(dim(f"    … {n - 20} more"))
+        return 0
+    if sub == "check":
+        r = HD.check(p, cluster, ident, deep=a.deep)
+        if a.json:
+            out_json(r)
+            return 0 if r["usable"] else 1
+        print((green("✓ ") if r["usable"] else red("✗ "))
+              + f"{r['id']}: {'usable' if r['usable'] else 'not usable'}  "
+              + dim(f"({r['strength']} check, {r['checked']} file(s))"))
+        for x in r["problems"]:
+            print(red("  • " + x))
+        for x in r["warnings"]:
+            print(yellow("  • " + x))
+        return 0 if r["usable"] else 1
+    if sub == "fetch":
+        r = HD.fetch(p, cluster, ident, url=a.url, from_local=a.from_local, approve=a.yes, deep=a.deep)
+        if a.json:
+            out_json(r)
+            return 0
+        mark = green("✓ ") if r["action"] in ("reuse", "staged") else yellow("⚠ ")
+        print(mark + f"{r['id']}: {r['action']}")
+        print(dim("  " + r["detail"]))
+        return 0 if r["action"] in ("reuse", "staged") else 1
+    if sub == "adopt":
+        r = HD.adopt(p, cluster, ident, version=a.version, source=a.url, description=a.description,
+                     dry_run=a.dry_run)
+        if a.json:
+            out_json(r)
+            return 0
+        print((dim("would write") if r["dry_run"] else green("✓ wrote"))
+              + f" {r['path']}/manifest.json  "
+              + dim(f"({len(r['manifest'].get('expected_files') or [])} file(s) recorded)"))
+        return 0
+    raise ResearchError(f"unknown datasets action {sub!r} (list | inspect | check | fetch | adopt)")
+
+
+def _slurm_opts(a) -> Dict[str, Any]:
+    opts = {k: getattr(a, k, None) for k in ("partition", "account", "time", "cpus", "mem", "gpus")}
+    if getattr(a, "sbatch_arg", None):
+        opts["extra_args"] = list(a.sbatch_arg)
+    return {k: v for k, v in opts.items() if v not in (None, "", [])}
+
+
 def cmd_report(a, p) -> int:
+    if getattr(a, "full", False):
+        return _cmd_report_full(a, p)
     from research import report as RP
     r = RP.write_report(p, a.scope, a.format, a.out)
     _done(a, r, msg=f"report: {', '.join(r['paths'])}")
     return 0
+
+
+def _cmd_report_full(a, p) -> int:
+    """Deterministic, exhaustive Markdown export. Read-only: writes nothing but the output file."""
+    from research import fullreport as FR
+    if a.stdout:
+        snap, text = FR.export(p, a.scope, stamp=a.stamp)
+        res = {"scope": snap["scope"], "counts": snap["counts"], "bytes": len(text.encode("utf-8"))}
+        if a.check:
+            res["check"] = FR.coverage(snap, text)
+        if a.json:
+            out_json({**res, "markdown": text})
+        else:
+            sys.stdout.write(text)
+        return 0 if not (a.check and not res["check"]["ok"]) else 1
+    r = FR.write(p, a.scope, a.out, stamp=a.stamp, check=a.check)
+    chk = r.get("check")
+    if a.json:
+        out_json(r)
+    else:
+        print(green("✓ ") + f"full context export: {r['path']}  {dim(human_size(r['bytes']))}")
+        for c in FR.CATEGORIES:
+            print(f"  {dim((c + ':').ljust(14))} {r['counts'][c]}")
+        if chk:
+            if chk["ok"]:
+                print(green("✓ ") + "coverage verified: every in-scope record is represented exactly once")
+            else:
+                print(red("✗ ") + f"coverage FAILED: {len(chk['exporter_problems'])} problem(s)")
+                for pb in chk["exporter_problems"][:20]:
+                    print(red("  • ") + pb["detail"])
+            src = {k: v for k, v in chk["source_incompleteness"].items() if k != "detail" and v}
+            if src:
+                print(yellow("⚠ ") + "source-data incompleteness (not an exporter bug): "
+                      + ", ".join(f"{k}={v}" for k, v in sorted(src.items())))
+    return 0 if not (chk and not chk["ok"]) else 1
 
 
 # ----------------------------------------------------------------------------- agents / dispatch / mcp
@@ -1611,7 +2081,13 @@ def build_parser() -> argparse.ArgumentParser:
     x = add(sub, "report", cmd_report, "write a readable report (project, or one Q-/PLAN-/EXP-) to .research/reports/")
     x.add_argument("scope", nargs="?")
     x.add_argument("--format", choices=["md", "html", "both"], default="both")
-    x.add_argument("-o", "--out", help="output file (with --format md or html)")
+    x.add_argument("-o", "--out", help="output file (with --format md or html, or --full)")
+    x.add_argument("--full", action="store_true",
+                   help="exhaustive deterministic Markdown export of everything recorded (for an LLM hand-off)")
+    x.add_argument("--check", action="store_true", help="with --full: verify coverage; nonzero exit if it fails")
+    x.add_argument("--stdout", action="store_true", help="with --full: write to stdout instead of a file")
+    x.add_argument("--stamp", action="store_true",
+                   help="with --full: add a generation timestamp (output is then NOT byte-reproducible)")
     x = add(sub, "dispatch", cmd_dispatch, "hand work to an agent CLI: research dispatch verifier F-003")
     x.add_argument("role", choices=["planner", "implementer", "verifier", "analyst"])
     x.add_argument("target", nargs="?", help="T-, F-, EXP-, PLAN- … id")
@@ -1634,7 +2110,48 @@ def build_parser() -> argparse.ArgumentParser:
     add(sub, "rebuild", cmd_rebuild, "rebuild research.db from the text files (keeps a backup)")
     x = add(sub, "log", cmd_log, "audit log of recent changes")
     x.add_argument("--limit", type=int, default=30)
-    add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")
+    x = add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")
+    x.add_argument("--preview", action="store_true", help="print the managed block this version generates")
+    x.add_argument("--diff", action="store_true", help="unified diff of the current vs. the new block")
+    x.add_argument("--apply", action="store_true", help="write the managed region (the default action)")
+    x = add(sub, "hpc", cmd_hpc, "remote execution: doctor | init | submit | status | sync | collect | "
+                                 "import | bundle | datasets | inspect | cancel | clusters | config")
+    x.add_argument("action", nargs="?",
+                   choices=["doctor", "init", "config", "clusters", "inspect", "bundle", "submit",
+                            "status", "sync", "collect", "import", "cancel", "datasets"])
+    x.add_argument("id", nargs="?", help="EXP-… (bundle/submit) · RUN-… (status/collect/cancel) · "
+                                         "archive path (import) · sub-action (datasets)")
+    x.add_argument("dataset", nargs="?", help="dataset id, for `datasets inspect|check|fetch|adopt`")
+    x.add_argument("--cluster", help="cluster name from hpc.clusters (default: hpc.default_cluster)")
+    x.add_argument("--dry-run", action="store_true", help="preview only; transfers and submits nothing")
+    x.add_argument("--yes", action="store_true", help="approve an expensive action (submit, dataset staging)")
+    x.add_argument("--format", choices=["tar.gz", "zip"], default="tar.gz", help="bundle archive format")
+    x.add_argument("--project", help="inspect another project slug on the same cluster")
+    x.add_argument("--no-collect", action="store_true", help="sync: update status only, fetch no results")
+    x.add_argument("--max-bytes", type=int, help="collect: artifacts larger than this stay on the cluster")
+    x.add_argument("--stage-datasets", action="store_true",
+                   help="submit: proceed to staging if a required dataset is missing")
+    x.add_argument("--deep", action="store_true", help="verify dataset checksums (can be expensive)")
+    x.add_argument("--url", help="datasets fetch/adopt: the source URL")
+    x.add_argument("--from-local", help="datasets fetch: upload this local path instead of downloading")
+    x.add_argument("--dataset-version", dest="version",
+                   help="datasets adopt: the dataset version you verified")
+    x.add_argument("--description", help="datasets adopt: what this dataset is")
+    x.add_argument("--example", action="store_true", help="config: print an example cluster profile")
+    x.add_argument("--partition", "-p")
+    x.add_argument("--account", "-A")
+    x.add_argument("--time", "-t")
+    x.add_argument("--cpus", "-c", type=int)
+    x.add_argument("--mem")
+    x.add_argument("--gpus", "-G")
+    x.add_argument("--sbatch-arg", action="append", help="extra #SBATCH line")
+    x.add_argument("cmd", nargs="*", help="command to run; put it after `--`")
+    x.set_defaults(_hpc_parser=x)
+
+    x = add(sub, "upgrade", cmd_upgrade, "bring an existing project up to this Research OS (preview by default)")
+    x.add_argument("--dry-run", action="store_true", help="preview only (the default); changes nothing")
+    x.add_argument("--apply", action="store_true", help="apply the upgrade")
+    x.add_argument("--status", action="store_true", help="version/compatibility summary only")
 
     x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…]")
     x.add_argument("action", nargs="?", default="status", choices=["init", "status", "refresh", "done"])
@@ -2157,11 +2674,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     a = ap.parse_args(argv)
     if tail is not None:
         if hasattr(a, "cmd") and isinstance(getattr(a, "cmd", None), list) or getattr(a, "fn", None) in (
-                cmd_run_exec, cmd_run_submit, cmd_run_attach, cmd_run_sweep):
+                cmd_run_exec, cmd_run_submit, cmd_run_attach, cmd_run_sweep, cmd_hpc):
             a.cmd = list(getattr(a, "cmd", None) or []) + tail
         else:
             ap.error("unexpected arguments after --")
-    if not getattr(a, "cmd", None):
+    # A subcommand was chosen iff the parser set `fn` or `_group`. (`a.cmd` cannot be used for this:
+    # the run/hpc subparsers define their own `cmd` positional, which shadows the top-level dest.)
+    if not hasattr(a, "fn") and not hasattr(a, "_group"):
         ap.print_help()
         return 0
     fn = getattr(a, "fn", None)
@@ -2171,7 +2690,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if fn is cmd_init:
             return cmd_init(a)
-        p = _proj(a)
+        if fn is cmd_upgrade:
+            return cmd_upgrade(a)   # must not open the project: --dry-run would migrate the database
+        p = _proj(a, sync=not _is_readonly(a))
         try:
             rc = fn(a, p)
             if fn.__name__ in MUTATING:

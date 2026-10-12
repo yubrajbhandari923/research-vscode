@@ -748,6 +748,95 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     if (c === 'Open HTML in browser' && htmlPath) vscode.env.openExternal(vscode.Uri.file(path.join(model.root, htmlPath)));
     if (c === 'Open Markdown' && mdPath) openPath(model.root, mdPath);
   });
+  // The complete deterministic context export, with its coverage verdict. All of the logic lives in the
+  // Python core (`research report --full --check`); this only picks a scope and shows the result.
+  reg('research.reportFull', async (a?: any) => {
+    let scope = idArg(a);
+    if (!scope) {
+      const items = [{ label: '$(project) Whole project', id: '' },
+        ...(model.index?.items || []).filter((i: any) => ['question', 'plan', 'experiment'].includes(i.type))
+          .map((i: any) => ({ label: i.id, description: i.title, id: i.id }))];
+      const pick: any = await vscode.window.showQuickPick(items, { placeHolder: 'Full context export of what?', matchOnDescription: true });
+      if (!pick) return;
+      scope = pick.id || undefined;
+    }
+    const r = await rpc('report_full', { scope, check: true });
+    const chk = r.check || {};
+    const size = `${(r.bytes / 1024).toFixed(0)} KB`;
+    const counts = Object.entries(r.counts || {}).map(([k, v]) => `${v} ${k}`).join(' · ');
+    if (chk.ok) {
+      done('full context export verified');
+      const c = await vscode.window.showInformationMessage(
+        `Full context export verified: ${r.path} (${size}) — ${counts}`, 'Open');
+      if (c === 'Open') openPath(model.root, r.path);
+    } else {
+      const problems = (chk.exporter_problems || []).slice(0, 5).map((x: any) => x.detail).join('; ');
+      const c = await vscode.window.showErrorMessage(
+        `Full context export FAILED coverage verification: ${problems}`, 'Open');
+      if (c === 'Open') openPath(model.root, r.path);
+    }
+  });
+  reg('research.upgradePreview', async () => {
+    const r = await rpc('upgrade', { apply: false });
+    if (r.downgrade_refused) { vscode.window.showErrorMessage(r.downgrade_refused); return; }
+    if (r.up_to_date) { vscode.window.showInformationMessage('Project is already up to date with this Research OS.'); return; }
+    const lines = [`Research OS Upgrade Preview`, ``,
+      `  Current project schema: ${r.project_schema}`, `  Target project schema:  ${r.target_schema}`, ``,
+      `Required:`,
+      ...r.steps.map((s: any) => `  ${s.change === 'refuse' ? '!' : (s.change === 'create' || s.change === 'add' ? '+' : '~')} ${s.path || s.kind}${s.detail ? `   (${s.detail})` : ''}`),
+      ``, `Preserved:`, ...r.preserved.map((x: string) => `  = ${x}`),
+      `  = user-authored AGENTS.md sections, custom config values, unknown config keys`,
+      ``, `  ${r.note}`, ``, `Nothing has been changed. Apply with:  research upgrade --apply`];
+    const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
+    await vscode.window.showTextDocument(doc, { preview: true });
+    const c = await vscode.window.showInformationMessage(`${r.changes} change(s) pending.`, 'Apply upgrade');
+    if (c === 'Apply upgrade') {
+      const applied = await rpc('upgrade', { apply: true });
+      if (applied.ok) done(`upgrade applied (${applied.applied.length} step(s))`);
+      else vscode.window.showErrorMessage(`Upgrade incomplete: ${(applied.failed || []).map((f: any) => f.error).join('; ')}`);
+    }
+  });
+  reg('research.agentsMdDiff', async () => {
+    const r = await rpc('agents_md_state', {});
+    if (r.problem) {
+      vscode.window.showErrorMessage(`AGENTS.md markers are ambiguous: ${r.problem}. Fix them by hand; nothing was changed.`);
+      return;
+    }
+    if (r.up_to_date) { vscode.window.showInformationMessage('The managed AGENTS.md block is already up to date.'); return; }
+    const doc = await vscode.workspace.openTextDocument({ content: r.diff || r.new, language: 'diff' });
+    await vscode.window.showTextDocument(doc, { preview: true });
+    const c = await vscode.window.showInformationMessage(
+      'Only the Research OS-managed block changes; your own sections are untouched.', 'Apply to AGENTS.md');
+    if (c === 'Apply to AGENTS.md') {
+      const applied = await rpc('agents_md_apply', {});
+      done(applied.changed ? 'AGENTS.md managed block updated' : 'already up to date');
+    }
+  });
+  reg('research.hpcSync', async () => {
+    const st = await rpc('hpc_status', {});
+    if (!st.enabled) {
+      vscode.window.showInformationMessage('No HPC cluster is configured for this project (hpc.clusters in .research/config.yaml).');
+      return;
+    }
+    const r = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Reconciling HPC runs…' },
+      () => rpc('hpc_sync', {}));
+    const bits = [`checked ${r.checked}`];
+    if (r.recovered?.length) bits.push(`${r.recovered.length} submission(s) recovered`);
+    if (r.updated?.length) bits.push(`${r.updated.length} updated`);
+    if (r.collected?.length) bits.push(`${r.collected.length} collected`);
+    if (r.needs_attention?.length) bits.push(`${r.needs_attention.length} need attention`);
+    if (r.errors?.length) bits.push(`${r.errors.length} error(s)`);
+    done(`hpc sync: ${bits.join(', ')}`);
+    const extra: string[] = [];
+    if (r.next_tasks?.length) extra.push('Show what needs interpretation');
+    const c = await vscode.window.showInformationMessage(`HPC sync: ${bits.join(', ')}`, ...extra);
+    if (c === 'Show what needs interpretation') {
+      const lines = r.next_tasks.map((t: any) => `${t.experiment}  ${t.title}  (${t.unsynthesized_runs} unsynthesized run(s))\n    → ${t.do}`);
+      const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
+      vscode.window.showTextDocument(doc, { preview: true });
+    }
+  });
   reg('research.task.brief', async (a?: any) => {
     const id = idArg(a);
     if (!id) return;

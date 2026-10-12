@@ -29,6 +29,9 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 12. [JSON-RPC protocol (extension ↔ core)](#12-json-rpc-protocol-extension--core)
 13. [VS Code extension specification](#13-vs-code-extension-specification)
 14. [Remote SSH and HPC behaviour](#14-remote-ssh-and-hpc-behaviour)
+14A. [Full deterministic context export](#14a-full-deterministic-context-export-research-report---full)
+14B. [Safe project upgrades](#14b-safe-project-upgrades-research-upgrade)
+14C. [HPC execution](#14c-hpc-execution)
 15. [Safety guarantees](#15-safety-guarantees)
 16. [Configuration reference](#16-configuration-reference)
 17. [Environment variables](#17-environment-variables)
@@ -535,7 +538,7 @@ columns, not rows in `links`.
 ├── AGENTS.md                         # research block between <!-- research:begin … --> and <!-- research:end -->
 └── .research/
     ├── config.yaml                   # project metadata, agent_policy, backends, artifacts, resume
-    ├── .gitignore                    # research.db*, cache/, runs/*/stdout.log, runs/*/stderr.log
+    ├── .gitignore                    # research.db*, cache/, bin/, reports/, hpc/bundles/, run logs
     ├── research.db                   # SQLite index (derived)
     ├── events.jsonl                  # append-only audit log
     ├── artifacts.jsonl               # append-only artifact records (last record per id wins)
@@ -1891,6 +1894,252 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
 
 ---
 
+## 14A. Full deterministic context export (`research report --full`)
+
+**Module:** `research/fullreport.py`. **Export schema:** 1. Independent of `report.py`, whose concise
+summary keeps its existing semantics and output paths unchanged.
+
+### 14A.1 What it is
+
+One Markdown document holding the complete recorded scientific context of a project, question, experiment
+or plan, suitable for pasting into an LLM. It **retrieves, joins, validates, orders and renders** records
+and nothing else: no model call, no agent dispatch, no summarization, no inferred conclusion, no
+natural-language rewriting. `fullreport.py` imports no HTTP client and no agent module, and a test asserts
+that rendering performs no subprocess and opens no socket.
+
+Defaults to `.research/reports/<scope>-full.md` (`project-full.md` when unscoped). Not subject to
+`context.max_chars`, top-N finding selection, or run-table truncation — a large export is expected, and the
+document reports its own size and record counts.
+
+### 14A.2 Section hierarchy
+
+Fourteen `##` sections in a fixed order, from `fullreport.SECTIONS` (the renderer emits them and the
+coverage checker requires them, so a renamed or dropped section fails verification):
+
+```
+1. Export Metadata                     8. Decisions and Supersession History
+2. Project Definition and Configuration  9. Checkpoints
+3. Current Research State             10. Research Notes
+4. Questions and Hypotheses           11. Open Work and Unresolved Problems
+5. Plans and Tasks                    12. Audit / Event History
+6. Experiments                        13. Data Integrity and Missing Evidence
+     Experimental Design              14. Coverage Manifest
+     Implementation and Provenance
+     Runs · Metrics · Artifacts
+     Syntheses
+     Linked Findings and Decisions
+7. Findings and Reviews
+```
+
+Coverage per category: questions, plans, tasks, experiments, runs, metric entries, artifacts, syntheses,
+findings, reviews, decisions, checkpoints, notes, literature sources, audit events.
+
+Every record is emitted with a marker comment `<!-- research:record <type> <id> -->`.
+
+### 14A.3 Determinism contract
+
+For a fixed canonical state and fixed options, the output is **byte-identical** across invocations.
+
+| Requirement | How |
+|---|---|
+| Stable ordering | explicit `ORDER BY id`; events by append position; dicts rendered `sorted()`; documented tie-breakers |
+| Stable numbers | `_num`: ints bare, floats via `repr` (shortest round-trip), `x.0` for integral floats, explicit `NaN`/`Infinity` |
+| Stable nulls | `_val` renders `None`, `""`, `[]`, `{}` as `—`, always |
+| Stable escaping | `_cell` escapes `\` and `|` and flattens newlines to `<br>`, so no value can break a table |
+| No random ids | metric records are `RUN-0001#<n>` by position in the run's ordered history, **not** the SQLite rowid; events are `E<n>` by append position — both survive `research rebuild` |
+| No wall-clock time | no timestamp unless `--stamp`, which is explicitly labelled non-reproducible |
+| Portable paths | project-relative wherever the file is inside the project |
+| No filesystem iteration order | every `listdir` is `sorted()` |
+| No self-inclusion | the output lives in `.research/reports/`, which is not a scanned record directory |
+
+**Side effects:** none. Generating a report logs **no event**, creates no record, mutates no finding. The CLI
+opens the project with `sync=False` for `--full`, so there is no hand-edit import, no run reconciliation and
+no background Slurm polling during rendering. `--check` therefore works against a **read-only snapshot**; if
+you have hand-edited canonical Markdown, run `research sync` first. An export is only guaranteed repeatable
+for the same logical snapshot.
+
+### 14A.4 Completeness verification (`--check`)
+
+`coverage(snapshot, text)` is an **independent** verification path: it parses the record markers out of the
+rendered Markdown and compares them with the authoritative id lists from `record_ids(snapshot)` — it does
+not trust a counter incremented during printing. It reports, per category, expected vs emitted, plus any
+missing, duplicated or unexpected ids, and validates the document's section structure and table rows.
+
+Two categories, never conflated:
+
+- **Exporter failure** — a valid canonical record was omitted, duplicated or rendered unexpectedly. Fails
+  verification; `--check` exits non-zero.
+- **Source-data incompleteness** — a registered artifact's file is absent, an external dataset is
+  unavailable, an experiment was never synthesized, a design field was never filled in. Reported accurately
+  in section 13 and in `source_incompleteness`, and **not** treated as an exporter bug.
+
+Fields added by a future schema are preserved generically: entity rows are read straight from SQLite, so a
+column this renderer has no section for still reaches the export under "Additional recorded fields".
+
+Nothing claims completeness for unrecorded science or external files; section 13 states explicitly that
+artifact contents, logs, external datasets and unwritten reasoning are inherently unavailable.
+
+---
+
+## 14B. Safe project upgrades (`research upgrade`)
+
+**Modules:** `research/upgrade.py`, `research/agentsmd.py`.
+
+### 14B.1 Four kinds of change
+
+| Kind | What | Guarantee |
+|---|---|---|
+| schema | the existing versioned migrations (`schema.migrate`) | the index is rebuildable from text anyway |
+| filesystem | create missing managed directories | creates only |
+| template | copy missing default skills/prompts/templates | an existing file is never overwritten, even if it differs — that difference is your customization |
+| config | deep-merge missing defaults | existing values and unknown keys preserved; nothing removed |
+| agents-md | the Research OS-owned block only | all other bytes unchanged |
+| gitignore | append missing `reports/`, `hpc/bundles/`, `hpc/incoming/` lines | appends only; your own lines are never rewritten or reordered |
+| bin | refresh `.research/bin/` for this machine | per-machine, gitignored |
+
+Deliberately **not** a migration framework: versioned schema migrations already existed, and the rest is a
+handful of idempotent functions.
+
+### 14B.2 Dry run
+
+`research upgrade --dry-run` (the default) calls `upgrade.plan()`, which reads the schema version through a
+**read-only** SQLite connection and never constructs a `Project`. No migration, no index rebuild, no context
+refresh, no cache file, no event. A test asserts the whole working tree is byte-identical afterwards, and
+that a dry run on a project with no `research.db` does not create one.
+
+### 14B.3 Apply
+
+Validates preconditions first (a newer project schema is refused outright), backs up the small metadata
+files it will edit into `.research/cache/upgrade-<timestamp>/`, then applies each step independently: one
+failing step is reported in `failed` without aborting the others, and re-running finishes the job. Research
+histories and large artifacts are never copied into a backup. One `upgraded` event is logged — upgrades are
+auditable, so the audit log grows while research records stay identical.
+
+### 14B.4 Data-integrity contract
+
+Preserved unchanged across an upgrade: ids and relationships; experiment hypotheses, methods, parameters and
+notes; run histories, commands, statuses, metrics and outputs; findings, confidence, evidence links and
+reviews; decisions and supersession history; checkpoints and human notes; audit events and authorship;
+project-specific configuration and unknown config keys; skills and customized instructions. The project
+stays readable and its history stays rebuildable from the canonical files.
+
+### 14B.5 The managed AGENTS.md block
+
+One owned region between `<!-- research:begin … -->` and `<!-- research:end -->`. `locate()` matches whole
+marker **lines**, not bare substrings, so prose that mentions a marker — in the block itself or in your own
+notes — cannot be mistaken for one.
+
+| Command | Behaviour |
+|---|---|
+| `--preview` | prints the block this version generates; touches nothing |
+| `--diff` | unified diff of the file as it is vs. as it would be |
+| `--apply` | rewrites only the managed region (the default action) |
+
+Bytes outside the region are preserved exactly, including CRLF line endings and a missing trailing newline
+(the file is read and written with `newline=""`). Markers absent → propose adding a block, leaving existing
+content alone. Markers duplicated, reversed or malformed → **refuse** with the manual fix, change nothing,
+and let the rest of the upgrade proceed. No three-way merge, no inference about which instructions to
+remove: a deliberately human-reviewed workflow.
+
+---
+
+## 14C. HPC execution
+
+**Package:** `research/hpc/` — `config.py` (cluster profiles), `transport.py` (ssh/rsync), `bundle.py`
+(portable packages), `results.py` (import), `datasets.py` (discovery), `remote.py` (doctor/submit/sync).
+Entirely **opt-in**: with no `hpc.clusters` configured, every command says so and nothing else changes.
+
+### 14C.1 Identity, and why submission is never retried
+
+```
+laptop: run id + submission token allocated  →  immutable bundle  →  rsync to the cluster
+     →  sbatch (writes a receipt carrying run id + token + job id as its first action)
+     →  [days pass; the laptop may be off]  →  research hpc sync  →  results imported onto the SAME run
+```
+
+The dangerous failure is `sbatch` succeeding and the connection dying before the job id is read. Research OS
+therefore: allocates the run id and token **before** anything is transferred; has the job script write a
+remote receipt; and, when it cannot confirm a job id, records `submission_uncertain` and **refuses to
+retry**. `research hpc sync` then reads the receipt (and `squeue`/`sacct`) and adopts the job that is already
+running. A transient SSH failure is never taken as proof that submission failed. Tested explicitly: one job
+on the cluster, one run record, no duplicate.
+
+### 14C.2 State ownership
+
+The laptop holds the only authoritative research history. The cluster holds execution state only, described
+by small manifests in its own directories, reusing the existing run-directory conventions
+(`run.json`, `status.json`, `metrics.jsonl`, `artifacts.jsonl`):
+
+```
+<projects>/<slug>/
+  code/EXP-001/RUN-0007/     immutable code snapshot + .bundle-token
+  runs/RUN-0007/             submission.json, status.json, metrics.jsonl, logs
+  results/RUN-0007/
+  metadata/project.json
+```
+
+Information flows one way (execution package out, results in). There are never two mutable `.research/`
+databases, and no remote database or registry of any kind.
+
+### 14C.3 Bundles
+
+A bundle carries project/experiment/run identity, the hypothesis and intended test, the source commit **and
+dirty-state provenance**, an actual source snapshot (uncommitted and untracked files included — a commit
+alone is not a snapshot of what ran), runtime config, resource requirements, expected inputs/outputs,
+environment setup, dataset references, run commands and parameters, expected metric/artifact schema, and
+SHA-256 hashes of every packaged file.
+
+It ships `research_runner` as a standalone top-level module — not `research.runner`, whose package `__init__`
+would pull in SQLite and YAML. No agent, no network and no Research OS install are needed on the cluster.
+Never packaged: credential-shaped files (`id_*`, `*.pem`, `.env`, `.netrc`, …, refused outright), `.git`,
+`.research`, caches, and files over `hpc.bundle.max_file_bytes` unless named in `hpc.bundle.include`.
+
+Results archives carry `manifest.json`, `status.json`, `metrics.jsonl`, `artifacts.json`, `logs/`,
+`outputs/` and `checksums.json`. Import validates identity (run id, experiment, submission token), verifies
+every checksum before trusting a byte, rejects absolute paths, `..` traversal and non-regular members, and
+bounds member count and size. Re-importing an identical archive adds no metric, artifact or event: JSONL is
+merged by content hash and artifacts are keyed on (path, run). Artifacts over
+`hpc.collect.max_artifact_bytes` stay on the cluster and are registered as `remote-reference` artifacts with
+their remote path and size.
+
+### 14C.4 Datasets: no registry
+
+The configured `shared_data` directory **is** the source of truth. A dataset is a directory under it,
+described by a `manifest.json` inside that same directory. There is no `datasets.json`, no central index and
+no registry service, so a new session discovers what exists by looking rather than by remembering.
+
+- a directory without a manifest is **neither trusted nor re-downloaded** — it is inspected, then `adopt`ed
+- `status` ∈ `downloading | complete | incomplete | corrupt | unknown`; the manifest is written **last**, so
+  an interrupted transfer can never read as complete
+- verification strength is explicit: `manifest` (status word only) → `inventory` (expected files exist,
+  sizes match) → `checksum` (`--deep`, recomputed remotely). Terabytes are not rehashed every session.
+- concurrency uses an atomic `mkdir` lock inside the dataset directory plus a staging directory — no
+  distributed locking
+- versions are distinguished by manifest `version`; a different version never overwrites an existing copy
+- `auto_delete` is fixed at false: **Research OS never deletes remote datasets, code or results**
+
+### 14C.5 Safety
+
+Dry-run preview on `submit` and `init`; resource requests bounded by the cluster's `limits`; cluster chosen
+explicitly (or a single configured default); every remote path validated as absolute, metacharacter-free and
+traversal-free, and checked to lie **inside** the configured roots; `rsync --delete` refused; `BatchMode=yes`
+with explicit timeouts and argument lists (never string interpolation of user data); read probes retried
+once on a transient error, `sbatch` never; submission requires `--yes` or `execution.auto_submit`; every
+submission and retrieval logged as an event; and the original experiment/run relationship preserved exactly.
+
+### 14C.6 Long-running work and continuation
+
+Reconciliation is **on demand** (`research hpc sync`) and on the next session — there is no daemon and none
+is required. Pending follow-up work survives process termination because it lives in the canonical run and
+experiment records, not in memory. `sync` reports the experiments that now need interpretation through the
+existing synthesis/task machinery and **dispatches no agent**: Slurm jobs and pre-submitted dependencies
+continue while the laptop is off, but agent reasoning cannot, and Research OS does not pretend otherwise.
+
+Checkpoint/restart is not reinvented: declare `restart_command` and `checkpoint_dir` parameters on the
+experiment and the bundle carries them in `manifest.json` for your own script to use.
+
+---
+
 ## 15. Safety guarantees
 
 1. **Never deletes or moves user data.** Artifacts are references. `rebuild` backs up the DB before replacing it.
@@ -1941,6 +2190,36 @@ backends:
     # python: /path/to/python   # optional; default = submitting interpreter
 artifacts:
   hash_max_bytes: 67108864
+hpc:                          # §14C — entirely opt-in; `clusters: {}` means HPC is off
+  default_cluster: null       # required when several clusters are configured
+  clusters: {}                # name → profile; `research hpc config --example` prints a full one
+    # duke:
+    #   transport: ssh        # ssh | local (local = the existing native SLURM backend)
+    #   ssh_host: plp-drcc-login2        # an alias from ~/.ssh/config; NEVER a password/key/token
+    #   paths:
+    #     workspace_root: /APPROVED/HPC/WORKSPACE    # you must supply approved paths; $HOME is never assumed
+    #     shared_data: /APPROVED/HPC/DATA            # datasets shared between projects (may be read-only)
+    #     projects: /APPROVED/HPC/WORKSPACE/projects # default: <workspace_root>/projects
+    #     scratch: null                              # optional faster filesystem for job scratch
+    #   transfer: {method: rsync}                    # rsync | scp (scp is the fallback)
+    #   datasets: {reuse_existing: true, verify_before_reuse: true,
+    #              auto_delete: false,               # fixed intent: nothing remote is ever deleted
+    #              require_download_approval: true}
+    #   execution: {use_slurm: true, auto_submit: false,
+    #               preserve_code: true, preserve_results: true}
+    #   slurm: {partition: null, account: null, time: "04:00:00", cpus: 4, mem: 16G,
+    #           gpus: 1, extra_args: [], setup: ["module load python/3.11"]}
+    #   limits: {max_cpus: 64, max_gpus: 8, max_time_hours: 72, max_mem_gb: 512}
+    #   python: null          # remote interpreter for the runner; default python3
+    #   project: {slug: pravah}    # remote directory name; default = a slug of the project name
+  bundle:
+    exclude: [".git", ".research", "__pycache__", "*.pyc", ".venv", "venv", "node_modules",
+              ".mypy_cache", ".pytest_cache", ".DS_Store", "*.egg-info", ".ipynb_checkpoints"]
+    max_file_bytes: 8388608       # a larger source file must be named in `include`
+    max_total_bytes: 268435456    # datasets belong on the cluster, not in a bundle
+    include: []                   # extra paths to package anyway
+  collect:
+    max_artifact_bytes: 33554432  # bigger outputs stay remote and are referenced
 resume:
   stale_checkpoint_days: 14
 agents:                       # §7.7

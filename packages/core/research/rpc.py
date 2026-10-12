@@ -313,6 +313,53 @@ class Server:
         from . import report as RP
         return RP.write_report(self.project(), scope, fmt)
 
+    def m_report_full(self, scope: Optional[str] = None, check: bool = True) -> Dict[str, Any]:
+        """Deterministic full context export. Read-only: opened without sync so nothing is mutated."""
+        from . import fullreport as FR
+        p = Project(self.root, author=self.author, sync=False)
+        try:
+            return FR.write(p, scope, check=check)
+        finally:
+            p.close()
+
+    def m_upgrade(self, apply: bool = False) -> Dict[str, Any]:
+        """Preview (default) or apply the project upgrade. A preview opens no database."""
+        from . import upgrade as UP
+        return UP.apply(self.root) if apply else UP.plan(self.root)
+
+    def m_agents_md_state(self) -> Dict[str, Any]:
+        """The managed-block action, the block itself and a unified diff. Touches no file."""
+        from . import agentsmd as AM
+        p = self.project(sync=False)
+        st = AM.state(p)
+        out = {k: st[k] for k in ("path", "action", "problem", "up_to_date", "new")}
+        out["diff"] = "" if st["problem"] else AM.diff(p)
+        return out
+
+    def m_agents_md_apply(self) -> Dict[str, Any]:
+        from . import agentsmd as AM
+        return AM.apply(self.project(sync=False))
+
+    def m_hpc_status(self) -> Dict[str, Any]:
+        """HPC overview for the Run view: configured clusters plus every run with remote state."""
+        from .hpc import config as HC
+        p = self.project()
+        runs = []
+        for r in p.q("SELECT id, experiment_id, status, slurm_job_id, backend, slurm FROM runs "
+                     "WHERE backend IN ('slurm','hpc-bundle') ORDER BY id DESC LIMIT 200"):
+            hpc = ((json.loads(r["slurm"] or "{}") or {}).get("hpc")) or {}
+            runs.append({"id": r["id"], "experiment_id": r["experiment_id"], "status": r["status"],
+                         "slurm_job_id": r["slurm_job_id"], "backend": r["backend"],
+                         "cluster": hpc.get("cluster"), "hpc_state": hpc.get("state"),
+                         "remote_run_dir": hpc.get("remote_run_dir"),
+                         "collected_at": hpc.get("collected_at")})
+        return {"clusters": HC.names(p), "default_cluster": HC.default_name(p), "runs": runs,
+                "enabled": bool(HC.names(p))}
+
+    def m_hpc_sync(self, cluster: Optional[str] = None) -> Dict[str, Any]:
+        from .hpc import remote as HR
+        return HR.sync(self.project(), cluster_name=cluster)
+
     # agents ------------------------------------------------------------------------------------
     def m_agents(self) -> Dict[str, Any]:
         from . import agents as AG

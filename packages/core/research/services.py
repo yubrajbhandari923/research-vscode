@@ -274,12 +274,16 @@ def synthesize(p: Project, exp_id: str, what_happened: Optional[str] = None, wha
            "unresolved": unresolved, "next_experiment": next_experiment, "runs_covered": finished,
            "created_at": now_iso(), **p.author}
     append_jsonl(p.path("syntheses.jsonl"), rec)
-    from .runs import ingest_root_files
+    from .runs import ingest_root_files, write_run_json
     with p.tx():
         ingest_root_files(p)
+        reviewed = [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=? AND status='failed' AND "
+                                         "COALESCE(reviewed,0)=0", (exp_id,))]
         p.conn.execute("UPDATE runs SET reviewed=1 WHERE experiment_id=? AND status='failed'", (exp_id,))
         p.event("experiment", exp_id, "synthesized",
                 f"{exp_id} synthesized ({len(finished)} runs covered, {st['unsynthesized']} new)")
+    for rid in reviewed:  # run.json is canonical: without this the reviewed flag is lost on rebuild
+        write_run_json(p, rid)
     if mark:
         set_experiment_status(p, exp_id, mark)
     elif exp["status"] in ("running", "ready", "proposed") and st["active"] == 0 and finished:

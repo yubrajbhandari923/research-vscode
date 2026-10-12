@@ -6,6 +6,7 @@ research.db is an index that can always be rebuilt from them.
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import shutil
@@ -43,6 +44,23 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         },
     },
     "artifacts": {"hash_max_bytes": 64 * 1024 * 1024},
+    # Remote HPC execution. Opt-in: with no clusters configured, every `research hpc` command says so and
+    # nothing else changes. Never put passwords, keys or tokens here — OpenSSH (~/.ssh/config) owns auth.
+    "hpc": {
+        "default_cluster": None,
+        "clusters": {},                      # name -> see hpc.CLUSTER_DEFAULTS
+        "bundle": {
+            # Dirty/untracked sources are packaged (a commit alone is not a snapshot), minus these.
+            "exclude": [".git", ".research", "__pycache__", "*.pyc", ".venv", "venv", "node_modules",
+                        ".mypy_cache", ".pytest_cache", ".DS_Store", "*.egg-info", ".ipynb_checkpoints"],
+            "max_file_bytes": 8 * 1024 * 1024,     # a bigger source file must be named in `include` explicitly
+            "max_total_bytes": 256 * 1024 * 1024,
+            "include": [],                          # extra paths to package (datasets stay on the cluster)
+        },
+        "collect": {
+            "max_artifact_bytes": 32 * 1024 * 1024,  # bigger outputs stay remote and are referenced
+        },
+    },
     "resume": {"stale_checkpoint_days": 14},
     # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
     "agents": {
@@ -97,16 +115,24 @@ runs/*/stdout.log
 runs/*/stderr.log
 # project-local CLI (per machine, recreated automatically)
 bin/
+# generated reports and HPC staging: regenerable, and the full export can be large
+reports/
+hpc/bundles/
+hpc/incoming/
 """
 
 
 def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(base)
+    """Merge `over` onto `base`, deeply. The result shares no mutable structure with either input:
+    `p.config` is edited in place all over the codebase, and DEFAULT_CONFIG must never be corrupted by it."""
+    out: Dict[str, Any] = {}
+    for k, v in (base or {}).items():
+        out[k] = copy.deepcopy(v)
     for k, v in (over or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _deep_merge(out[k], v)
         else:
-            out[k] = v
+            out[k] = copy.deepcopy(v)
     return out
 
 
@@ -169,6 +195,7 @@ class Project:
         self.author = author or detect_author()
         self._tx_depth = 0
         self._suppress_export = False
+        self._suppress_events = False
         self.config = self.load_config()
         for d in SUBDIRS:
             os.makedirs(os.path.join(self.rdir, d), exist_ok=True)
@@ -227,7 +254,10 @@ class Project:
         elif name or goal or description:
             p.update_project(name=name, goal=goal, description=description)
         if agents_md:
-            p.write_agents_md()
+            try:
+                p.write_agents_md()
+            except ResearchError as e:  # ambiguous markers: never guess, and never block init
+                p.event("project", None, "agents_md_skipped", str(e), {"author_type": "system"})
         try:  # .research/bin/research: lets any agent run the CLI without installing it
             from .localbin import install as _install_bin
             _install_bin(root)
@@ -278,27 +308,14 @@ class Project:
         return self.config["project"]
 
     def write_agents_md(self) -> str:
-        """Create/update AGENTS.md, touching only the text between research markers."""
-        block = (TEMPLATES / "AGENTS.block.md").read_text(encoding="utf-8").strip()
-        path = os.path.join(self.root, "AGENTS.md")
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-            b, e = "<!-- research:begin", "<!-- research:end -->"
-            if b in text and e in text:
-                start = text.index(b)
-                end = text.index(e) + len(e)
-                new = text[:start] + block + text[end:]
-            else:
-                new = text.rstrip() + "\n\n" + block + "\n"
-        else:
-            new = f"# Agent instructions — {self.name}\n\n" + block + "\n"
-        with open(path, "a+", encoding="utf-8") as f:
-            f.seek(0)
-            old = f.read()
-        if old != new:
-            _atomic_write(path, new)
-        return path
+        """Create/update AGENTS.md, touching only the text between the research markers.
+
+        Refuses (ResearchError) when the markers are duplicated or malformed, rather than guessing.
+        See `research.agentsmd` for preview/diff.
+        """
+        from . import agentsmd
+        agentsmd.apply(self)
+        return agentsmd.path(self)
 
     # ------------------------------------------------------------------ paths
     def path(self, *parts: str) -> str:
@@ -396,6 +413,8 @@ class Project:
     # ------------------------------------------------------------------ events
     def event(self, etype: str, eid: Optional[str], action: str, summary: str,
               author: Optional[Dict[str, Optional[str]]] = None) -> None:
+        if self._suppress_events:
+            return  # rebuild replays events.jsonl; re-logging the imports would duplicate the history
         a = author or self.author
         rec = {"ts": now_iso(), "entity_type": etype, "entity_id": eid, "action": action,
                "summary": summary, "author_type": a.get("author_type"), "author_name": a.get("author_name")}
@@ -687,11 +706,19 @@ class Project:
             schema.migrate(self.conn)
         counts: Dict[str, int] = {}
         self._suppress_export = True
+        self._suppress_events = True   # the history comes from events.jsonl below, not from these imports
         sys_author = {"author_type": "system", "author_name": None, "author_model": None}
         saved_author = self.author
         self.author = sys_author
         try:
             with self.tx():
+                # Start from empty, whether or not the old file was moved aside: a rebuild that stacks onto
+                # existing rows duplicates the event history and makes every entity import a false conflict.
+                for table in ("events", "mirrors", "links", "metrics", "artifacts", "syntheses", "reviews",
+                              "runs", *(s["table"] for s in ENTITIES.values())):
+                    self.conn.execute(f"DELETE FROM {table}")
+                for key in [r["key"] for r in self.q("SELECT key FROM meta WHERE key LIKE 'offset:%'")]:
+                    self.conn.execute("DELETE FROM meta WHERE key=?", (key,))
                 for etype, spec in ENTITIES.items():
                     d = self.path(spec["dir"])
                     n = 0
@@ -714,6 +741,7 @@ class Project:
                 self.set_meta("built_at", now_iso())
         finally:
             self._suppress_export = False
+            self._suppress_events = False
             self.author = saved_author
         # regenerate mirrors (tails) now that everything is loaded
         for etype, spec in ENTITIES.items():

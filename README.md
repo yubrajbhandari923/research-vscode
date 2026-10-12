@@ -45,11 +45,13 @@ Screens: [experiment](docs/screens/experiment.png) · [finding](docs/screens/fin
 7. [Python API cheat sheet](#7-python-api-cheat-sheet)
 8. [Working with AI agents](#8-working-with-ai-agents)
 9. [SLURM and Remote SSH](#9-slurm-and-remote-ssh)
-10. [Files on disk, git and backups](#10-files-on-disk-git-and-backups)
-11. [Troubleshooting](#11-troubleshooting)
-12. [Known issues](#12-known-issues)
-13. [Development](#13-development)
-14. [Documentation map](#14-documentation-map)
+10. [HPC: remote execution and portable bundles](#10-hpc-remote-execution-and-portable-bundles)
+11. [Full context export and safe upgrades](#11-full-context-export-and-safe-upgrades)
+12. [Files on disk, git and backups](#12-files-on-disk-git-and-backups)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Known issues](#14-known-issues)
+15. [Development](#15-development)
+16. [Documentation map](#16-documentation-map)
 
 ---
 
@@ -474,6 +476,17 @@ research tuning     declare|trial|select|test EXP-…                           
 research search "…"        research report [Q-…|PLAN-…|EXP-…]       research checkpoint --commit
 research dispatch ROLE [TARGET] [--objective "…"] [--profile P] [--print]     research agents
 research mcp [install --client claude|vscode|cursor|gemini|codex]
+
+research report --full [SCOPE] [--check] [--stdout] [-o FILE]   deterministic, exhaustive context export
+research upgrade --dry-run | --apply | --status                 safe project migration (preview by default)
+research agents-md --preview | --diff | --apply                 the Research OS-managed AGENTS.md block
+research hpc doctor | init | config [--example] | clusters      remote execution (opt-in; needs hpc.clusters)
+research hpc bundle EXP-… [--format tar.gz|zip] -- CMD          portable execution package
+research hpc submit EXP-… --cluster NAME [--dry-run|--yes] -- CMD
+research hpc status RUN-… | sync | collect RUN-… | cancel RUN-…
+research hpc import results-RUN-….tar.gz [--dry-run]
+research hpc datasets list|inspect|check|fetch|adopt [ID] [--deep] [--yes]
+research hpc inspect [--project SLUG]                           what is actually on the cluster
 ```
 
 - **Every command accepts `--json`.** Add `--root DIR` to target a project explicitly, and `--agent NAME` / `--model M` to act as an agent.
@@ -734,7 +747,146 @@ catches up when you reconnect.
 
 ---
 
-## 10. Files on disk, git and backups
+## 10. HPC: remote execution and portable bundles
+
+Opt-in. With no `hpc.clusters` in `.research/config.yaml` nothing changes and every `research hpc` command
+says so. Authentication is OpenSSH's: `ssh_host` is an alias you can already `ssh` to, and Research OS
+stores no passwords, keys or tokens.
+
+```yaml
+# .research/config.yaml  —  `research hpc config --example` prints this
+hpc:
+  default_cluster: duke
+  clusters:
+    duke:
+      transport: ssh
+      ssh_host: plp-drcc-login2         # must already work: `ssh plp-drcc-login2`
+      paths:
+        workspace_root: /APPROVED/HPC/WORKSPACE     # you must supply real, approved paths
+        shared_data: /APPROVED/HPC/DATA
+      slurm: { time: "04:00:00", cpus: 4, mem: 16G, gpus: 1, setup: ["module load python/3.11"] }
+      limits: { max_cpus: 64, max_gpus: 8, max_time_hours: 72, max_mem_gb: 512 }
+      project: { slug: pravah }
+```
+
+### Recipe: bundle an experiment for manual execution
+
+Use this when there is no direct connection, or when a human will run the job.
+
+```bash
+research hpc bundle EXP-001 -- python train.py --alpha 0.5
+# → .research/hpc/bundles/EXP-001-RUN-0007.tar.gz   (RUN-0007 is already recorded locally)
+
+# copy it over, then on the cluster — no agent, no network, no Research OS install needed:
+tar -xzf EXP-001-RUN-0007.tar.gz && cd EXP-001-RUN-0007
+bash scripts/preflight.sh      # checks python, sbatch, datasets; changes nothing
+bash scripts/submit.sh         # sbatch, or a foreground run where Slurm is absent
+bash scripts/collect.sh        # → results-RUN-0007.tar.gz
+
+# back on the laptop:
+research hpc import results-RUN-0007.tar.gz
+```
+
+The import reconciles **the same run record** the bundle was built from — metrics, artifacts, logs, exit
+status and provenance all land on `RUN-0007`. No duplicate run is created, and re-importing the same
+archive changes nothing.
+
+### Recipe: submit the same experiment over SSH
+
+```bash
+research hpc doctor                                   # SSH, sbatch/squeue/sacct, python, storage, paths
+research hpc init                                     # create the project's remote directories (creates only)
+research hpc submit EXP-001 --cluster duke --dry-run   # shows exactly what it would do; submits nothing
+research hpc submit EXP-001 --cluster duke --yes       # bundles, uploads, verifies, sbatch, records the job id
+```
+
+### Recipe: reconnect after a multi-day job
+
+Slurm keeps running while your laptop is closed. Research OS catches up on demand:
+
+```bash
+research hpc sync          # adopts uncertain submissions, updates status, imports available results,
+                           # and lists the experiments that now need interpretation
+research hpc status RUN-0007
+research hpc collect RUN-0007 --max-bytes 1000000     # fetch results; bigger outputs stay remote
+```
+
+`sync` is safe to run at any time and is idempotent. It never submits anything and never starts an agent —
+scientific interpretation stays your decision (`research experiment synthesize EXP-001`).
+
+**If a submission is reported uncertain**, the job may well be queued. Run `research hpc sync`: it reads the
+receipt the job script wrote and adopts the existing job. Never re-run `submit` for that run.
+
+### Datasets: the filesystem is the source of truth
+
+There is **no registry**. A dataset is a directory under `paths.shared_data`, described by a `manifest.json`
+inside it. Two projects reuse the same bytes by looking, not by remembering.
+
+```bash
+research hpc datasets list                 # scan the shared data directory
+research hpc datasets check ERA5 [--deep]  # manifest → inventory → checksum, strength reported explicitly
+research hpc datasets fetch ERA5           # reuses a valid copy; staging needs --yes
+research hpc datasets adopt ERA5 --dataset-version 2025 --description "verified by hand"
+```
+
+A directory with no manifest is **neither trusted nor re-downloaded**: inspect it, then `adopt` it. An
+interrupted download can never read as complete, and Research OS never deletes remote data.
+
+---
+
+## 11. Full context export and safe upgrades
+
+### Recipe: export and validate all research context
+
+```bash
+research report --full --check            # → .research/reports/project-full.md
+research report --full EXP-001 --stdout   # one experiment, to stdout
+research report --full --check --json     # machine-readable coverage result; nonzero exit on failure
+```
+
+This is an exhaustive, **deterministic** dump of everything recorded — every run, every metric entry (not
+just final values), every synthesis, superseded findings and decisions, notes, reviews, the event history,
+and an explicit list of what is missing or was never recorded. For a fixed project state the bytes are
+identical on every run, and generating it writes nothing but the output file (no event, no reconciliation).
+
+It involves **no model and no interpretation**: it retrieves, joins, orders and renders records. Don't quote
+it as if it concluded something — `--check` verifies coverage, not correctness.
+
+`--check` re-derives the coverage manifest from markers in the rendered Markdown, so a dropped or duplicated
+record fails verification. It separates **exporter failure** (a record omitted or duplicated — a bug) from
+**source-data incompleteness** (a missing artifact file, an unsynthesized experiment — reported, not blamed
+on the exporter). Add `--stamp` if you want a generation timestamp, which makes the output non-reproducible
+by design.
+
+### Recipe: upgrade an existing project without losing research history
+
+```bash
+research upgrade --status      # installed version vs project schema
+research upgrade --dry-run     # exactly what would change; touches nothing, not even the database
+research upgrade --apply
+```
+
+The upgrade adds missing directories, restores missing default skills, deep-merges missing config defaults,
+refreshes `.research/bin/`, runs any schema migration, and offers the managed `AGENTS.md` block. It
+**preserves** every record, your own config values, unknown config keys, customized skills and hand-edited
+Markdown. It is safe to re-run, and an older tool refuses to open a newer project rather than damaging it.
+
+### Recipe: preview and update the managed AGENTS.md block
+
+```bash
+research agents-md --preview   # the block this version generates
+research agents-md --diff      # unified diff of the current vs. the new block
+research agents-md --apply     # rewrites only the managed region
+```
+
+Everything outside the two marker comments is yours and is preserved byte for byte, including line endings.
+If the markers are missing, Research OS proposes adding a block without disturbing your content. If they are
+duplicated or malformed it **refuses** and tells you how to fix it rather than guessing — a deliberately
+human-reviewed workflow.
+
+---
+
+## 12. Files on disk, git and backups
 
 ```
 AGENTS.md                      ← only the block between research markers is managed
@@ -762,7 +914,7 @@ AGENTS.md                      ← only the block between research markers is ma
 
 ---
 
-## 11. Troubleshooting
+## 13. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
@@ -780,7 +932,7 @@ AGENTS.md                      ← only the block between research markers is ma
 
 ---
 
-## 12. Known issues
+## 14. Known issues
 
 No open bugs are known as of 2026-10-07. That covers 104 automated tests, 71 checks inside a real VS Code, and a real
 Claude Code session calling the MCP tools. Bugs found along the way are listed in
@@ -797,7 +949,7 @@ Limitations worth knowing (the evidence, Scientist Guide and orchestration layer
 
 ---
 
-## 13. Development
+## 15. Development
 
 ```bash
 pip install -e ".[dev]"             # editable `research` CLI + pytest
@@ -824,7 +976,7 @@ npm run demo                        # example project in examples/alpha-sweep/de
 
 ---
 
-## 14. Documentation map
+## 16. Documentation map
 
 | Document | Status | Read it for |
 |---|---|---|

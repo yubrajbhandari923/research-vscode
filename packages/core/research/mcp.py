@@ -43,6 +43,8 @@ class Tool:
 def _tools() -> List[Tool]:
     from . import agents as A
     from . import compare as CMP
+    from . import fullreport as FR
+    from . import upgrade as UP
     from . import context as C
     from . import plans as P
     from . import runs as R
@@ -59,6 +61,27 @@ def _tools() -> List[Tool]:
     def task_ctx(p, id):
         c = P.task_context(p, id)
         return A.task_brief_md(c)
+
+    def report_full(p, scope=None, check=True):
+        """Export against a read-only snapshot of the same project, so rendering mutates nothing."""
+        from .store import Project
+        ro = Project(p.root, author=p.author, sync=False)
+        try:
+            return FR.write(ro, scope, check=check)
+        finally:
+            ro.close()
+
+    def hpc_doctor(p, cluster=None):
+        from .hpc import remote as HR
+        return HR.doctor(p, cluster)
+
+    def hpc_sync(p, cluster=None):
+        from .hpc import remote as HR
+        return HR.sync(p, cluster_name=cluster)
+
+    def hpc_bundle(p, experiment, command=None):
+        from .hpc import bundle as HB
+        return {k: v for k, v in HB.build(p, experiment, command=command).items() if k != "manifest"}
 
     def run_status(p, id):
         r = R.reconcile_run(p, id, force=True)
@@ -173,6 +196,20 @@ def _tools() -> List[Tool]:
         Tool("dispatch_prepare", "Prepare a brief for another agent role (planner|implementer|verifier|analyst) on a "
              "target id or objective; returns the command a human can run.", {"role": S, "target": S, "objective": S, "profile": S},
              [], lambda p, role=None, target=None, objective=None, profile=None: A.dispatch(p, role, target, objective, profile)),
+        Tool("report_full", "Deterministic, exhaustive Markdown export of everything recorded (optionally for one "
+             "Q-/EXP-/PLAN-), with coverage verification. Use it for a complete context hand-off. It retrieves and "
+             "renders records only — it is not a synthesis and interprets nothing.",
+             {"scope": S, "check": B}, [], report_full, False),
+        Tool("upgrade_preview", "What `research upgrade` would change in this project. Changes nothing.",
+             {}, [], lambda p: UP.plan(p.root), False),
+        Tool("hpc_doctor", "Whether remote execution is available on a configured cluster, and which modes are "
+             "usable. Read-only.", {"cluster": S}, [], hpc_doctor, False),
+        Tool("hpc_sync", "Reconcile outstanding remote runs: adopt uncertain submissions, update Slurm status, "
+             "import available results, and list experiments now needing interpretation. Run this before "
+             "proposing repeated work. Submits nothing and starts no agent.", {"cluster": S}, [], hpc_sync),
+        Tool("hpc_bundle", "Build a portable execution bundle for an experiment, for manual execution on a cluster "
+             "(no agent or connection needed there). Returns the archive path and the run id it is tied to.",
+             {"experiment": S, "command": S}, ["experiment"], hpc_bundle),
     ]
 
 

@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.4.0 — 2026-10-12
+
+### Full deterministic context export (`research report --full`)
+
+- **`research report --full [SCOPE]`** writes one Markdown document holding the complete recorded scientific context —
+  every run (all statuses), every metric entry with its full history, every synthesis, superseded findings and decisions,
+  reviews, task verification history, notes verbatim, the audit log, and an explicit account of what is missing or was
+  never recorded. 14 fixed sections, navigable by id. `--stdout`, `-o FILE`, `--check`, `--json`, `--stamp`.
+- **Deterministic by contract**: byte-identical across invocations for a fixed state. Stable ordering, number and null
+  spellings, Markdown escaping; metric and event ids are positional, so an export survives `research rebuild` unchanged.
+  No wall-clock timestamp unless `--stamp` (which is labelled non-reproducible).
+- **Zero side effects**: generating a report logs no event, creates no record and mutates nothing. `--full` opens the
+  project read-only, so there is no hand-edit import, no run reconciliation and no Slurm polling during rendering.
+- **Zero LLM involvement**: it retrieves, joins, orders and renders records. No model call, no agent, no summarization,
+  no inferred conclusion. Preliminary and agent-authored findings are never presented as established facts.
+- **`--check`** verifies coverage independently, by parsing record markers out of the rendered Markdown and comparing
+  them with the authoritative ids. It separates **exporter failure** (omitted/duplicated record — non-zero exit) from
+  **source-data incompleteness** (missing artifact file, unsynthesized experiment — reported, not blamed on the exporter).
+- Columns added by a future schema still reach the export, under "Additional recorded fields".
+- The existing concise `research report` is unchanged in semantics and output paths.
+
+### Safe upgrades of existing projects (`research upgrade`)
+
+- **`research upgrade --dry-run | --apply | --status`**: creates missing directories, restores missing default skills
+  without overwriting customized ones, deep-merges missing config defaults, refreshes `.research/bin/`, runs schema
+  migrations, and offers the managed `AGENTS.md` block. Safe to re-run; converges.
+- **`--dry-run` mutates nothing** — not even the database: it reads the schema version through a read-only connection
+  and never constructs a `Project`, so no migration, index rebuild, cache file or event occurs.
+- `--apply` validates preconditions first, backs up the small metadata files it edits, applies steps independently
+  (one failure is reported without aborting the rest), refuses an unsupported downgrade, and logs one `upgraded` event.
+- Preserved: all records and relationships, custom config values, **unknown config keys**, customized skills,
+  hand-edited canonical Markdown, and user-authored `AGENTS.md` content.
+- Generated output is kept out of version control: `.research/.gitignore` gains `reports/`, `hpc/bundles/` and
+  `hpc/incoming/`. The upgrade **appends** only the missing lines and never rewrites or reorders your own.
+- **`research agents-md --preview | --diff | --apply`**: the managed block only. Bytes outside the markers are
+  preserved exactly, including CRLF. Missing markers → a block is proposed; duplicated or malformed markers → it
+  **refuses** with the manual fix and changes nothing. Marker detection is line-anchored, so prose mentioning a
+  marker cannot corrupt the file.
+
+### HPC: portable bundles, SSH/Slurm execution, dataset discovery (opt-in)
+
+- **`research hpc doctor | init | config | clusters | inspect | bundle | submit | status | sync | collect | import |
+  cancel | datasets`**. With no `hpc.clusters` configured, nothing changes and every command says so.
+- **Portable bundles** (`research hpc bundle EXP-001`) run anywhere with Python 3.8+: `scripts/preflight.sh`,
+  `submit.sh`, `collect.sh`. No agent, no network and no Research OS install needed on the cluster. The bundle carries
+  the hypothesis, parameters, resources, dataset references, content hashes, and an actual source snapshot including
+  uncommitted and untracked files — a commit alone is not a snapshot of what ran. Credential-shaped files, `.git`,
+  `.research` and oversized files are never packaged.
+- **Result archives** import back onto the *same* run record (`research hpc import`), verifying identity, submission
+  token and every checksum before trusting a byte; rejecting absolute paths, `..` traversal and non-regular members.
+  Re-importing an identical archive changes nothing. Artifacts over `hpc.collect.max_artifact_bytes` stay on the
+  cluster and are registered as references with their remote path and size.
+- **SSH + Slurm** (`research hpc submit --cluster NAME`) reuses the existing Slurm backend over an rsync/ssh transport.
+  Authentication is entirely OpenSSH's (`~/.ssh/config`); Research OS stores no passwords, keys or tokens.
+- **Duplicate submission is prevented structurally**: the run id and submission token exist before anything is
+  transferred, the job script writes a remote receipt, and a submission that cannot be confirmed records
+  `submission_uncertain` and **refuses to retry**. `research hpc sync` then adopts the job that is already queued.
+  A transient SSH failure is never taken as proof that submission failed.
+- **`research hpc sync`** reconciles outstanding jobs on demand and at the next session — no daemon. It updates status
+  from `squeue`/`sacct` (accounting being unavailable is not treated as failure), imports available results, and lists
+  the experiments that now need interpretation through the existing synthesis machinery. It **dispatches no agent**:
+  Slurm continues while the laptop is off, agent reasoning does not, and Research OS does not claim otherwise.
+- **Datasets have no registry.** The configured `shared_data` directory is the source of truth; each dataset describes
+  itself in its own `manifest.json`. A directory without a manifest is neither trusted nor re-downloaded. Verification
+  strength is explicit (manifest → inventory → `--deep` checksum), interrupted downloads can never read as complete
+  (the manifest is written last), concurrent requests are serialized by an atomic `mkdir` lock, and different versions
+  are kept apart. Nothing remote is ever deleted.
+- Safety: dry-run previews, resource limits per cluster, remote paths validated and confined to the configured roots,
+  `rsync --delete` refused, `BatchMode=yes` with explicit timeouts and argument lists, submission requiring `--yes`,
+  and every submission and retrieval logged.
+- Exposed through RPC (`report_full`, `upgrade`, `agents_md_state/apply`, `hpc_status`, `hpc_sync`) and MCP
+  (`report_full`, `upgrade_preview`, `hpc_doctor`, `hpc_sync`, `hpc_bundle`). No reporting, upgrade or HPC logic is
+  reimplemented in TypeScript.
+
+### Fixes found while building the above
+
+- **`rebuild` was not idempotent**: it replayed `events.jsonl` on top of an already-populated index, so each rebuild
+  inflated the audit log (2 → 6 → 11 events) and turned every entity import into a false "duplicate id" conflict. The
+  index tables are now cleared before the replay, and imports during a rebuild no longer re-log their own events —
+  so `events.jsonl` stops growing on every rebuild too.
+- **`_deep_merge` shared nested dictionaries with `DEFAULT_CONFIG`**, so editing one project's `p.config` corrupted the
+  process-wide defaults (and therefore other projects opened later). It now deep-copies.
+- **The `reviewed` flag on failed runs was lost on rebuild**: `synthesize` set it in SQLite only, without rewriting
+  `run.json`. It is now persisted to the canonical file.
+- `research hpc` with no action prints its help instead of an argparse error, and a bare subcommand name is no longer
+  mistaken for a missing command tail.
+
+### Tests
+
+279 → 348 tests, all offline and deterministic: a fake SSH/Slurm cluster (`tests/python/fakecluster.py`), a 100-run
+fixture with long metric histories and every finding status, golden determinism and coverage checks, pre-upgrade
+fixtures at schema v1/v2/v3, and the full 17-step acceptance scenario (upgrade → remote run → collect → import →
+reconcile → re-export → idempotency → rebuild).
+
 ## 0.2.0 — 2026-10-11
 
 ### Numerical evidence, artifact integrity and provenance (optional; legacy findings unchanged)

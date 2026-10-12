@@ -212,3 +212,54 @@ def test_cli_long_labels_keep_a_space(proj, repo, capsys):
     main(["task", "show", "T-001"])
     out = capsys.readouterr().out
     assert "success criteria RMSE < 0.05" in out and "expected outputs a plot" in out
+
+
+# ---------------------------------------------------------------------------- new RPC/MCP surfaces
+
+def test_rpc_report_full_and_coverage(proj, repo):
+    """The extension's export action goes through the same read-only path as the CLI."""
+    q, e, plan, t1, t2 = _plan_with_tasks(proj)
+    import research.runs as R
+    r = R.attach_run(proj, e["id"], command="true", status="completed")
+    R.log_metric(proj, "rmse", 0.1, run=r["id"])
+    events_before = proj.q("SELECT COUNT(*) AS n FROM events")[0]["n"]
+    proj.close()
+    res = rpc(repo, ("report_full", {"check": True}))[1]["result"]
+    assert res["check"]["ok"], res["check"]["exporter_problems"]
+    assert res["path"] == ".research/reports/project-full.md"
+    assert res["counts"]["run"] == 1 and res["counts"]["task"] == 2
+    assert (repo / ".research" / "reports" / "project-full.md").exists()
+    # the export logged nothing
+    from research.store import Project
+    with Project(str(repo), sync=False) as p2:
+        assert p2.q("SELECT COUNT(*) AS n FROM events")[0]["n"] == events_before
+
+
+def test_rpc_upgrade_preview_and_agents_md(proj, repo):
+    import shutil
+    proj.close()
+    shutil.rmtree(repo / ".research" / "reports", ignore_errors=True)
+    out = rpc(repo, ("upgrade", {"apply": False}), ("agents_md_state", {}))
+    plan_ = out[1]["result"]
+    assert plan_["steps"] and plan_["note"]
+    assert not plan_["downgrade_refused"]
+    assert (repo / ".research").exists() and not (repo / ".research" / "reports").exists()  # preview only
+    state = out[2]["result"]
+    assert state["problem"] is None and "diff" in state
+    applied = rpc(repo, ("upgrade", {"apply": True}))[1]["result"]
+    assert applied["ok"], applied["failed"]
+    assert (repo / ".research" / "reports").exists()
+
+
+def test_rpc_hpc_status_is_off_by_default(proj, repo):
+    proj.close()
+    res = rpc(repo, ("hpc_status", {}))[1]["result"]
+    assert res["enabled"] is False and res["clusters"] == [] and res["runs"] == []
+
+
+def test_mcp_exposes_the_new_tools_without_duplicating_logic():
+    from research.mcp import _tools
+    names = {t.name for t in _tools()}
+    assert {"report_full", "upgrade_preview", "hpc_doctor", "hpc_sync", "hpc_bundle"} <= names
+    read_only = {t.name for t in _tools() if not t.mutating}
+    assert {"report_full", "upgrade_preview", "hpc_doctor"} <= read_only   # these must never mutate
