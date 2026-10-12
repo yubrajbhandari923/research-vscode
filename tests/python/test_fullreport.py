@@ -30,11 +30,13 @@ def _hash_tree(root):
     return out
 
 
-@pytest.fixture
-def rich(proj):
-    """A project with the awkward shapes: many runs, long metric histories, several syntheses,
-    every finding status, failed/cancelled/active runs, unicode and Markdown in text, missing artifacts."""
-    p = proj
+def _build_rich(p):
+    """The awkward shapes: many runs, long metric histories, several syntheses, every finding status,
+    failed/cancelled/active runs, unicode and Markdown in text, missing artifacts.
+
+    Built once per session as a template (conftest.built_template) because it costs ~14s to create; each
+    test then works on its own cheap copy.
+    """
     q1 = S.create_question(p, "Does α affect error?", "Unicode: ü ß 中文 · pipes | and *markdown*")
     q2 = S.create_question(p, "Is the pipeline reproducible?", parent=q1["id"])
     e1 = S.create_experiment(p, "α sweep | baseline", question=q1["id"],
@@ -109,6 +111,15 @@ def rich(proj):
     from research import context as C
     C.create_checkpoint(p)
     return p
+
+
+@pytest.fixture
+def rich(built_template, tmp_path):
+    """A fresh, independently mutable copy of the `rich` template (built once per session)."""
+    from conftest import clone_project
+    p = clone_project(built_template("rich", _build_rich), str(tmp_path / "rich"))
+    yield p
+    p.close()
 
 
 # --------------------------------------------------------------------------- determinism

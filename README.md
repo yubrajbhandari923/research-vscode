@@ -477,6 +477,7 @@ research search "…"        research report [Q-…|PLAN-…|EXP-…]       rese
 research dispatch ROLE [TARGET] [--objective "…"] [--profile P] [--print]     research agents
 research mcp [install --client claude|vscode|cursor|gemini|codex]
 
+research config show [--effective|--sources] | check | migrate [--apply]   layered configuration
 research report --full [SCOPE] [--check] [--stdout] [-o FILE]   deterministic, exhaustive context export
 research upgrade --dry-run | --apply | --status                 safe project migration (preview by default)
 research agents-md --preview | --diff | --apply                 the Research OS-managed AGENTS.md block
@@ -831,6 +832,61 @@ research hpc datasets adopt ERA5 --dataset-version 2025 --description "verified 
 
 A directory with no manifest is **neither trusted nor re-downloaded**: inspect it, then `adopt` it. An
 interrupted download can never read as complete, and Research OS never deletes remote data.
+
+---
+
+## 10A. Configuration
+
+`.research/config.yaml` holds **only what your project changes**; everything else is inherited. The
+commented block beneath your settings lists the commonly adjusted defaults — uncomment a line to override
+it (editing it *while commented* does nothing, and `research config check` will say so).
+
+```
+built-in defaults  ←  ~/.config/research-os/config.yaml  ←  .research/config.yaml  ←  command flags
+                       (optional, shared by every project on this machine)
+```
+
+```bash
+research config show                  # just this project's overrides
+research config show --effective      # every value actually in force
+research config show --sources        # which layer supplies each value
+research config check                 # types, HPC profiles, duplicate keys, unrecognized keys
+research config migrate               # diff a legacy file into sparse form; --apply to write it
+```
+
+**Your comments survive.** Research OS rewrites only the keys it is asked to change, so a file you have
+annotated stays annotated — `research project set --goal …` touches one line. (The one exception is
+`config migrate`, which re-serializes the whole file; it warns first and keeps a `.before-migrate` copy.)
+
+**Unrecognized keys are kept**, never dropped — they may belong to a newer Research OS or to you.
+
+### The machine layer: define a cluster once
+
+Put cluster facts in `~/.config/research-os/config.yaml` and each project needs only its own remote name:
+
+```yaml
+# ~/.config/research-os/config.yaml — shared by every project on this machine
+hpc:
+  default_cluster: duke
+  clusters:
+    duke:
+      ssh_host: plp-drcc-login2            # an alias from ~/.ssh/config; never a password or key
+      paths:
+        workspace_root: /home/you/research-os
+        shared_data: /scratch/lab/shared-data
+      slurm: {time: "04:00:00", cpus: 4, mem: 16G, gpus: 1}
+```
+
+```yaml
+# <project>/.research/config.yaml — all this project adds
+hpc:
+  clusters:
+    duke:
+      project: {slug: pravah}
+```
+
+`$RESEARCH_CONFIG=/path/to/file` overrides the location. With no machine file, behaviour is exactly as
+before.
 
 ---
 

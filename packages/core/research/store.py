@@ -196,6 +196,7 @@ class Project:
         self._tx_depth = 0
         self._suppress_export = False
         self._suppress_events = False
+        self._raw_config: Optional[Dict[str, Any]] = None   # this project's own file, pre-merge
         self.config = self.load_config()
         for d in SUBDIRS:
             os.makedirs(os.path.join(self.rdir, d), exist_ok=True)
@@ -228,13 +229,15 @@ class Project:
         cfg_path = os.path.join(rdir, "config.yaml")
         created = False
         if not os.path.exists(cfg_path):
+            from . import configfile
             g = gitinfo.info(root)
-            cfg = _deep_merge(DEFAULT_CONFIG, {})
-            cfg["project"].update({
+            # Sparse from birth: only this project's identity is written; everything else is inherited and
+            # listed as a commented reference, so the file stays short and editable.
+            own = {"project": {
                 "name": name or os.path.basename(root), "goal": goal or "", "description": description or "",
                 "created_at": now_iso(), "git_repo": g.get("remote"),
-            })
-            _atomic_write(cfg_path, CONFIG_HEADER + yamlio.dump(cfg))
+            }}
+            _atomic_write(cfg_path, configfile.render(own, DEFAULT_CONFIG))
             created = True
         gi = os.path.join(rdir, ".gitignore")
         if not os.path.exists(gi):
@@ -280,16 +283,63 @@ class Project:
         self.close()
 
     # ------------------------------------------------------------------ config
+    @property
+    def config_path(self) -> str:
+        return os.path.join(self.rdir, "config.yaml")
+
     def load_config(self) -> Dict[str, Any]:
-        path = os.path.join(self.rdir, "config.yaml")
-        with open(path, encoding="utf-8") as f:
-            raw = yamlio.load(f.read()) or {}
+        """The effective configuration: defaults <- machine file <- this project's file.
+
+        Returns the full merged dict, so every consumer can keep reading `p.config[...]` directly whether or
+        not the file on disk is sparse.
+        """
+        from . import configfile
+        with open(self.config_path, encoding="utf-8") as f:
+            text = f.read()
+        try:
+            raw = yamlio.load(text) or {}
+        except Exception as e:
+            raise ResearchError(f".research/config.yaml could not be parsed: {e}",
+                                hint="Fix the YAML (a stray inline comment inside `{…}` is the usual cause), "
+                                     "then re-run. `research config check` points at the line.")
         if not isinstance(raw, dict):
             raise ResearchError(".research/config.yaml is not a mapping")
-        return _deep_merge(DEFAULT_CONFIG, raw)
+        self._raw_config = raw
+        return configfile.effective(raw, DEFAULT_CONFIG)
 
-    def save_config(self) -> None:
-        _atomic_write(os.path.join(self.rdir, "config.yaml"), CONFIG_HEADER + yamlio.dump(self.config))
+    @property
+    def raw_config(self) -> Dict[str, Any]:
+        """Just this project's own file, without the inherited layers."""
+        if getattr(self, "_raw_config", None) is None:
+            self.load_config()
+        return self._raw_config or {}
+
+    def save_config(self, keys: Optional[Dict[str, Any]] = None) -> None:
+        """Persist configuration.
+
+        With `keys` (dotted -> value) only those keys are rewritten, leaving every other byte of the file —
+        comments, ordering, blank lines — untouched. Without it, the keys that differ from `self.config`'s
+        inherited values are derived and written the same surgical way, so a caller that mutated
+        `p.config` in place still works and still keeps the user's formatting.
+        """
+        from . import configfile
+        if keys is None:
+            keys = configfile.changed_against(self.raw_config, self.config, DEFAULT_CONFIG)
+        if not keys:
+            return
+        with open(self.config_path, encoding="utf-8", newline="") as f:
+            text = f.read()
+        if configfile.editable(text):
+            new = configfile.set_keys(text, keys)
+        else:
+            # A legacy flow-style file has no line to rewrite per key; re-serialize it sparsely rather
+            # than risk corrupting it. `research config migrate` converts it once, after which edits
+            # become surgical and comments are preserved.
+            merged = _deep_merge(self.raw_config, configfile.unflatten(keys))
+            new = configfile.render(configfile.sparse(merged, DEFAULT_CONFIG), DEFAULT_CONFIG)
+        if new != text:
+            _atomic_write(self.config_path, new)
+        self._raw_config = yamlio.load(new.replace("\r\n", "\n")) or {}
 
     @property
     def name(self) -> str:

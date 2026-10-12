@@ -263,3 +263,68 @@ def test_mcp_exposes_the_new_tools_without_duplicating_logic():
     assert {"report_full", "upgrade_preview", "hpc_doctor", "hpc_sync", "hpc_bundle"} <= names
     read_only = {t.name for t in _tools() if not t.mutating}
     assert {"report_full", "upgrade_preview", "hpc_doctor"} <= read_only   # these must never mutate
+
+
+# ---------------------------------------------------------------------------- extension UI surface
+
+def _ext(*parts):
+    import os
+    here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return os.path.join(here, "packages", "vscode-extension", *parts)
+
+
+def _manifest():
+    import json
+    with open(_ext("package.json"), encoding="utf-8") as f:
+        return json.load(f)
+
+
+def test_every_declared_extension_command_is_implemented():
+    """A command in package.json with no handler shows in the palette and then fails on click."""
+    import re
+    d = _manifest()
+    declared = {c["command"] for c in d["contributes"]["commands"]}
+    impl = set()
+    for mod in ("commands.ts", "extension.ts"):
+        with open(_ext("src", mod), encoding="utf-8") as f:
+            src = f.read()
+        impl |= set(re.findall(r"reg\('([^']+)'", src))
+        impl |= set(re.findall(r"registerCommand\('([^']+)'", src))
+    assert not (declared - impl), f"declared but unimplemented: {sorted(declared - impl)}"
+
+
+def test_new_features_are_reachable_from_the_ui_not_only_the_palette():
+    """Palette-only commands are effectively undiscoverable, so each feature needs a menu home."""
+    d = _manifest()
+    menus = d["contributes"]["menus"]
+    for cmd in ("research.reportFull", "research.upgradePreview", "research.agentsMdDiff",
+                "research.hpcSync", "research.config.check", "research.config.effective"):
+        homes = [w for w, items in menus.items()
+                 if w != "commandPalette" and any(i.get("command") == cmd for i in items)]
+        assert homes, f"{cmd} appears in no menu (palette only)"
+
+
+def test_hpc_actions_are_hidden_until_a_cluster_is_configured():
+    """HPC is opt-in; its buttons must not appear in projects that never configured a cluster."""
+    d = _manifest()
+    for where, items in d["contributes"]["menus"].items():
+        for i in items:
+            if i.get("command") == "research.hpcSync" and where != "commandPalette":
+                assert "research.hpcEnabled" in (i.get("when") or ""), i
+
+
+def test_the_hpc_context_key_is_actually_set():
+    with open(_ext("src", "model.ts"), encoding="utf-8") as f:
+        src = f.read()
+    assert "research.hpcEnabled" in src and "hpc_status" in src
+
+
+def test_extension_commands_only_call_rpc_methods_that_exist():
+    """A typo'd RPC name is a runtime error the user sees as a broken button."""
+    import re
+    from research.rpc import Server
+    methods = {n[2:] for n in dir(Server) if n.startswith("m_")}
+    with open(_ext("src", "commands.ts"), encoding="utf-8") as f:
+        src = f.read()
+    called = set(re.findall(r"rpc\('([a-z_]+)'", src))
+    assert called <= methods, f"no such RPC method(s): {sorted(called - methods)}"

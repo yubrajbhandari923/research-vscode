@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.5.0 — 2026-10-12
+
+### Layered, sparse, comment-preserving configuration
+
+- **`.research/config.yaml` is now sparse**: it holds only what a project *changes*. The inherited defaults
+  follow as a commented reference shortlist, so what is tunable stays discoverable. A real project went from
+  89 keys / 106 lines to 11 live lines. Effective settings are unchanged — `load_config` still returns the
+  full merged dict, so no consumer, extension view or agent workflow needed touching.
+- **Three layers**: built-in defaults ← optional machine file (`~/.config/research-os/config.yaml`, or
+  `$RESEARCH_CONFIG`) ← the project file ← per-command flags. Define a cluster once per machine and each
+  project only names its own remote slug. The machine layer is opt-in and ignores `project` identity.
+- **Edits are surgical.** Writing a key rewrites that key's line and leaves every other byte alone —
+  comments, ordering, blank lines, CRLF. `research project set --goal …`, the VS Code settings path and
+  `setup agents` all preserve a hand-annotated file now.
+- **Block style everywhere.** `yamlio.dump(block=True)` for anything a human edits. The old flow style
+  (`project: {name: x}`) turned an inline comment into an **unparseable file**, after which every command
+  died with a raw `ParserError` traceback; that is fixed at the source, and a parse failure now explains
+  itself and points at `research config check`.
+- **New read-only commands**: `research config show [--effective|--sources]`, `research config check`,
+  `research config migrate [--apply]`. `--sources` reports which layer supplies each value; `check`
+  validates types, HPC profile structure (against the *effective* profile), duplicate keys, and unknown
+  keys — which are reported but **never discarded**. `migrate` shows a diff and refuses to write unless the
+  effective settings are provably identical.
+- **The commented-reference trap is detected.** Editing `#   max_runs_without_synthesis: 2` without
+  uncommenting it does nothing; `config check` now names the line, the value in force, and the fix.
+- Project upgrades no longer "add missing defaults" (a sparse file needs none). Instead they offer to
+  reformat a legacy flow-style file once, refusing if the effective settings would change.
+
+### Extension UI for the 0.3–0.5 features
+
+- The new features were palette-only and effectively undiscoverable. They now have menu homes:
+  **Export Full Research Context** on the Overview toolbar and on question/plan/experiment context menus;
+  **Reconcile HPC Runs** on the Experiments toolbar and run context menus (hidden unless a cluster is
+  configured, via a new `research.hpcEnabled` context key); **Preview Project Upgrade** on the Agent view;
+  **Review Managed AGENTS.md Block**, **Check Configuration** and **Show Effective Configuration** on the
+  AGENTS.md / config.yaml items.
+- New RPC methods `config_check` and `config_show`. All reporting, upgrade, HPC and config logic stays in
+  the Python core; the extension only presents it.
+- Tests now assert that every declared command is implemented, that each feature has a non-palette menu
+  home, and that every `rpc('…')` call in the extension names a method that exists.
+
+### Fixes
+
+- **`research bin install` could not upgrade the project-local CLI**: run from `.research/bin/research`, it
+  copied `.research/bin/lib` onto itself, reported success and changed nothing — so an already-fixed bug
+  looked unfixed. It now refuses with the commands that do work, and `research upgrade --apply` reports it
+  as one failed step instead of aborting.
+- **`config check` validated the raw project block**, so a project inheriting its cluster from the machine
+  layer was wrongly told it had no `ssh_host`. It validates the effective profile now.
+- Tests no longer read the developer's real `~/.config/research-os/config.yaml`; a stray cluster profile
+  there used to fail the "no HPC configured" tests.
+
+### Test suite: 9m50s → 2m37s
+
+- The big fixtures were rebuilt per test (~14s × 26 in `test_fullreport` alone). They are now built once
+  per session as a template and cloned per test, via `conftest.built_template` / `clone_project`.
+  `test_fullreport` alone went 432s → 25s.
+- End-to-end scenarios are marked `slow`, so `pytest -m "not slow"` gives a fast inner loop while the
+  release build still runs everything. 368 tests pass.
+
 ## 0.4.0 — 2026-10-12
 
 ### Full deterministic context export (`research report --full`)

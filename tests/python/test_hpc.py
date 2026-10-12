@@ -175,6 +175,7 @@ def test_bundle_formats(hp, fmt):
     assert os.path.getsize(os.path.join(hp.root, r["path"])) > 0
 
 
+@pytest.mark.slow
 def test_manual_bundle_round_trip_without_slurm_or_research_os(hp, tmp_path):
     """The whole offline human workflow: extract, preflight, submit, collect, import."""
     r = B.build(hp, "EXP-001", command=f"{sys.executable} train.py")
@@ -203,6 +204,7 @@ def test_manual_bundle_round_trip_without_slurm_or_research_os(hp, tmp_path):
     assert any(a["name"] == "out.txt" for a in R.list_artifacts(hp, run=run_id))
 
 
+@pytest.mark.slow
 def test_submit_script_refuses_to_submit_the_same_bundle_twice(hp, tmp_path):
     r = B.build(hp, "EXP-001", command="true")
     elsewhere = tmp_path / "x"
@@ -219,6 +221,7 @@ def test_submit_script_refuses_to_submit_the_same_bundle_twice(hp, tmp_path):
 
 # =========================================================================== result import
 
+@pytest.mark.slow
 def test_import_is_idempotent(hp, tmp_path):
     archive = _run_bundle_manually(hp, tmp_path)
     first = RES.import_archive(hp, archive)
@@ -291,6 +294,7 @@ def test_import_detects_a_corrupted_archive(hp, tmp_path):
     assert R.get_run(hp, "RUN-0001")["status"] != "completed" or True   # nothing was imported
 
 
+@pytest.mark.slow
 def test_large_artifacts_stay_remote_and_are_referenced(hp, tmp_path):
     """A big output is not downloaded; it is recorded with its remote path."""
     big = os.path.join(hp.root, "huge.ckpt")

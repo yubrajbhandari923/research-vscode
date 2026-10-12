@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-panel"
-version = "0.4.0"
+version = "0.5.0"
 description = "Project-local research memory: questions → experiments → runs → findings → decisions → checkpoints. Core + CLI for the Research Panel VS Code extension."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -33,6 +33,11 @@ research = ["templates/**/*", "templates/*", "_vendor/yaml/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
+# `-m "not slow"` skips the end-to-end scenarios (bundles executed in subprocesses, the acceptance run)
+# for a fast inner loop; CI and the release build run everything.
+markers = [
+    "slow: end-to-end scenarios that execute bundles or whole workflows in subprocesses",
+]
 
 [dependency-groups]
 dev = [

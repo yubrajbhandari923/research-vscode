@@ -208,6 +208,7 @@ def existing(proj):
     return p
 
 
+@pytest.mark.slow
 def test_acceptance_scenario(existing, cluster, tmp_path):
     p = existing
     root = p.root
@@ -408,6 +409,7 @@ def _mk_dataset(cluster, ident):
     return root
 
 
+@pytest.mark.slow
 def test_two_projects_share_a_dataset_and_keep_separate_results(existing, cluster, tmp_path):
     """The addendum's acceptance scenario: project A stages nothing, project B reuses the same bytes."""
     p = existing

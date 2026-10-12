@@ -1197,6 +1197,101 @@ def cmd_source(a, p) -> int:
 
 
 @mut
+def cmd_config(a, p) -> int:
+    """`research config show|check|migrate` — inspect and tidy configuration. show/check never write."""
+    from research import configfile as CF
+    from research.store import DEFAULT_CONFIG
+    raw = p.raw_config
+
+    if a.action == "show":
+        if a.sources:
+            src = CF.sources(raw, DEFAULT_CONFIG)
+            if a.json:
+                out_json(src)
+                return 0
+            width = max((len(k) for k in src), default=10)
+            for k, info in src.items():
+                colour = {"project": green, "machine": cyan, "default": dim}[info["source"]]
+                print(f"  {k.ljust(width)}  {fmt_val(info['value']).ljust(22)} {colour(info['source'])}")
+            m = CF.machine_path()
+            print()
+            kv("machine config", m if m and os.path.isfile(m) else f"{m} (absent)")
+            kv("project config", p.rel(p.config_path))
+            return 0
+        shown = p.config if a.effective else raw
+        if a.json:
+            out_json(shown)
+        else:
+            from research import yamlio
+            sys.stdout.write(yamlio.dump(shown, block=True))
+            if not a.effective:
+                print(dim("\n  (this project's own settings only — add --effective for every value in force)"))
+        return 0
+
+    if a.action == "check":
+        with open(p.config_path, encoding="utf-8") as f:
+            text = f.read()
+        r = CF.check(raw, DEFAULT_CONFIG, text)
+        if a.json:
+            out_json(r)
+            return 0 if r["ok"] else 1
+        for e in r["errors"]:
+            print(red("✗ ") + f"{e['key']}: {e['problem']}")
+        for w in r["warnings"]:
+            print(yellow("⚠ ") + w)
+        if r["unknown"]:
+            print(yellow(f"⚠ {len(r['unknown'])} key(s) this version does not recognize (kept as-is):"))
+            for u in r["unknown"][:10]:
+                print(dim(f"    {u['key']} = {fmt_val(u['value'])}"))
+        if r["redundant"]:
+            print(dim(f"  {len(r['redundant'])} key(s) repeat an inherited default and could be removed "
+                      f"(`research config migrate`)"))
+        if r["ok"] and not r["unknown"]:
+            print(green("✓ ") + "configuration is valid")
+        kv("machine config", r["machine_config"] or "none")
+        return 0 if r["ok"] else 1
+
+    # migrate
+    from research.store import DEFAULT_CONFIG as D
+    prev = CF.migrate_preview(p.config_path, D)
+    if a.json:
+        out_json({k: v for k, v in prev.items() if k not in ("old", "new")})
+    if not prev["changed"]:
+        if not a.json:
+            print(green("✓ ") + "config.yaml is already sparse and block-style; nothing to do")
+        return 0
+    if not prev["safe"]:
+        print(red("✗ ") + "refusing to migrate: the effective settings would change")
+        for k in prev["dropped_keys"][:10]:
+            print(red(f"    would drop {k}"))
+        for k in prev["changed_values"][:10]:
+            print(red(f"    would change {k}"))
+        print(dim("  Nothing was written. This is a bug — please report the diff above."))
+        return 1
+    if not a.json:
+        sys.stdout.write(prev["diff"])
+        print()
+        kv("lines", f"{prev['lines_before']} → {prev['lines_after']}")
+        kv("effective settings", green("identical") if prev["effective_identical"] else red("CHANGED"))
+        if prev["comments_before"]:
+            print(yellow(f"  ⚠ {prev['comments_before']} comment line(s) in the current file will not survive "
+                         "a full rewrite — this is the one operation that does not preserve them."))
+    if not a.apply:
+        if not a.json:
+            print(dim("\n  Nothing was changed. Re-run with --apply to write it."))
+        return 0
+    import shutil as _sh
+    backup = p.config_path + ".before-migrate"
+    _sh.copy2(p.config_path, backup)
+    from research.store import _atomic_write
+    _atomic_write(p.config_path, prev["new"])
+    p.config = p.load_config()
+    if not a.json:
+        print(green("✓ ") + f"migrated {p.rel(p.config_path)}  "
+                            + dim(f"(previous file kept at {p.rel(backup)})"))
+    return 0
+
+
 def cmd_rebuild(a, p) -> int:
     counts = p.rebuild_index(backup=True)
     _done(a, counts, msg="index rebuilt from text files: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
@@ -2108,6 +2203,11 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--reason")
     add(sub, "sync", cmd_sync, "import hand-edited files, ingest job outputs, refresh run status")
     add(sub, "rebuild", cmd_rebuild, "rebuild research.db from the text files (keeps a backup)")
+    x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | migrate")
+    x.add_argument("action", nargs="?", choices=["show", "check", "migrate"], default="show")
+    x.add_argument("--effective", action="store_true", help="show: every value in force, not just overrides")
+    x.add_argument("--sources", action="store_true", help="show: which layer supplies each value")
+    x.add_argument("--apply", action="store_true", help="migrate: write the file (default is a dry run)")
     x = add(sub, "log", cmd_log, "audit log of recent changes")
     x.add_argument("--limit", type=int, default=30)
     x = add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")

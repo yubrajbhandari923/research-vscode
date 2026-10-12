@@ -76,6 +76,22 @@ def _missing_templates(root: str) -> List[Tuple[str, str]]:
     return out
 
 
+def _legacy_flow_config(root: str) -> bool:
+    """True when config.yaml uses flow style (`project: {name: x}`).
+
+    Such a file cannot be edited surgically and breaks outright if a human adds an inline comment, so the
+    upgrade offers to reformat it. Sparse configs need no "add the missing defaults" step at all: a key
+    absent from the file simply resolves to its inherited value.
+    """
+    from . import configfile
+    path = os.path.join(_rdir(root), "config.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return not configfile.editable(f.read())
+    except OSError:
+        return False
+
+
 def _config_additions(raw: Dict[str, Any], defaults: Dict[str, Any], prefix: str = "") -> List[str]:
     """Dotted keys present in the defaults but absent from the project's own config.yaml."""
     out = []
@@ -143,7 +159,7 @@ def plan(where: Optional[str] = None) -> Dict[str, Any]:
 
     dirs = _missing_dirs(root)
     tmpl = _missing_templates(root)
-    cfg_add = _config_additions(raw, DEFAULT_CONFIG)
+    cfg_flow = _legacy_flow_config(root)
     try:
         am = agentsmd.state_for_root(root, project_name=raw.get("project", {}).get("name") or os.path.basename(root))
     except ResearchError as e:
@@ -162,10 +178,11 @@ def plan(where: Optional[str] = None) -> Dict[str, Any]:
         steps.append({"kind": "filesystem", "change": "create", "path": f"{RESEARCH_DIR}/{d}/"})
     for _src, rel in tmpl:
         steps.append({"kind": "template", "change": "add", "path": f"{RESEARCH_DIR}/{rel}"})
-    if cfg_add:
-        steps.append({"kind": "config", "change": "merge", "path": f"{RESEARCH_DIR}/config.yaml",
-                      "keys": cfg_add, "detail": f"add {len(cfg_add)} missing default key(s); "
-                                                 "existing values and unknown keys are preserved"})
+    if cfg_flow:
+        steps.append({"kind": "config", "change": "reformat", "path": f"{RESEARCH_DIR}/config.yaml",
+                      "detail": "rewrite in block style, keeping only your overrides (inherited defaults "
+                                "become a commented reference). Needed because the current flow style "
+                                "breaks if you add an inline comment, and prevents comment-preserving edits"})
     if am["action"] == "refuse":
         steps.append({"kind": "agents_md", "change": "refuse", "path": "AGENTS.md", "detail": am["problem"]})
     elif am["action"] != "none":
@@ -252,11 +269,16 @@ def apply(where: Optional[str] = None) -> Dict[str, Any]:
                     shutil.copy2(str(src), dst)
             step(s, copy)
         elif s["kind"] == "config":
-            def merge(s=s):
-                raw = _raw_config(root)
-                merged = _deep_merge(DEFAULT_CONFIG, raw)   # defaults underneath: the project's values win
-                _atomic_write(os.path.join(rd, "config.yaml"), CONFIG_HEADER + yamlio.dump(merged))
-            step(s, merge)
+            def reformat(s=s):
+                from . import configfile
+                path = os.path.join(rd, "config.yaml")
+                prev = configfile.migrate_preview(path, DEFAULT_CONFIG)
+                if not prev["safe"]:
+                    raise ResearchError(
+                        "refusing to reformat config.yaml: the effective settings would change "
+                        f"(dropped {prev['dropped_keys']}, changed {prev['changed_values']})")
+                _atomic_write(path, prev["new"])
+            step(s, reformat)
         elif s["kind"] == "agents_md":
             step(s, lambda: agentsmd.apply_for_root(
                 root, project_name=_raw_config(root).get("project", {}).get("name") or os.path.basename(root)))
@@ -276,7 +298,12 @@ def apply(where: Optional[str] = None) -> Dict[str, Any]:
         elif s["kind"] == "bin":
             def bin_(s=s):
                 from . import localbin
-                localbin.install(root)
+                try:
+                    localbin.install(root)
+                except ResearchError as e:
+                    # Running from .research/bin/research, which cannot replace itself. Everything else
+                    # in the upgrade still applies; report this one step rather than failing the upgrade.
+                    raise ResearchError(f"{e} (the rest of the upgrade was applied)", hint=e.hint)
             step(s, bin_)
 
     # Schema last: opening the Project runs the migrations, and by then the directories exist.

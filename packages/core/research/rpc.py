@@ -340,6 +340,26 @@ class Server:
         from . import agentsmd as AM
         return AM.apply(self.project(sync=False))
 
+    def m_config_check(self) -> Dict[str, Any]:
+        """Validate this project's config. Read-only."""
+        from . import configfile
+        from .store import DEFAULT_CONFIG
+        p = self.project(sync=False)
+        with open(p.config_path, encoding="utf-8") as f:
+            text = f.read()
+        return configfile.check(p.raw_config, DEFAULT_CONFIG, text)
+
+    def m_config_show(self, effective: bool = False, sources: bool = False) -> Dict[str, Any]:
+        """This project's own settings, every effective value, or per-key provenance."""
+        from . import configfile
+        from .store import DEFAULT_CONFIG
+        p = self.project(sync=False)
+        if sources:
+            return {"sources": configfile.sources(p.raw_config, DEFAULT_CONFIG),
+                    "machine_config": configfile.machine_path(),
+                    "project_config": p.rel(p.config_path)}
+        return {"settings": p.config if effective else p.raw_config, "effective": effective}
+
     def m_hpc_status(self) -> Dict[str, Any]:
         """HPC overview for the Run view: configured clusters plus every run with remote state."""
         from .hpc import config as HC

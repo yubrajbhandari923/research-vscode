@@ -107,6 +107,54 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
   reg('research.copyText', (t: string) => vscode.env.clipboard.writeText(t || ''));
   reg('research.showOutput', () => out.show());
   reg('research.config.open', () => openPath(model.root, '.research/config.yaml'));
+  reg('research.config.check', async () => {
+    const r = await rpc('config_check', {});
+    const bits: string[] = [];
+    if (r.unknown?.length) bits.push(`${r.unknown.length} unrecognized key(s), kept as-is`);
+    if (r.redundant?.length) bits.push(`${r.redundant.length} redundant`);
+    if (!r.errors?.length && !r.warnings?.length) {
+      vscode.window.showInformationMessage(
+        `Configuration is valid${bits.length ? ' — ' + bits.join(', ') : ''}.`);
+      return;
+    }
+    // Errors and "this line has no effect" warnings are worth a document, not a toast.
+    const lines = [
+      'Research OS configuration check', '',
+      ...(r.errors || []).map((e: any) => `ERROR    ${e.key}: ${e.problem}`),
+      ...(r.warnings || []).map((w: string) => `WARNING  ${w}`),
+      ...(r.unknown || []).map((u: any) => `unknown  ${u.key} (kept; may belong to a newer version)`),
+      ...(r.redundant || []).map((k: string) => `default  ${k} repeats an inherited value`),
+      '', `machine config: ${r.machine_config || 'none'}`,
+    ];
+    const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
+    await vscode.window.showTextDocument(doc, { preview: true });
+    if (r.errors?.length) vscode.window.showErrorMessage(`${r.errors.length} configuration error(s) — see the report.`);
+  });
+  reg('research.config.effective', async () => {
+    const pick: any = await vscode.window.showQuickPick([
+      { label: '$(list-tree) Effective values', detail: 'every setting actually in force', mode: 'effective' },
+      { label: '$(gear) This project only', detail: 'just the overrides in .research/config.yaml', mode: 'own' },
+      { label: '$(search) Where each value comes from', detail: 'default / machine / project per key', mode: 'sources' },
+    ], { placeHolder: 'Show which configuration?' });
+    if (!pick) return;
+    if (pick.mode === 'sources') {
+      const r = await rpc('config_show', { sources: true });
+      const keys = Object.keys(r.sources);
+      const w = Math.max(...keys.map((k) => k.length));
+      const lines = keys.map((k) => {
+        const i = r.sources[k];
+        return `${k.padEnd(w)}  ${String(JSON.stringify(i.value)).padEnd(24)} ${i.source}`;
+      });
+      lines.push('', `machine config: ${r.machine_config || 'none'}`, `project config: ${r.project_config}`);
+      const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
+      vscode.window.showTextDocument(doc, { preview: true });
+      return;
+    }
+    const r = await rpc('config_show', { effective: pick.mode === 'effective' });
+    const doc = await vscode.workspace.openTextDocument({
+      content: JSON.stringify(r.settings, null, 2), language: 'json' });
+    vscode.window.showTextDocument(doc, { preview: true });
+  });
   reg('research.agents.open', () => openPath(model.root, 'AGENTS.md'));
   reg('research.rebuild', async () => {
     const ok = await vscode.window.showWarningMessage('Rebuild research.db from the text files in .research/? (A backup of the current index is kept in .research/cache/.)', { modal: true }, 'Rebuild');

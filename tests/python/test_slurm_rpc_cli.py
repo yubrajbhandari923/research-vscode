@@ -185,7 +185,8 @@ def test_cli_budget_exit_code_for_agents(repo):
     cli(repo, "experiment", "create", "E")
     env = {"RESEARCH_AGENT": "codex"}
     cfg = repo / ".research" / "config.yaml"
-    cfg.write_text(cfg.read_text().replace("max_runs_without_synthesis: 5", "max_runs_without_synthesis: 2"))
+    # The sparse file lists this default only as a commented reference, so set it as a real override.
+    cfg.write_text(cfg.read_text() + "\nagent_policy:\n  max_runs_without_synthesis: 2\n")
     cli(repo, "run", "exec", "EXP-001", "--", "true", env=env)
     cli(repo, "run", "exec", "EXP-001", "--", "true", env=env)
     p = cli(repo, "run", "exec", "EXP-001", "--", "true", env=env, check=False)

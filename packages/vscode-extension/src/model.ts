@@ -21,6 +21,7 @@ export class Model implements vscode.Disposable {
   tree?: Tree;
   resume?: any;
   index?: { items: any[]; statuses: Record<string, string[]> };
+  hpc?: any;
   initialized = false;
   error?: string;
   private _onChange = new vscode.EventEmitter<void>();
@@ -54,14 +55,18 @@ export class Model implements vscode.Disposable {
         await vscode.commands.executeCommand('setContext', 'research.ready', true);
         await vscode.commands.executeCommand('setContext', 'research.initialized', this.initialized);
         if (this.initialized) {
-          const [tree, resume, index] = await Promise.all([
+          const [tree, resume, index, hpc] = await Promise.all([
             this.client.request<Tree>('tree'),
             this.client.request('home').catch(() => this.client.request('resume')),
             this.client.request('index'),
+            // HPC is opt-in: its actions stay hidden until a cluster is configured.
+            this.client.request('hpc_status').catch(() => ({ enabled: false })),
           ]);
           this.tree = tree;
           this.resume = resume;
           this.index = index;
+          this.hpc = hpc;
+          await vscode.commands.executeCommand('setContext', 'research.hpcEnabled', !!hpc?.enabled);
         }
         this.error = undefined;
       } catch (e: any) {

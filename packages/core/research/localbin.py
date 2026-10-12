@@ -15,6 +15,8 @@ import shutil
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from .util import ResearchError
+
 PACKAGES = ("research", "research_cli")
 SKIP_DIRS = {"__pycache__"}
 GITIGNORE_LINE = "bin/"
@@ -116,6 +118,18 @@ def install(root: str, python: Optional[str] = None, force: bool = False) -> Dic
     """Create or refresh `.research/bin/`. Cheap when nothing changed (compares a stamp, copies nothing)."""
     python = python or sys.executable or "python3"
     sources = _sources()
+    # `.research/bin/research` runs the copy inside .research/bin/lib, so asking *it* to reinstall would
+    # copy that copy onto itself: the stamp changes and nothing is actually upgraded. Refuse instead of
+    # silently doing nothing, and say which command does work.
+    lib = os.path.realpath(os.path.join(bin_dir(root), "lib"))
+    for name, src in sources:
+        if os.path.realpath(src).startswith(lib + os.sep):
+            raise ResearchError(
+                "`.research/bin/research` cannot upgrade itself: it is the copy being replaced.",
+                hint="Run it from an installed Research OS instead — `research bin install --force` with "
+                     "the pip-installed CLI, or let the VS Code extension refresh it (it does this on "
+                     "open). `research upgrade --apply` also refreshes it.")
+    _ = lib
     bdir = bin_dir(root)
     lib = os.path.join(bdir, "lib")
     stamp = _stamp(sources, python)

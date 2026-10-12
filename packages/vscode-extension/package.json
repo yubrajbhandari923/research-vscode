@@ -2,7 +2,7 @@
   "name": "research-panel",
   "displayName": "Research Panel",
   "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "research-local",
   "license": "MIT",
   "engines": {
@@ -549,6 +549,18 @@
         "title": "Register MCP Server for Agents…",
         "category": "Research",
         "icon": "$(plug)"
+      },
+      {
+        "command": "research.config.check",
+        "title": "Check Configuration",
+        "category": "Research",
+        "icon": "$(check)"
+      },
+      {
+        "command": "research.config.effective",
+        "title": "Show Effective Configuration…",
+        "category": "Research",
+        "icon": "$(list-tree)"
       }
     ],
     "menus": {
@@ -800,6 +812,30 @@
         {
           "command": "research.mcp.install",
           "when": "research.initialized"
+        },
+        {
+          "command": "research.reportFull",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.upgradePreview",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.agentsMdDiff",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.hpcSync",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.config.check",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.config.effective",
+          "when": "research.initialized"
         }
       ],
       "view/title": [
@@ -902,6 +938,21 @@
           "command": "research.mcp.install",
           "when": "view == research.agent",
           "group": "navigation@2"
+        },
+        {
+          "command": "research.reportFull",
+          "when": "view == research.overview",
+          "group": "navigation@4"
+        },
+        {
+          "command": "research.hpcSync",
+          "when": "view == research.experiments && research.hpcEnabled",
+          "group": "navigation@2"
+        },
+        {
+          "command": "research.upgradePreview",
+          "when": "view == research.agent",
+          "group": "navigation@8"
         }
       ],
       "view/item/context": [
@@ -1164,6 +1215,31 @@
           "command": "research.skill.remove",
           "when": "viewItem =~ /^skill/",
           "group": "2_danger@1"
+        },
+        {
+          "command": "research.reportFull",
+          "when": "viewItem =~ /^(question|plan|experiment)/",
+          "group": "9_copy@10"
+        },
+        {
+          "command": "research.hpcSync",
+          "when": "viewItem =~ /^run/ && research.hpcEnabled",
+          "group": "9_copy@11"
+        },
+        {
+          "command": "research.agentsMdDiff",
+          "when": "viewItem =~ /^ag\\/(agents|config)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "research.config.check",
+          "when": "viewItem =~ /^ag\\/config/",
+          "group": "inline@2"
+        },
+        {
+          "command": "research.config.effective",
+          "when": "viewItem =~ /^ag\\/config/",
+          "group": "9_copy@1"
         }
       ],
       "explorer/context": [

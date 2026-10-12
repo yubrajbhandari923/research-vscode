@@ -178,19 +178,43 @@ def test_upgrade_preserves_the_full_export_apart_from_its_own_audit_entry(legacy
 
 
 def test_upgrade_preserves_custom_config_and_unknown_keys(legacy):
+    """A key missing from the file is inherited, not materialized — but the user's own keys survive.
+
+    Under sparse configuration an absent key is not a defect, so the upgrade has nothing to add for it.
+    What must hold is that the *effective* value is still right and nothing of the user's is lost.
+    """
     root = legacy.root
     legacy.close()
-    # force a config merge by removing a default key the project should get back
     cfg_path = os.path.join(root, ".research", "config.yaml")
     raw = yamlio.load(open(cfg_path, encoding="utf-8").read())
-    del raw["resume"]
-    open(cfg_path, "w", encoding="utf-8").write(yamlio.dump(raw))
-    assert any(s["kind"] == "config" for s in UP.plan(root)["steps"])
+    raw.pop("resume", None)                              # a default the sparse file need not carry
+    open(cfg_path, "w", encoding="utf-8").write(yamlio.dump(raw, block=True))
     UP.apply(root)
     after = yamlio.load(open(cfg_path, encoding="utf-8").read())
     assert after["my_lab"] == {"cluster": "duke", "quota_gb": 500}   # unknown key kept
     assert after["project"]["goal"] == "my own goal"                  # custom value kept
-    assert "resume" in after                                         # missing default restored
+    with Project(root, sync=False) as p:
+        assert p.config["resume"] == {"stale_checkpoint_days": 14}    # inherited, though absent from the file
+        assert p.config["my_lab"] == {"cluster": "duke", "quota_gb": 500}
+
+
+def test_upgrade_offers_to_reformat_a_legacy_flow_style_config(legacy):
+    """A flow-style file cannot be edited surgically and breaks on an inline comment, so it is reformatted."""
+    root = legacy.root
+    legacy.close()
+    cfg_path = os.path.join(root, ".research", "config.yaml")
+    raw = yamlio.load(open(cfg_path, encoding="utf-8").read())
+    open(cfg_path, "w", encoding="utf-8").write(yamlio.dump(raw))          # flow style, as 0.2.0 wrote it
+    before = Project(root, sync=False)
+    effective_before = dict(before.config)
+    before.close()
+    assert any(s["kind"] == "config" and s["change"] == "reformat" for s in UP.plan(root)["steps"])
+    UP.apply(root)
+    text = open(cfg_path, encoding="utf-8").read()
+    assert "project:\n" in text and "{name:" not in text                   # now block style
+    with Project(root, sync=False) as after:
+        assert after.config == effective_before                           # nothing changed in effect
+    assert not any(s["kind"] == "config" for s in UP.plan(root)["steps"])  # and it converged
 
 
 def test_upgrade_does_not_overwrite_a_customized_skill(legacy):

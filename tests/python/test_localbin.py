@@ -77,3 +77,30 @@ def test_rpc_install_bin_refreshes_outdated_agents_block(proj):
     text = open(path).read()
     assert ".research/bin/research" in text and "keep me" in text and "# mine" in text
     assert r.get("agents_md")
+
+
+def test_the_project_binary_refuses_to_upgrade_itself(proj, repo):
+    """Copying .research/bin/lib onto itself changes the stamp but upgrades nothing — a silent no-op.
+
+    Hit for real while migrating: `research bin install --force` reported success while leaving a stale
+    copy in place, so an already-fixed bug appeared unfixed. Exercised through the installed launcher,
+    which is the only way a user meets it.
+    """
+    import os
+    import subprocess
+    from research import localbin
+    localbin.install(str(repo))
+    launcher = os.path.join(str(repo), ".research", "bin", "research")
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    r = subprocess.run([launcher, "bin", "install", "--force"], cwd=str(repo),
+                       capture_output=True, text=True, env=env)
+    assert r.returncode != 0
+    assert "cannot upgrade itself" in r.stderr
+    assert "research upgrade --apply" in r.stderr          # and it says what does work
+
+
+def test_installing_from_a_real_source_still_works(proj, repo):
+    """The guard must only reject the self-copy, not ordinary installs."""
+    from research import localbin
+    first = localbin.install(str(repo), force=True)
+    assert first["updated"] and os.path.exists(first["path"])

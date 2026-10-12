@@ -39,9 +39,15 @@ def load(text: str) -> Any:
     return _stringify_dates(_yaml.load(text, Loader=_Loader))
 
 
-def dump(data: Any) -> str:
+def dump(data: Any, block: bool = False) -> str:
+    """Serialize to YAML. `block=True` forces block style everywhere.
+
+    The default (`None`) lets short leaf maps collapse to `{a: 1, b: 2}`, which is compact but hostile to
+    human editing: a reader who adds an inline comment inside the braces produces a file that no longer
+    parses. Anything a person is expected to edit by hand should pass `block=True`.
+    """
     return _yaml.dump(data, Dumper=_Dumper2, sort_keys=False, allow_unicode=True,
-                      default_flow_style=None, width=100)
+                      default_flow_style=False if block else None, width=100)
 
 
 def split_front_matter(text: str) -> Tuple[Dict[str, Any], str]:
