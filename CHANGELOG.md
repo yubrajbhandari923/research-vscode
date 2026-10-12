@@ -43,6 +43,13 @@
 
 ### Fixes
 
+- **Remote commands now run through a login shell.** `ssh host cmd` gets a non-interactive shell, which on
+  many clusters skips the profile scripts that set up the environment — so `research hpc doctor` reported
+  `sbatch=NO` on a cluster where an interactive `ssh` finds it immediately. Found on Duke's DRCC, where a
+  `slurm/slurm/21.08.8` module is auto-loaded by the login shell and `sbatch` lives in
+  `/cm/shared/apps/slurm/current/bin`, a directory absent from the non-interactive `PATH`. Opt out per
+  cluster with `login_shell: false` (and `remote_shell` to choose the shell). When Slurm is still missing,
+  `doctor` now looks for a matching module and names it in the fix hint.
 - **`research bin install` could not upgrade the project-local CLI**: run from `.research/bin/research`, it
   copied `.research/bin/lib` onto itself, reported success and changed nothing — so an already-fixed bug
   looked unfixed. It now refuses with the commands that do work, and `research upgrade --apply` reports it

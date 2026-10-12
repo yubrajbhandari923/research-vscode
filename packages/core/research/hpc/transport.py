@@ -76,18 +76,35 @@ def _transient(r: Result) -> bool:
 class Ssh:
     """One cluster's connection. Read operations retry once; nothing that could run a job ever retries."""
 
-    def __init__(self, host: str, *, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, host: str, *, timeout: float = DEFAULT_TIMEOUT, login_shell: bool = True,
+                 shell: str = "bash"):
         if not host:
             raise ResearchError("this cluster has no `ssh_host` configured",
                                 hint="Set `hpc.clusters.<name>.ssh_host` to an alias you can already "
                                      "`ssh` to; authentication stays in ~/.ssh/config.")
         self.host = host
         self.timeout = timeout
+        self.login_shell = login_shell
+        self.shell = shell
 
     # ------------------------------------------------------------------ primitives
     def _ssh_argv(self, remote_cmd: str) -> List[str]:
         return ["ssh", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={CONNECT_TIMEOUT}",
-                "-o", "StrictHostKeyChecking=accept-new", self.host, remote_cmd]
+                "-o", "StrictHostKeyChecking=accept-new", self.host, self._wrap(remote_cmd)]
+
+    def _wrap(self, remote_cmd: str) -> str:
+        """Run the command through a login shell.
+
+        `ssh host cmd` gets a non-interactive shell, which on many clusters skips the very profile
+        scripts that put Slurm on PATH: `ssh host sbatch` fails while an interactive `ssh host` then
+        `sbatch` works. A login shell reproduces what the user sees by hand.
+
+        Set `login_shell: false` on the cluster if your site's profile is slow or does something
+        unwanted non-interactively; the command then runs exactly as `ssh host cmd` would.
+        """
+        if not self.login_shell:
+            return remote_cmd
+        return f"{self.shell} -lc {shlex.quote(remote_cmd)}"
 
     def run(self, argv: Sequence[str], *, timeout: Optional[float] = None, retry: bool = False,
             check: bool = False) -> Result:
@@ -203,4 +220,6 @@ def connect(cluster: Dict[str, Any]) -> Ssh:
     if (cluster.get("transport") or "ssh") != "ssh":
         raise ResearchError(f"cluster {cluster.get('name')!r} uses transport "
                             f"{cluster.get('transport')!r}, not ssh")
-    return Ssh(cluster.get("ssh_host") or "")
+    return Ssh(cluster.get("ssh_host") or "",
+               login_shell=cluster.get("login_shell", True),
+               shell=cluster.get("remote_shell") or "bash")

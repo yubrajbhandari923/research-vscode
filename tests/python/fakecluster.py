@@ -97,6 +97,9 @@ class FakeCluster:
         # The dangerous case: the command RUNS on the cluster, but the reply never reaches the laptop.
         # Research OS must not conclude "submission failed" from a lost reply.
         self.lose_reply_matching: Optional[str] = None
+        # Mimic a real cluster (Duke's DRCC) where a profile script puts Slurm on PATH: a plain
+        # `ssh host sbatch` fails, while an interactive ssh or `bash -lc` finds it.
+        self.slurm_needs_login_shell = False
         for d in (self.root, self.state, self.bin, self.workspace, self.shared):
             os.makedirs(d, exist_ok=True)
         for name, body in (("sbatch", SBATCH), ("squeue", SQUEUE), ("sacct", SACCT), ("scancel", SCANCEL)):
@@ -198,8 +201,13 @@ class FakeCluster:
             return Result(argv, 255, "", "client_loop: send disconnect: Broken pipe")
         if self.drop_matching and self.drop_matching in cmd:
             return Result(argv, 255, "", "client_loop: send disconnect: Broken pipe")
+        env = self._env()
+        if self.slurm_needs_login_shell and "-lc" not in cmd:
+            # not a login shell → the profile never ran → Slurm is not on PATH
+            env["PATH"] = os.pathsep.join(
+                x for x in env["PATH"].split(os.pathsep) if os.path.realpath(x) != os.path.realpath(self.bin))
         r = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True,
-                           cwd=self.root, env=self._env(), timeout=timeout)
+                           cwd=self.root, env=env, timeout=timeout)
         if self.lose_reply_matching and self.lose_reply_matching in cmd:
             # the work happened; only the answer was lost
             return Result(argv, 255, "", "client_loop: send disconnect: Broken pipe")

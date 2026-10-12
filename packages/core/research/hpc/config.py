@@ -43,6 +43,10 @@ CLUSTER_DEFAULTS: Dict[str, Any] = {
     "project": {"slug": None},          # remote directory name; defaults to a slug of the project name
     "limits": {"max_cpus": 64, "max_gpus": 8, "max_time_hours": 72, "max_mem_gb": 512},
     "python": None,                     # remote interpreter for the runner; None → `python3`
+    # Remote commands run through a login shell by default: on many clusters a plain `ssh host sbatch`
+    # misses the profile scripts that put Slurm on PATH, so it fails where an interactive ssh works.
+    "login_shell": True,
+    "remote_shell": "bash",
 }
 
 SAFE_PATH_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/~")

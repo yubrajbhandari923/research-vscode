@@ -875,6 +875,11 @@ hpc:
         workspace_root: /home/you/research-os
         shared_data: /scratch/lab/shared-data
       slurm: {time: "04:00:00", cpus: 4, mem: 16G, gpus: 1}
+      # Remote commands run through `bash -lc` by default, because a plain `ssh host sbatch` often
+      # misses the profile scripts (or auto-loaded modules) that put Slurm on PATH. Set this to false
+      # if your site's profile is slow or does something unwanted non-interactively.
+      # login_shell: true
+      # remote_shell: bash
 ```
 
 ```yaml

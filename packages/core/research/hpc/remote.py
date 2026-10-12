@@ -78,9 +78,20 @@ def doctor(p: Project, cluster_name: Optional[str] = None) -> Dict[str, Any]:
     # 2. remote tooling
     found = ssh.which(*(REQUIRED_TOOLS + OPTIONAL_TOOLS))
     slurm_ok = all(found.get(t) for t in REQUIRED_TOOLS)
+    fix = ""
+    if not slurm_ok:
+        # Sites commonly ship Slurm as a module. Say so, and check whether one exists, rather than
+        # leaving the user to guess why an interactive ssh finds sbatch and this did not.
+        mods = ssh.run_shell("module avail 2>&1 | tr ' ' '\n' | grep -i '^slurm' | head -3")
+        names = [x for x in mods.stdout.split() if x]
+        fix = ("Slurm is not on PATH for this connection; a bundle can still be run by hand. "
+               + (f"A module looks available ({', '.join(names)}) — add `module load {names[0]}` to this "
+                  "cluster's `slurm.setup`, and check `login_shell` is not disabled."
+                  if names else
+                  "If an interactive `ssh` finds sbatch, your profile sets it up: keep `login_shell: true` "
+                  "for this cluster, or add the right `module load` line to `slurm.setup`."))
     add("slurm", slurm_ok,
-        ", ".join(f"{t}={'yes' if found.get(t) else 'NO'}" for t in REQUIRED_TOOLS),
-        "" if slurm_ok else "Slurm is not on PATH on the login node; a bundle can still be run by hand.")
+        ", ".join(f"{t}={'yes' if found.get(t) else 'NO'}" for t in REQUIRED_TOOLS), fix)
     add("scancel", bool(found.get("scancel")), "present" if found.get("scancel") else "absent",
         "" if found.get("scancel") else "`research hpc cancel` will not work without it")
     add("rsync", bool(found.get("rsync")), "present" if found.get("rsync") else "absent; scp will be used")

@@ -364,6 +364,29 @@ def test_doctor_reports_a_usable_cluster(hp):
     assert {"ssh connectivity", "slurm", "python", "path workspace_root"} <= names
 
 
+def test_remote_commands_use_a_login_shell(hp, cluster):
+    """`ssh host cmd` gets a non-interactive shell, which on many clusters skips the profile that puts
+    Slurm on PATH — so `ssh host sbatch` fails while an interactive ssh works. Found on Duke's DRCC,
+    where a `slurm` module is auto-loaded by the login shell.
+    """
+    cluster.slurm_needs_login_shell = True
+    d = RM.doctor(hp)
+    slurm = next(c for c in d["checks"] if c["check"] == "slurm")
+    assert slurm["ok"], slurm                              # found anyway, via the login shell
+    assert "ssh-slurm" in d["usable_modes"]
+    assert any("-lc" in " ".join(c) for c in cluster.calls if c[0] == "ssh")
+
+
+def test_login_shell_can_be_turned_off_per_cluster(hp, cluster):
+    """A site whose profile is slow or unwanted non-interactively can opt out."""
+    hp.config["hpc"]["clusters"]["fake"]["login_shell"] = False
+    hp.save_config()
+    hp.config = hp.load_config()
+    cluster.calls.clear()
+    RM.doctor(hp)
+    assert not any("-lc" in " ".join(c) for c in cluster.calls if c[0] == "ssh")
+
+
 def test_doctor_explains_an_unreachable_cluster_without_crashing(hp, cluster):
     cluster.offline = True
     d = RM.doctor(hp)
