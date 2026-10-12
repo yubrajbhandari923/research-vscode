@@ -195,8 +195,12 @@ def overrides(project_raw: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str
 def check(project_raw: Dict[str, Any], defaults: Dict[str, Any], text: Optional[str] = None) -> Dict[str, Any]:
     """Validate a project config. Reports problems; never rewrites anything."""
     out: Dict[str, Any] = {"ok": True, "errors": [], "warnings": [], "unknown": [], "redundant": []}
-    inherited_flat = _flat(defaults)
+    from .store import _deep_merge
     machine, mpath = machine_config()
+    # Compare against what is actually inherited, not the built-in defaults: a machine-level file is a
+    # legitimate source of values, and treating its settings as "unknown" or "wrong" would be nonsense.
+    inherited = _deep_merge(defaults, machine) if machine else defaults
+    inherited_flat = _flat(inherited)
     out["machine_config"] = mpath
 
     for dotted, v in sorted(_flat(project_raw).items()):
@@ -239,7 +243,7 @@ def check(project_raw: Dict[str, Any], defaults: Dict[str, Any], text: Optional[
                               "problem": f"{d!r} is not a configured cluster ({', '.join(sorted(known)) or 'none'})"})
 
     if text is not None:
-        out["edited_comments"] = edited_reference_lines(text, defaults)
+        out["edited_comments"] = edited_reference_lines(text, inherited)
         for ec in out["edited_comments"]:
             out["warnings"].append(
                 f"line {ec['line']}: `{ec['key']}: {ec['value']}` is commented out, so it has no effect "
@@ -283,6 +287,10 @@ def edited_reference_lines(text: str, defaults: Dict[str, Any]) -> List[Dict[str
             continue                      # ambiguous leaf name; not worth a guess
         dotted, default = candidates[0]
         raw = m.group("rest").strip()
+        # strip the "← set for every project…" annotation the reference block appends
+        mc = re.search(r"\s+#.*$", raw)
+        if mc and not _looks_quoted(raw[:mc.start()]):
+            raw = raw[:mc.start()].strip()
         if not raw:
             continue
         try:
@@ -488,20 +496,46 @@ def render(settings: Dict[str, Any], defaults: Dict[str, Any], *, reference: boo
 
 
 def _reference_block(settings: Dict[str, Any], defaults: Dict[str, Any]) -> str:
-    """The commonly adjusted defaults a project has not overridden, commented out to stay discoverable."""
+    """The commonly adjusted settings this project has not overridden, commented out to stay discoverable.
+
+    Shows the value actually **in force**, not the built-in default: when a machine-level file supplies a
+    value, printing the built-in one would invite the reader to uncomment a line that silently undoes it.
+    """
+    from .store import _deep_merge
+    machine, _ = machine_config()
+    inherited = _deep_merge(defaults, machine) if machine else defaults
     live = set(_flat(settings))
-    flat_defaults = _flat(defaults)
-    remaining = {}
+    flat_inherited = _flat(inherited)
+    from_machine = set(_flat(machine)) if machine else set()
+    remaining, machine_keys = {}, set()
     for want in REFERENCE_KEYS:
-        for k, v in flat_defaults.items():
+        for k, v in flat_inherited.items():
             if (k == want or k.startswith(want + ".")) and k not in live:
                 remaining[k] = v
+                if k in from_machine:
+                    machine_keys.add(k)
     if not remaining:
         return ""
     lines = [REFERENCE_BANNER]
+    # Annotate the lines a machine-level file supplies, so it is obvious they are not built-in defaults.
+    path_of: Dict[str, str] = {}
+    for dotted in machine_keys:
+        path_of[dotted.split(".")[-1]] = dotted
     for line in yamlio.dump(unflatten(remaining), block=True).rstrip("\n").split("\n"):
-        lines.append("# " + line if line.strip() else "#")
-    return "\n".join(lines) + "\n" + REFERENCE_FOOTER + "\n"
+        if not line.strip():
+            lines.append("#")
+            continue
+        m = _KEY_RE.match(line)
+        note = ""
+        if m and m.group("rest").strip() and m.group("key") in path_of:
+            note = "   # ← set for every project in your machine config"
+        lines.append("# " + line + note)
+    footer = REFERENCE_FOOTER
+    if machine_keys:
+        _, mpath = machine_config()
+        footer += (f"\n# Values marked ← come from {mpath}\n"
+                   "# Uncommenting one here overrides it for this project only.")
+    return "\n".join(lines) + "\n" + footer + "\n"
 
 
 def changed_against(project_raw: Dict[str, Any], desired: Dict[str, Any],

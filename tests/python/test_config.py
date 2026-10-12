@@ -157,6 +157,27 @@ def test_unknown_keys_are_never_dropped(proj):
     assert yamlio.load(text)["my_lab"] == {"grid": "0.25deg"}
 
 
+def test_reference_block_shows_the_value_in_force_not_the_builtin_default(machine, proj):
+    """A commented reference line must not invite you to undo a machine-level setting.
+
+    Spotted in a real file: the block printed `# default_cluster: null` while the machine layer had set it
+    to `duke`, so uncommenting that line would have silently disabled HPC for the project.
+    """
+    mpath = machine("hpc:\n  default_cluster: duke\n  clusters:\n    duke:\n      ssh_host: login\n")
+    text = CF.render({"project": {"name": "p"}}, DEFAULT_CONFIG)
+    assert "default_cluster: duke" in text
+    assert "default_cluster: null" not in text
+    assert "← set for every project in your machine config" in text
+    assert mpath in text                                 # and it says where to look
+    # the commented block is still only a comment: it changes nothing
+    assert (yamlio.load(text).get("hpc") or {}).get("default_cluster") is None
+
+
+def test_reference_block_has_no_machine_annotations_without_a_machine_layer(proj):
+    text = CF.render({"project": {"name": "p"}}, DEFAULT_CONFIG)
+    assert "←" not in text and "default_cluster: null" in text
+
+
 def test_sparse_file_round_trips_the_effective_config(proj):
     raw = {"project": {"name": "p"}, "context": {"max_chars": 999}, "unknown_thing": [1, 2]}
     before = CF.effective(raw, DEFAULT_CONFIG)
@@ -306,6 +327,30 @@ def test_check_warns_when_a_commented_reference_line_was_edited(proj):
     assert hit["value"] == "2" and hit["default"] == 5
     with Project(proj.root, sync=False) as p:
         assert p.config["agent_policy"]["max_runs_without_synthesis"] == 5   # genuinely unchanged
+
+
+def test_check_does_not_flag_a_reference_line_that_shows_a_machine_value(machine, proj):
+    """The reference block prints the value in force; the comment detector must agree with it.
+
+    These two features contradicted each other at first: the block showed `default_cluster: duke` from the
+    machine layer, and the detector — comparing against the built-in `null` — called it an edited comment.
+    """
+    machine("hpc:\n  default_cluster: duke\n  clusters:\n    duke:\n      ssh_host: login\n"
+            "      paths:\n        workspace_root: /approved/ws\n")
+    text = CF.render({"project": {"name": "p"}}, DEFAULT_CONFIG)
+    assert "default_cluster: duke" in text
+    r = CF.check(yamlio.load(text) or {}, DEFAULT_CONFIG, text)
+    assert not r["edited_comments"], r["edited_comments"]
+    assert r["ok"] and not r["warnings"]
+
+
+def test_check_still_flags_a_genuinely_edited_reference_line(machine, proj):
+    machine("hpc:\n  default_cluster: duke\n  clusters:\n    duke:\n      ssh_host: login\n"
+            "      paths:\n        workspace_root: /approved/ws\n")
+    text = CF.render({"project": {"name": "p"}}, DEFAULT_CONFIG)
+    text = text.replace("#   max_chars: 12000", "#   max_chars: 99")
+    r = CF.check(yamlio.load(text) or {}, DEFAULT_CONFIG, text)
+    assert any(e["key"] == "context.max_chars" for e in r["edited_comments"])
 
 
 def test_check_is_quiet_about_an_untouched_reference_block(proj):
