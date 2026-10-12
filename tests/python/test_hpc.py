@@ -973,3 +973,80 @@ def test_doctor_suggests_a_module_when_slurm_is_missing(hp, cluster):
     assert slurm["ok"] is False
     assert "module load slurm" in slurm["fix"]
     assert "bundle" in d["usable_modes"]           # and says what still works
+
+
+# =========================================================================== resource approval
+#
+# Slurm bills the reservation, not the usage, so the numbers a submission would reserve must reach the
+# user before anything is submitted — and an agent must not be able to raise them quietly.
+
+def test_reservation_states_cpus_gpus_memory_and_walltime():
+    r = RM.reservation({"cpus": 4, "gpus": 1, "mem": "16G", "time": "04:00:00"}, {"name": "duke"})
+    assert r["cpus"] == 4 and r["gpus"] == 1 and r["mem"] == "16G"
+    assert "4 CPUs" in r["summary"] and "1 GPU" in r["summary"] and "16G" in r["summary"]
+    assert r["cpu_hours"] == 16.0 and r["gpu_hours"] == 4.0
+    assert "16.0 CPU-hours" in r["worst_case"] and "4.0 GPU-hours" in r["worst_case"]
+
+
+def test_reservation_is_explicit_when_there_is_no_gpu_or_no_limit():
+    r = RM.reservation({"cpus": 1}, {"name": "x"})
+    assert "no GPU" in r["summary"]
+    assert "no wall-time limit set" in r["summary"]
+    assert r["worst_case"] is None
+
+
+@pytest.mark.parametrize("gpus,expect", [("2", 2), ("a100:4", 4), (None, 0), (1, 1)])
+def test_reservation_parses_the_gres_forms(gpus, expect):
+    assert RM.reservation({"gpus": gpus, "cpus": 1}, {"name": "x"})["gpus"] == expect
+
+
+def test_submit_refuses_without_approval_and_names_the_reservation(hp):
+    """The refusal itself must carry the numbers, so they cannot be skipped."""
+    RM.init_workspace(hp)
+    with pytest.raises(ResearchError) as e:
+        RM.submit(hp, "EXP-001")
+    msg = str(e.value)
+    assert "would reserve" in msg
+    assert "CPU" in msg and "wall-time" in msg
+    assert "CPU-hours" in msg                       # the cost, not just the shape
+    hint = e.value.hint or ""
+    assert "explicit yes" in hint
+    assert "bills the reservation, not the usage" in hint
+    assert hp.q("SELECT COUNT(*) AS n FROM runs")[0]["n"] == 0
+
+
+def test_dry_run_reports_the_reservation_without_submitting(hp, cluster):
+    RM.init_workspace(hp)
+    r = RM.submit(hp, "EXP-001", dry_run=True, resources={"cpus": 8, "gpus": 2, "time": "12:00:00"})
+    res = r["reservation"]
+    assert res["cpus"] == 8 and res["gpus"] == 2
+    assert res["cpu_hours"] == 96.0 and res["gpu_hours"] == 24.0
+    assert cluster.jobs() == {} and hp.q("SELECT COUNT(*) AS n FROM runs")[0]["n"] == 0
+
+
+def test_a_successful_submission_records_what_it_reserved(hp):
+    RM.init_workspace(hp)
+    r = RM.submit(hp, "EXP-001", approve=True)
+    assert r["reservation"]["summary"]
+    assert r["reservation"]["cluster"] == "fake"
+
+
+def _flat_text(s):
+    """Collapse whitespace so an assertion is not defeated by Markdown line wrapping."""
+    import re
+    return re.sub(r"\s+", " ", s)
+
+
+def test_the_agents_block_requires_confirming_resources():
+    block = _flat_text(_agents_block().lower())
+    assert "confirm the resource reservation with the user before submitting" in block
+    assert "bills the reservation, not the usage" in block
+    assert "never raise cpus/gpus/mem/time on your own initiative" in block
+
+
+def test_the_skill_forbids_quietly_raising_resources():
+    s = _flat_text(_skill("hpc-setup"))
+    assert "needs the user's explicit approval, every time" in s
+    assert "Never raise `cpus`, `gpus`, `mem` or `time` on your own initiative" in s
+    assert "blanket permission" in s                # auto_submit is not a loophole
+    assert "partition" in s and "account" in s      # ask before the first submission

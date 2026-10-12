@@ -48,7 +48,11 @@ the human to open the project in VS Code with the Research Panel extension, or t
 - Setting it up, or doctor reporting a problem? Read `research skill show hpc-setup` before changing config.
   Common trap: `sbatch=NO` while an interactive `ssh` finds it — a non-interactive shell skips the profile
   that loads Slurm. Ask the user for approved paths; never invent a storage location.
-- `research hpc submit EXP-001 --cluster NAME --dry-run`, then `--yes`. Submission is expensive: never submit twice.
+- **Always confirm the resource reservation with the user before submitting.** Run
+  `research hpc submit EXP-001 --cluster NAME --dry-run`, show them the CPUs, GPUs, memory and wall-time it
+  would reserve (and the CPU-/GPU-hours that costs at the limit), and get an explicit yes. Slurm bills the
+  reservation, not the usage. Only then re-run with `--yes`. Never raise cpus/gpus/mem/time on your own
+  initiative, and never submit twice.
 - If a submission is reported uncertain, run `research hpc sync` — it adopts a job that is already queued. Do not resubmit.
 - No direct execution available, or a human will run it? `research hpc bundle EXP-001` → they run it → `research hpc import <archive>`.
 - `research hpc sync` before proposing more runs: it reconciles finished jobs, imports results and lists what now

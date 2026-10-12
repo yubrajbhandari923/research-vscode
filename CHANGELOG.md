@@ -41,6 +41,27 @@
 - Tests now assert that every declared command is implemented, that each feature has a non-palette menu
   home, and that every `rpc('…')` call in the extension names a method that exists.
 
+### Resource reservations need explicit approval
+
+- Every submission path now discloses what the job would **reserve** — CPUs, GPUs, memory, wall-time,
+  partition, account — plus the CPU-/GPU-hours that costs at the wall-time limit. Slurm bills the
+  reservation, not the usage.
+- `research hpc submit` without `--yes` refuses **with those numbers in the refusal**, so an agent cannot
+  ask for approval without showing them. `research run submit` and `research run sweep --mode slurm` gain
+  `--dry-run` and print the same block; a sweep totals it across every grid point (a 3-point sweep at
+  8 CPUs / 2 GPUs / 12h surfaces 288 CPU-hours and 72 GPU-hours up front).
+- The managed `AGENTS.md` block and the `hpc-setup` skill instruct agents to show the user these numbers
+  and wait for an explicit yes, never to raise cpus/gpus/mem/time on their own initiative, and not to
+  treat `execution.auto_submit` as blanket permission for a new experiment's resources.
+- A successful submission records what it reserved, so the approved figure is in the run's provenance.
+
+### Upgrades refresh unmodified first-party skills
+
+- A shipped skill's guidance changes between versions, but `upgrade` only ever *added* missing files, so a
+  project kept an older copy forever. It now refreshes a first-party file **only when the project has not
+  edited it**, detected by recording the hash of the version we installed: an edited file is left alone,
+  and a file with no recorded hash is left alone too (we cannot tell a customization from a stale copy).
+
 ### HPC is now self-documenting for agents
 
 - **New `hpc-setup` skill** (`research skill show hpc-setup`), installed by `research init` and added to

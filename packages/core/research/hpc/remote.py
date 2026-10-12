@@ -171,6 +171,49 @@ def init_workspace(p: Project, cluster_name: Optional[str] = None, *, dry_run: b
 
 # =============================================================================== submission
 
+def reservation(resources: Dict[str, Any], cluster: Dict[str, Any]) -> Dict[str, Any]:
+    """What a submission would reserve, in the terms a human approves: cores, GPUs, memory, wall-time.
+
+    Slurm bills the *reservation*, not the usage: a job asking for 8 GPUs for 24h costs that whether or
+    not it uses them. This is the number the user has to see before anything is submitted.
+    """
+    def _int(v):
+        try:
+            return int(str(v).split(":")[-1])
+        except (TypeError, ValueError):
+            return None
+
+    cpus = _int(resources.get("cpus")) or 1
+    gpus = _int(resources.get("gpus")) or 0
+    time = str(resources.get("time") or "")
+    hours = _hours(time)
+    out = {
+        "cpus": cpus, "gpus": gpus, "mem": resources.get("mem"), "time": time or None,
+        "hours": round(hours, 2) if hours is not None else None,
+        "partition": resources.get("partition"), "account": resources.get("account"),
+        "cpu_hours": round(cpus * hours, 1) if hours is not None else None,
+        "gpu_hours": round(gpus * hours, 1) if (hours is not None and gpus) else None,
+        "cluster": cluster.get("name"),
+    }
+    out["summary"] = (
+        f"{cpus} CPU{'s' if cpus != 1 else ''}"
+        + (f" · {gpus} GPU{'s' if gpus != 1 else ''}" if gpus else " · no GPU")
+        + (f" · {out['mem']} memory" if out["mem"] else "")
+        + (f" · up to {time} wall-time" if time else " · no wall-time limit set"))
+    worst = []
+    if out["cpu_hours"]:
+        worst.append(f"{out['cpu_hours']} CPU-hours")
+    if out["gpu_hours"]:
+        worst.append(f"{out['gpu_hours']} GPU-hours")
+    out["worst_case"] = " and ".join(worst) or None
+    return out
+
+
+def _hours(t: str) -> Optional[float]:
+    from .config import _hours as _parse
+    return _parse(t) if t else None
+
+
 def _hpc_state(run: Dict[str, Any]) -> Dict[str, Any]:
     return dict(((run.get("slurm") or {}).get("hpc")) or {})
 
@@ -230,7 +273,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
                             hint="research hpc submit EXP-001 --cluster duke -- python train.py")
     if dry_run:
         return {"dry_run": True, "cluster": cluster["name"], "experiment": exp_id, "command": cmd,
-                "resources": merged, "datasets": ds,
+                "resources": merged, "reservation": reservation(merged, cluster), "datasets": ds,
                 "remote": _remote_run_paths(paths, exp_id, "RUN-next"),
                 "would": ["create a run record and submission token",
                           "build an immutable bundle of the working tree",
@@ -239,10 +282,13 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
                           "leave everything else on the cluster untouched"],
                 "note": "Nothing was created, transferred or submitted."}
     if not (approve or (cluster.get("execution") or {}).get("auto_submit")):
+        res = reservation(merged, cluster)
         raise ResearchError(
-            f"submitting {exp_id} to {cluster['name']} needs approval",
-            hint="Re-run with --yes once you have checked `research hpc submit … --dry-run`, or set "
-                 "`execution.auto_submit: true` for this cluster to allow bounded automatic submission.")
+            f"submitting {exp_id} to {cluster['name']} would reserve {res['summary']}"
+            + (f" (up to {res['worst_case']})" if res["worst_case"] else "") + " — this needs approval.",
+            hint="Show the user these numbers and get an explicit yes before re-running with --yes. "
+                 "`research hpc submit … --dry-run` prints the full reservation and changes nothing. "
+                 "Slurm bills the reservation, not the usage.")
 
     run = create_run(p, exp_id, command=cmd, backend="slurm", status="queued",
                      parameters=exp.get("parameters") or {},
@@ -303,7 +349,8 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
         _set_hpc_state(p, run_id, state="submitted", slurm_job_id=job)
         write_run_json(p, run_id)
         return {"run": run_id, "experiment": exp_id, "cluster": cluster["name"], "slurm_job_id": job,
-                "token": token, "remote": rp, "resources": merged, "datasets": ds,
+                "token": token, "remote": rp, "resources": merged,
+                "reservation": reservation(merged, cluster), "datasets": ds,
                 "bundle": bun["path"], "state": "submitted"}
 
     # 6. uncertain: the job may well be queued. Never resubmit; reconcile instead.

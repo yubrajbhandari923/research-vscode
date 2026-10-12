@@ -598,10 +598,38 @@ def cmd_run_exec(a, p) -> int:
 
 @mut
 def cmd_run_submit(a, p) -> int:
+    from research.hpc.remote import reservation
     opts = dict(partition=a.partition, account=a.account, time=a.time, cpus=a.cpus, mem=a.mem, gpus=a.gpus,
                 extra_args=a.sbatch_arg or None)
+    merged = {**(p.config.get("backends", {}).get("slurm") or {}),
+              **{k: v for k, v in opts.items() if v not in (None, [], "")}}
+    res = reservation(merged, {"name": "local slurm"})
+    if a.dry_run:
+        # Same reservation disclosure as `hpc submit --dry-run`: this is what the user approves.
+        if a.json:
+            out_json({"dry_run": True, "experiment": a.experiment, "command": " ".join(_cmd_list(a)),
+                      "resources": merged, "reservation": res})
+            return 0
+        print(bold(f"Would submit a run of {a.experiment} to SLURM"))
+        kv("command", " ".join(_cmd_list(a)))
+        print()
+        print(bold("  Resources this would RESERVE:"))
+        print("    " + yellow(res["summary"]))
+        if res.get("worst_case"):
+            print("    " + dim(f"worst case at the wall-time limit: {res['worst_case']}"))
+        kv("partition", res.get("partition") or "(cluster default)")
+        kv("account", res.get("account") or "(cluster default)")
+        print(dim("\n  Nothing was submitted."))
+        print(yellow("  Confirm these resources with whoever owns the allocation, then re-run without --dry-run."))
+        return 0
     r = R.submit_run(p, a.experiment, _cmd_list(a), parameters=parse_kv(a.param), label=a.label,
                      working_dir=a.cwd, notes=a.notes, override=a.override, **opts)
+    if not a.json:
+        print(green("✓ ") + f"{r['id']} submitted as SLURM job {r['slurm_job_id']}")
+        kv("reserved", res["summary"])
+        if res.get("worst_case"):
+            kv("worst case", res["worst_case"])
+        return 0
     _done(a, r, msg=f"{r['id']} submitted as SLURM job {r['slurm_job_id']}")
     return 0
 
@@ -1615,6 +1643,23 @@ def cmd_run_sweep(a, p) -> int:
         for pt in res["points"]:
             print(f"  {pt['label']}  {dim(pt['command'])}")
         print(dim(f"{len(res['points'])} runs (dry run; nothing started)"))
+        if a.mode == "slurm":
+            # A sweep multiplies the reservation by every grid point, which is where a careless
+            # submission gets expensive fastest.
+            from research.hpc.remote import reservation
+            merged = {**(p.config.get("backends", {}).get("slurm") or {}),
+                      **{k: v for k, v in opts.items() if v not in (None, [], "")}}
+            one = reservation(merged, {"name": "local slurm"})
+            n = len(res["points"])
+            print()
+            print(bold(f"  Each of the {n} runs would RESERVE:"))
+            print("    " + yellow(one["summary"]))
+            if one.get("cpu_hours"):
+                tot = [f"{round(one['cpu_hours'] * n, 1)} CPU-hours"]
+                if one.get("gpu_hours"):
+                    tot.append(f"{round(one['gpu_hours'] * n, 1)} GPU-hours")
+                print("    " + yellow(f"whole sweep, worst case: {' and '.join(tot)}"))
+            print(yellow(f"  Confirm this with whoever owns the allocation before running the sweep."))
     else:
         for r in res["runs"]:
             print(f"  {r['id']}  [{st(r['status'])}]  {r.get('label') or ''}")
@@ -1761,14 +1806,26 @@ def cmd_hpc(a, p) -> int:
             out_json(r)
             return 0
         if r.get("dry_run"):
+            res = r.get("reservation") or {}
             print(bold(f"Would submit {r['experiment']} to {r['cluster']}"))
             kv("command", r["command"])
-            kv("resources", {k: v for k, v in r["resources"].items() if v not in (None, [], "")})
+            print()
+            # The reservation is what the user is actually approving, so it gets its own block:
+            # Slurm bills what you reserve, not what you use.
+            print(bold("  Resources this would RESERVE:"))
+            print("    " + yellow(res.get("summary") or "—"))
+            if res.get("worst_case"):
+                print("    " + dim(f"worst case if it runs to the wall-time limit: {res['worst_case']}"))
+            kv("partition", res.get("partition") or "(cluster default)")
+            kv("account", res.get("account") or "(cluster default)")
+            print()
             for w in r["would"]:
                 print(f"  · {w}")
-            print(dim("\n  " + r["note"] + "  Re-run with --yes to submit."))
+            print(dim("\n  " + r["note"]))
+            print(yellow("  Confirm these resources with whoever owns the allocation, then re-run with --yes."))
             return 0
         print(green("✓ ") + f"{r['run']} submitted to {r['cluster']} as slurm job {r['slurm_job_id']}")
+        kv("reserved", (r.get("reservation") or {}).get("summary"))
         kv("experiment", r["experiment"])
         kv("remote code", r["remote"]["code"])
         kv("token", r["token"])
@@ -2432,6 +2489,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--detach", action="store_true", help="run in background (survives the terminal)")
     x = add(g, "submit", cmd_run_submit, "submit via SLURM: research run submit EXP-001 --time 1:00:00 -- python x.py")
     _run_args(x)
+    x.add_argument("--dry-run", action="store_true",
+                   help="print the resources this would reserve and submit nothing")
     x.add_argument("--partition", "-p")
     x.add_argument("--account", "-A")
     x.add_argument("--time", "-t")

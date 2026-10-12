@@ -94,10 +94,39 @@ research hpc datasets list             # the filesystem is the source of truth; 
 
 ## 6. Before the first real submission
 
+**The resource reservation needs the user's explicit approval, every time.** Slurm bills what a job
+*reserves*, not what it uses: 8 GPUs for 24h costs 192 GPU-hours of the allocation whether the job uses
+them or not, and a large request also waits longer in the queue.
+
 ```bash
-research hpc submit EXP-001 --dry-run  # shows exactly what would happen; transfers nothing
-research hpc submit EXP-001 --yes      # only after the user has seen the dry run
+research hpc submit EXP-001 --dry-run  # prints the reservation; transfers and submits nothing
 ```
+
+Show the user that block verbatim — CPUs, GPUs, memory, wall-time, and the CPU-/GPU-hours it costs at the
+limit — and wait for a clear yes:
+
+```text
+  Resources this would RESERVE:
+    4 CPUs · 1 GPU · 16G memory · up to 04:00:00 wall-time
+    worst case if it runs to the wall-time limit: 16.0 CPU-hours and 4.0 GPU-hours
+```
+
+Then, and only then:
+
+```bash
+research hpc submit EXP-001 --yes
+```
+
+Rules that are not yours to relax:
+
+- **Never raise `cpus`, `gpus`, `mem` or `time` on your own initiative**, including "to be safe" or to
+  make a job fit. Propose the change, explain the cost, and let the user decide.
+- A request beyond the cluster's `limits` is refused before anything is submitted. That is the backstop,
+  not the approval — a request well inside the limits still needs the user's yes.
+- `execution.auto_submit: true` exists for an already-approved, repeating workflow. Do not set it
+  yourself, and do not treat it as blanket permission for a *new* experiment's resources.
+- Ask the user whether their site needs a `partition` and `account` before the first submission; the dry
+  run shows `(cluster default)` when they are unset, which may simply fail or land in the wrong queue.
 
 If the dry run reports a missing dataset, resolve that first (`research hpc datasets check <id>`) rather
 than passing `--stage-datasets` reflexively: staging moves a lot of bytes and may cost quota.

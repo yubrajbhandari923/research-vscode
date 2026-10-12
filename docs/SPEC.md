@@ -2118,7 +2118,25 @@ no registry service, so a new session discovers what exists by looking rather th
 - versions are distinguished by manifest `version`; a different version never overwrites an existing copy
 - `auto_delete` is fixed at false: **Research OS never deletes remote datasets, code or results**
 
-### 14C.5 Safety
+### 14C.5 Resource approval
+
+Slurm bills what a job **reserves**, not what it uses, and a large request also waits longer in the
+queue. Every submission path therefore discloses the reservation before anything is submitted:
+
+- `research hpc submit --dry-run`, `research run submit --dry-run` and `research run sweep --mode slurm
+  --dry-run` print CPUs, GPUs, memory, wall-time, partition and account, plus the CPU-/GPU-hours the
+  reservation costs if the job runs to its limit. A sweep also totals that across every grid point.
+- `research hpc submit` without `--yes` **refuses, and the refusal text carries the numbers**, so an
+  approval cannot be sought without them.
+- `reservation()` is the single place that computes this, so the CLI, the refusal and the recorded
+  submission all state the same thing. A successful submission records what it reserved.
+- The managed `AGENTS.md` block and the `hpc-setup` skill instruct agents to show the user these numbers
+  and wait for an explicit yes, never to raise `cpus`/`gpus`/`mem`/`time` on their own initiative, and not
+  to treat `execution.auto_submit` as blanket permission for a new experiment's resources.
+- The cluster's `limits` remain a hard backstop that refuses an over-large request before submission —
+  that is a safety net, not the approval.
+
+### 14C.6 Safety
 
 Dry-run preview on `submit` and `init`; resource requests bounded by the cluster's `limits`; cluster chosen
 explicitly (or a single configured default); every remote path validated as absolute, metacharacter-free and
@@ -2127,7 +2145,7 @@ with explicit timeouts and argument lists (never string interpolation of user da
 once on a transient error, `sbatch` never; submission requires `--yes` or `execution.auto_submit`; every
 submission and retrieval logged as an event; and the original experiment/run relationship preserved exactly.
 
-### 14C.6 Long-running work and continuation
+### 14C.7 Long-running work and continuation
 
 Reconciliation is **on demand** (`research hpc sync`) and on the next session — there is no daemon and none
 is required. Pending follow-up work survives process termination because it lives in the canonical run and

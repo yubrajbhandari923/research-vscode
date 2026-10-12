@@ -76,6 +76,63 @@ def _missing_templates(root: str) -> List[Tuple[str, str]]:
     return out
 
 
+def _stale_templates(root: str) -> List[Tuple[str, str, str]]:
+    """(source, destination-relative, recorded hash) for first-party files the project has NOT edited.
+
+    A shipped skill carries guidance that changes between versions, and a project that never touched it
+    should get the new text. Customization is detected by hash: the hash of the version we installed is
+    recorded, so a file the user edited is left alone and reported instead of being overwritten.
+    """
+    from .util import sha256_bytes
+    rd = _rdir(root)
+    installed = _template_hashes(root)
+    out = []
+    for sub in TEMPLATE_DIRS:
+        src = TEMPLATES / sub
+        if not src.is_dir():
+            continue
+        for path in sorted(src.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = os.path.join(sub, str(path.relative_to(src)))
+            dst = os.path.join(rd, rel)
+            if not os.path.exists(dst):
+                continue
+            with open(dst, "rb") as f:
+                current = sha256_bytes(f.read())
+            with open(path, "rb") as f:
+                shipped = sha256_bytes(f.read())
+            if current == shipped:
+                continue                      # already current
+            known = installed.get(rel)
+            if known is None or known != current:
+                continue                      # never recorded, or edited by the user: leave it alone
+            out.append((str(path), rel, shipped))
+    return out
+
+
+def _hash_file(root: str) -> str:
+    return os.path.join(_rdir(root), "cache", "template-hashes.json")
+
+
+def _template_hashes(root: str) -> Dict[str, str]:
+    import json
+    try:
+        with open(_hash_file(root), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _record_template_hash(root: str, rel: str, digest: str) -> None:
+    import json
+    d = _template_hashes(root)
+    d[rel] = digest
+    os.makedirs(os.path.dirname(_hash_file(root)), exist_ok=True)
+    _atomic_write(_hash_file(root), json.dumps(d, indent=2, sort_keys=True) + "\n")
+
+
 def _legacy_flow_config(root: str) -> bool:
     """True when config.yaml uses flow style (`project: {name: x}`).
 
@@ -178,6 +235,10 @@ def plan(where: Optional[str] = None) -> Dict[str, Any]:
         steps.append({"kind": "filesystem", "change": "create", "path": f"{RESEARCH_DIR}/{d}/"})
     for _src, rel in tmpl:
         steps.append({"kind": "template", "change": "add", "path": f"{RESEARCH_DIR}/{rel}"})
+    for _src, rel, _h in _stale_templates(root):
+        steps.append({"kind": "template", "change": "refresh", "path": f"{RESEARCH_DIR}/{rel}",
+                      "detail": "updated guidance from this Research OS version; your copy is unmodified "
+                                "(an edited file is never overwritten)"})
     if cfg_flow:
         steps.append({"kind": "config", "change": "reformat", "path": f"{RESEARCH_DIR}/config.yaml",
                       "detail": "rewrite in block style, keeping only your overrides (inherited defaults "
@@ -261,12 +322,16 @@ def apply(where: Optional[str] = None) -> Dict[str, Any]:
             step(s, lambda s=s: os.makedirs(os.path.join(root, s["path"]), exist_ok=True))
         elif s["kind"] == "template":
             def copy(s=s):
+                from .util import sha256_bytes
                 rel = s["path"][len(RESEARCH_DIR) + 1:]
                 src = TEMPLATES / rel
                 dst = os.path.join(rd, rel)
-                if not os.path.exists(dst):  # re-checked: another process may have created it
-                    os.makedirs(os.path.dirname(dst), exist_ok=True)
-                    shutil.copy2(str(src), dst)
+                if s["change"] == "add" and os.path.exists(dst):
+                    return                   # re-checked: another process may have created it
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(str(src), dst)
+                with open(dst, "rb") as f:
+                    _record_template_hash(root, rel, sha256_bytes(f.read()))
             step(s, copy)
         elif s["kind"] == "config":
             def reformat(s=s):

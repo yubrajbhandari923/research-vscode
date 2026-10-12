@@ -565,3 +565,48 @@ def test_upgrade_does_not_touch_a_gitignore_that_already_covers_it(legacy):
     assert not any(s["kind"] == "gitignore" for s in UP.plan(root)["steps"])
     UP.apply(root)
     assert open(gi, "rb").read() == before
+
+
+def test_upgrade_refreshes_an_unmodified_first_party_skill(legacy):
+    """A shipped skill's guidance changes between versions; an untouched copy should get the new text."""
+    root = legacy.root
+    legacy.close()
+    skill = os.path.join(root, ".research", "skills", "run-experiment", "SKILL.md")
+    # simulate an older version's copy, recorded as ours and unmodified by the user
+    with open(skill, "w", encoding="utf-8") as f:
+        f.write("---\nname: run-experiment\ndescription: old\n---\n\nold guidance\n")
+    from research.util import sha256_bytes
+    UP._record_template_hash(root, os.path.join("skills", "run-experiment", "SKILL.md"),
+                             sha256_bytes(open(skill, "rb").read()))
+    assert any(s["change"] == "refresh" for s in UP.plan(root)["steps"])
+    UP.apply(root)
+    now = open(skill, encoding="utf-8").read()
+    assert "old guidance" not in now
+    assert "Register, execute and track" in now          # the shipped text
+    assert not any(s["change"] == "refresh" for s in UP.plan(root)["steps"])   # converged
+
+
+def test_upgrade_never_overwrites_a_skill_the_user_edited(legacy):
+    """The whole point of the hash record: an edited file is left alone, not silently replaced."""
+    root = legacy.root
+    legacy.close()
+    skill = os.path.join(root, ".research", "skills", "run-experiment", "SKILL.md")
+    from research.util import sha256_bytes
+    UP._record_template_hash(root, os.path.join("skills", "run-experiment", "SKILL.md"),
+                             sha256_bytes(open(skill, "rb").read()))
+    with open(skill, "a", encoding="utf-8") as f:
+        f.write("\n\nMY LAB RULE: always log the seed.\n")
+    mine = open(skill, encoding="utf-8").read()
+    UP.apply(root)
+    assert open(skill, encoding="utf-8").read() == mine
+
+
+def test_upgrade_leaves_an_unrecorded_skill_alone(legacy):
+    """Without a recorded hash we cannot tell a customization from a stale copy, so we do not touch it."""
+    root = legacy.root
+    legacy.close()
+    skill = os.path.join(root, ".research", "skills", "run-experiment", "SKILL.md")
+    with open(skill, "w", encoding="utf-8") as f:
+        f.write("unknown provenance\n")
+    UP.apply(root)
+    assert open(skill, encoding="utf-8").read() == "unknown provenance\n"

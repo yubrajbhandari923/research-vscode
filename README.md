@@ -801,6 +801,19 @@ research hpc submit EXP-001 --cluster duke --dry-run   # shows exactly what it w
 research hpc submit EXP-001 --cluster duke --yes       # bundles, uploads, verifies, sbatch, records the job id
 ```
 
+**The dry run states what the job would reserve, and `--yes` is refused without it:**
+
+```text
+  Resources this would RESERVE:
+    4 CPUs · 1 GPU · 16G memory · up to 04:00:00 wall-time
+    worst case if it runs to the wall-time limit: 16.0 CPU-hours and 4.0 GPU-hours
+```
+
+Slurm bills the *reservation*, not the usage, so this is the number that matters. `research run submit
+--dry-run` and `research run sweep --mode slurm --dry-run` print the same block (a sweep also totals it
+across every grid point). Agents are instructed to show you these numbers and wait for an explicit yes,
+and never to raise cpus/gpus/mem/time on their own initiative.
+
 ### When `doctor` says something is wrong
 
 Every failing check prints its own fix, and the last line says what still works
