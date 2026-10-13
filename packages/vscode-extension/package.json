@@ -39,7 +39,8 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
     "package": "node esbuild.mjs --production && node scripts/bundle-python.mjs && vsce package --no-dependencies --out ../../dist/",
-    "test:ext": "node test/run.mjs"
+    "test:ext": "node test/run.mjs",
+    "test:client": "node --test test/client.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

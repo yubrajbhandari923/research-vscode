@@ -6,15 +6,16 @@ research.db is an index that can always be rebuilt from them.
 from __future__ import annotations
 
 import contextlib
-import copy
 import json
 import os
 import shutil
-import time
+import sqlite3
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 from . import gitinfo, mirrors, schema, yamlio
+from .util import deep_merge as _deep_merge
 from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
 from .util import NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
@@ -108,12 +109,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
 }
 
-CONFIG_HEADER = """# Research project configuration (human-editable).
-# project.goal is shown at the top of the Resume view and in .research/context/current.md.
-# agent_policy limits are enforced for agents (exit code 3); humans get warnings unless enforce_for_humans.
-# backends.slurm.setup: shell lines run before every SLURM job, e.g. "module load python/3.11".
-"""
-
 GITIGNORE = """# research: the SQLite index is rebuilt automatically from the text files
 research.db
 research.db-journal
@@ -132,19 +127,6 @@ hpc/incoming/
 """
 
 
-def _deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge `over` onto `base`, deeply. The result shares no mutable structure with either input:
-    `p.config` is edited in place all over the codebase, and DEFAULT_CONFIG must never be corrupted by it."""
-    out: Dict[str, Any] = {}
-    for k, v in (base or {}).items():
-        out[k] = copy.deepcopy(v)
-    for k, v in (over or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_merge(out[k], v)
-        else:
-            out[k] = copy.deepcopy(v)
-    return out
-
 
 def find_root(start: Optional[str] = None) -> Optional[str]:
     env = os.environ.get("RESEARCH_ROOT")
@@ -161,36 +143,60 @@ def find_root(start: Optional[str] = None) -> Optional[str]:
 
 
 def _atomic_write(path: str, text: str) -> None:
-    tmp = f"{path}.tmp-{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    # A unique sibling also supports concurrent writers in the same process.
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.path.exists(path):
+            os.chmod(tmp, os.stat(path).st_mode & 0o777)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
 
 
 def append_jsonl(path: str, record: Dict[str, Any]) -> None:
-    line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-    with open(path, "a", encoding="utf-8") as f:
+    line = (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    with open(path, "a+b") as f:
+        if os.name == "posix":
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        f.seek(0, os.SEEK_END)
+        if f.tell():
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b"\n":
+                raise ResearchError(f"Cannot append to {path}: incomplete trailing record",
+                                    hint="Back up and repair the incomplete line before retrying; no bytes were discarded.")
         f.write(line)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def read_jsonl_from(path: str, offset: int):
     """Yield (record, end_offset) for complete lines after `offset`. Partial trailing lines are skipped."""
     try:
-        with open(path, "rb") as f:
-            f.seek(offset)
-            data = f.read()
-    except OSError:
+        f = open(path, "rb")
+    except FileNotFoundError:
         return
-    pos = offset
-    for raw in data.split(b"\n")[:-1] if not data.endswith(b"\n") else data.split(b"\n")[:-1]:
-        pos += len(raw) + 1
-        s = raw.strip()
-        if not s:
-            continue
-        try:
-            yield json.loads(s.decode("utf-8")), pos
-        except ValueError:
-            yield None, pos
+    with f:
+        f.seek(offset)
+        while True:
+            raw = f.readline()
+            if not raw.endswith(b"\n"):
+                break  # an incomplete trailing record belongs to the writer
+            pos = f.tell()
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw.decode("utf-8"))
+                if not isinstance(record, dict):
+                    raise ValueError("record must be an object")
+            except ValueError as e:
+                raise ResearchError(f"Malformed JSONL record in {path} ending at byte {pos}: {e}") from e
+            yield record, pos
 
 
 class Project:
@@ -481,10 +487,7 @@ class Project:
         self.conn.execute(
             "INSERT INTO events(ts,entity_type,entity_id,action,summary,author_type,author_name) VALUES(?,?,?,?,?,?,?)",
             (rec["ts"], etype, eid, action, summary, rec["author_type"], rec["author_name"]))
-        try:
-            append_jsonl(self.path("events.jsonl"), rec)
-        except OSError:
-            pass
+        append_jsonl(self.path("events.jsonl"), rec)
 
     # ------------------------------------------------------------------ generic entity ops
     def _decode(self, etype: str, row: Dict[str, Any]) -> Dict[str, Any]:
@@ -592,13 +595,21 @@ class Project:
                 self.set_links(etype, id_, links)
             if log:
                 self.event(etype, id_, "created", summary or f"{id_} {vals.get('title') or ''}".strip(), author)
-        self.export(etype, id_)
+            self.export(etype, id_)
         return self.get(etype, id_)
 
     def update_entity(self, etype: str, id_: str, changes: Dict[str, Any],
                       links: Optional[Dict[str, List[str]]] = None, action: str = "updated",
                       summary: Optional[str] = None, log: bool = True, touch: bool = True) -> Dict[str, Any]:
         spec = ENTITIES[etype]
+        if not self._suppress_export:
+            path = self.mirror_path(etype, id_)
+            rec = self.q1("SELECT hash FROM mirrors WHERE path=?", (self.rel(path),))
+            if rec and os.path.exists(path):
+                with open(path, "rb") as f:
+                    changed = sha256_bytes(f.read()) != rec["hash"]
+                if changed and self.import_file(path, etype) is None:
+                    raise ResearchError(f"Cannot update malformed record {self.rel(path)}")
         cur = self.get(etype, id_)
         diff = {k: v for k, v in changes.items() if k in dict(spec["columns"]) and cur.get(k) != v}
         link_changed = False
@@ -619,7 +630,7 @@ class Project:
             if log:
                 fields = [k for k in diff if k != "updated_at"] + (["links"] if link_changed else [])
                 self.event(etype, id_, action, summary or f"{id_}: {', '.join(fields)} changed")
-        self.export(etype, id_)
+            self.export(etype, id_)
         return self.get(etype, id_)
 
     # ------------------------------------------------------------------ mirrors
@@ -646,7 +657,9 @@ class Project:
             with open(path, "rb") as f:
                 cur = f.read()
             if sha256_bytes(cur) != rec["hash"]:
-                self.import_file(path, etype)
+                if self.import_file(path, etype) is None:
+                    raise ResearchError(f"Cannot export over malformed record {self.rel(path)}",
+                                        hint="Repair the file first; its contents have been preserved.")
         row = self.get(etype, id_)
         text = mirrors.render(etype, row, row.get("links", {}), views.mirror_tail(self, etype, id_))
         data = text.encode("utf-8")
@@ -674,13 +687,18 @@ class Project:
             values, links = mirrors.parse(etype, data.decode("utf-8"))
         except Exception as e:  # malformed YAML: keep DB as-is, warn, don't crash
             self.event(etype, None, "import_error", f"Could not parse {self.rel(path)}: {e}", {"author_type": "system"})
-            self._record_mirror(etype, "?", path, data)
             return None
         raw_id = values.pop("id", None) or os.path.splitext(os.path.basename(path))[0]
         try:
             id_ = schema.normalize_id(str(raw_id), spec["prefix"])
         except ResearchError:
             id_ = None
+        if id_:
+            other = self.q1("SELECT path FROM mirrors WHERE entity_type=? AND entity_id=? AND path!=?",
+                            (etype, id_, self.rel(path)))
+            if other and os.path.exists(self.abspath(other["path"])):
+                raise ResearchError(f"Duplicate id {id_}: {other['path']} and {self.rel(path)}",
+                                    hint="Resolve the IDs and references before syncing; both files are preserved.")
         if etype in schema.STATUSES and values.get("status") not in schema.STATUSES[etype]:
             values.pop("status", None)
         hand = {"author_type": "human", "author_name": os.environ.get("RESEARCH_AUTHOR"), "author_model": None}
@@ -759,11 +777,12 @@ class Project:
     def rebuild_index(self, backup: bool = True) -> Dict[str, int]:
         """Recreate research.db from the text files."""
         if backup and os.path.exists(self.db_path):
-            self.conn.close()
-            bak = self.path("cache", f"research.db.bak-{time.strftime('%Y%m%d-%H%M%S')}")
-            shutil.move(self.db_path, bak)
-            self.conn = schema.connect(self.db_path)
-            schema.migrate(self.conn)
+            # Keep the live index in place: a failed rebuild rolls back to it and
+            # other connections never keep writing an unlinked database inode.
+            fd, bak = tempfile.mkstemp(prefix="research.db.bak-", dir=self.path("cache"))
+            os.close(fd)
+            with sqlite3.connect(bak) as dest:
+                self.conn.backup(dest)
         counts: Dict[str, int] = {}
         self._suppress_export = True
         self._suppress_events = True   # the history comes from events.jsonl below, not from these imports
@@ -803,10 +822,8 @@ class Project:
             self._suppress_export = False
             self._suppress_events = False
             self.author = saved_author
-        # regenerate mirrors (tails) now that everything is loaded
-        for etype, spec in ENTITIES.items():
-            for row in self.q(f"SELECT id FROM {spec['table']}"):
-                self.export(etype, row["id"])
+        # Recovery reads canonical records. Normal sync refreshes generated tails;
+        # rebuilding must not rewrite hand edits or unknown front-matter fields.
         return counts
 
     def _import_quiet(self, path: str, etype: str) -> Optional[str]:
@@ -815,17 +832,16 @@ class Project:
             data = f.read()
         try:
             values, links = mirrors.parse(etype, data.decode("utf-8"))
-        except Exception:
-            return None
+        except Exception as e:
+            raise ResearchError(f"Cannot rebuild: malformed record {self.rel(path)}: {e}") from e
         raw_id = values.pop("id", None) or os.path.splitext(os.path.basename(path))[0]
         try:
             id_ = schema.normalize_id(str(raw_id), spec["prefix"])
         except ResearchError:
             id_ = self.next_id(spec["prefix"])
         if self.exists(etype, id_):
-            self.event(etype, id_, "conflict", f"Duplicate id {id_} in {self.rel(path)} — rename one of the files",
-                       {"author_type": "system", "author_name": None})
-            return None
+            raise ResearchError(f"Cannot rebuild: duplicate id {id_} in {self.rel(path)}",
+                                hint="Resolve the conflicting record IDs and references; both files have been preserved.")
         if etype in schema.STATUSES and values.get("status") not in schema.STATUSES[etype]:
             values["status"] = schema.STATUSES[etype][0]
         if etype == "finding" and not values.get("kind"):

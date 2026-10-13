@@ -19,7 +19,6 @@ from . import yamlio
 from .schema import ENTITIES
 
 GENERATED_MARKER = "<!-- research:generated — everything below is regenerated; edits here are ignored -->"
-_SKIP_FM = {"created_at", "updated_at"}  # still written, but not user-meaningful to edit
 # JSON columns that hold lists; rendered as [] when empty (all other JSON columns as {}).
 _LIST_COLS = {"tags", "metrics_requested", "expected_artifacts", "finding_ids", "failure_ids", "question_ids",
               "experiment_ids", "depends_on", "artifacts", "skills", "checks"}

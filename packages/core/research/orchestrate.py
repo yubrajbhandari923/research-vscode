@@ -81,11 +81,21 @@ def _lpath(p: Project, tid: str) -> str:
 
 
 def ledger(p: Project, tid: str) -> Dict[str, Any]:
+    default = {"frozen": {}, "attempts": [], "escalations": 0, "corrections": [], "children": [], "parent": None}
     try:
         with open(_lpath(p, tid), encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {"frozen": {}, "attempts": [], "escalations": 0, "corrections": [], "children": [], "parent": None}
+            value = json.load(f)
+        if not isinstance(value, dict):
+            raise ValueError("ledger must be an object")
+        for key, template in default.items():
+            if key in value and template is not None and not isinstance(value[key], type(template)):
+                raise ValueError(f"invalid ledger field {key}")
+        return {**default, **value}
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as e:
+        raise ResearchError(f"Cannot read task ledger {_lpath(p, tid)}: {e}",
+                            hint="Restore or repair the ledger; frozen tests and attempt history must not be reset.") from e
 
 
 def _save(p: Project, tid: str, led: Dict[str, Any]) -> None:
@@ -123,7 +133,11 @@ def freeze(p: Project, tid: str, paths: Any) -> Dict[str, Any]:
     led = ledger(p, tid)
     for path in as_list(paths):
         rel = p.rel(os.path.join(p.root, path))
-        led["frozen"][rel] = _hash(p, rel)
+        digest = _hash(p, rel)
+        if rel in led["frozen"] and led["frozen"][rel] != digest:
+            raise PolicyBlocked(f"{tid}: {rel} is already frozen and has changed",
+                                hint="Restore it or use `research orchestrate correct-test` with a reason.")
+        led["frozen"][rel] = digest
     led["frozen_at"] = now_iso()
     _save(p, tid, led)
     plans.add_task_note(p, tid, f"acceptance tests frozen: {', '.join(led['frozen'])}")
@@ -362,13 +376,14 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
             problems.append("files changed outside the contract's allowed_files: " + ", ".join(extra))
     hr = hooks.run(p, "post_implementation", task=tid)
     ran += len(hr["ran"])
-    problems += hooks.format_failures(hr)
+    problems += hooks.format_failures({"failed": [r for r in hr["failed"] if r["required"]]})
+    problems += [f"hook {r['hook']} skipped: {r['reason']}" for r in hr["blocked"]]
     checks = None
-    if task.get("checks"):
+    if task.get("checks") and not bad:
         checks = verification.verify_task(p, tid, transition=False)
         ran += len(checks["results"])
         problems += [f"check {r['check']} failed ({r['detail']})" + (f":\n{r['output'].strip()}" if r.get("output") else "") for r in checks["results"] if not r["ok"]]
-    if not ran and not problems:
+    if not (any(r["ok"] for r in hr["ran"]) or checks) and not problems:
         problems.append("no deterministic verifier ran (no task checks and no approved post_implementation hooks): this is not a pass")
     passed = not problems
     out: Dict[str, Any] = {"task": tid, "passed": passed, "diagnostics": problems, "hooks_skipped": hr["skipped"], "verifiers_run": ran}
@@ -424,8 +439,6 @@ _STRAT_PROTOCOL = {
 
 def _dispatch_strategy(p: Project, tid: str, task: Dict[str, Any], level, strategy, profile, model, allow_unfrozen, headless=False) -> Dict[str, Any]:
     from . import agents
-    from . import hooks
-    pre = hooks.gate(p, "preflight", task=tid)   # approved project preflight; a required failure blocks the dispatch
     led = ledger(p, tid)
     r = S.route_task(p, task, led, level=level, strategy=strategy, profile=profile, model=model)
     if S.requires_frozen(r, task) and not led["frozen"]:
@@ -455,7 +468,7 @@ def _dispatch_strategy(p: Project, tid: str, task: Dict[str, Any], level, strate
         _save(p, tid, led)
         ins.append(contract_md(p, tid))
     d = agents.dispatch(p, r["role"], tid, None, None, None, "\n".join(ins), policy=r, headless=headless)
-    return {**d, "tier": r["level"], "degraded": False, "route": r, "preflight": {"ran": [x["hook"] for x in pre["ran"]], "skipped": pre["skipped"]}}
+    return {**d, "tier": r["level"], "degraded": False, "route": r}
 
 
 def dispatch_task(p: Project, target: str, tier: Optional[str] = None, available: Any = None,

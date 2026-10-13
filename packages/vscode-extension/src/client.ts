@@ -9,6 +9,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { StringDecoder } from 'string_decoder';
 
 export class RpcError extends Error {
   constructor(message: string, public code?: number, public hint?: string, public kind?: string) {
@@ -25,7 +26,7 @@ interface Pending {
 
 export class CoreClient implements vscode.Disposable {
   private proc?: cp.ChildProcessWithoutNullStreams;
-  private buf = '';
+  private disposed = false;
   private nextId = 1;
   private pending = new Map<number, Pending>();
   private ready?: Promise<any>;
@@ -48,6 +49,7 @@ export class CoreClient implements vscode.Disposable {
   }
 
   private start(): Promise<any> {
+    if (this.disposed) return Promise.reject(new RpcError('Research client disposed'));
     if (this.ready) return this.ready;
     this.ready = new Promise((resolve, reject) => {
       const python = this.pythonPath;
@@ -66,21 +68,32 @@ export class CoreClient implements vscode.Disposable {
       }
       this.proc = proc;
       let started = false;
+      let buf = '';
+      const decoder = new StringDecoder('utf8');
+      const startupTimer = setTimeout(() => {
+        failStart('Research core timed out during start-up');
+        proc.kill();
+      }, 30_000);
       const failStart = (msg: string) => {
         if (!started) {
           started = true;
-          this.ready = undefined;
+          clearTimeout(startupTimer);
+          if (this.proc === proc) this.ready = undefined;
           reject(new RpcError(msg));
         }
       };
+      proc.stdin.on('error', (e) => {
+        if (this.proc === proc) this.rejectPending(`Research core input failed: ${e.message}`);
+      });
       proc.on('error', (e) => failStart(`Could not start Python (${python}): ${e.message}. Set "research.pythonPath".`));
       proc.stderr.on('data', (d) => this.out.append(`[core stderr] ${d}`));
       proc.stdout.on('data', (d: Buffer) => {
-        this.buf += d.toString('utf8');
+        if (this.proc !== proc) return;
+        buf += decoder.write(d);
         let i: number;
-        while ((i = this.buf.indexOf('\n')) >= 0) {
-          const line = this.buf.slice(0, i).trim();
-          this.buf = this.buf.slice(i + 1);
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
           if (!line) continue;
           let msg: any;
           try {
@@ -89,7 +102,9 @@ export class CoreClient implements vscode.Disposable {
             this.out.appendLine(`[core] non-JSON output: ${line}`);
             continue;
           }
+          if (!msg || typeof msg !== 'object' || Array.isArray(msg)) continue;
           if (msg.event === 'ready') {
+            clearTimeout(startupTimer);
             started = true;
             this.restarts = 0;
             this.readyInfo = msg;
@@ -111,11 +126,9 @@ export class CoreClient implements vscode.Disposable {
       proc.on('exit', (code, sig) => {
         this.out.appendLine(`[core] exited (code=${code}, signal=${sig})`);
         failStart(`Research core exited during start-up (code ${code}). Is ${python} Python ≥ 3.8? See Output → Research.`);
-        for (const [, p] of this.pending) {
-          clearTimeout(p.timer);
-          p.reject(new RpcError('Research core process exited'));
-        }
-        this.pending.clear();
+        clearTimeout(startupTimer);
+        if (this.proc !== proc) return;
+        this.rejectPending('Research core process exited');
         this.proc = undefined;
         this.ready = undefined;
       });
@@ -143,23 +156,40 @@ export class CoreClient implements vscode.Disposable {
         reject(new RpcError(`Research core timed out on ${method}`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer, method });
-      proc.stdin.write(JSON.stringify({ id, method, params }) + '\n');
+      try {
+        proc.stdin.write(JSON.stringify({ id, method, params }) + '\n', (error) => {
+          if (!error) return;
+          clearTimeout(timer);
+          this.pending.delete(id);
+          reject(new RpcError(`Research core write failed: ${error.message}`));
+        });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
+  private rejectPending(message: string) {
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new RpcError(message));
+    }
+    this.pending.clear();
+  }
+
   restart() {
-    this.proc?.kill();
+    const proc = this.proc;
     this.proc = undefined;
     this.ready = undefined;
+    this.rejectPending('Research core restarted');
+    proc?.kill();
   }
 
   dispose() {
-    try {
-      this.proc?.stdin.end();
-      this.proc?.kill();
-    } catch {
-      /* ignore */
-    }
+    this.disposed = true;
+    this.restart();
   }
 }
 

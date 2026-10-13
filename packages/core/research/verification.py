@@ -12,12 +12,12 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
 from .schema import REVIEW_VERDICTS, normalize_id, type_of
 from .store import Project, append_jsonl
+from .processes import shell_check
 from .util import NotFound, PolicyBlocked, ResearchError, as_list, jload, now_iso
 
 _METRIC_RE = re.compile(r"^\s*(?:(?P<target>(?:RUN|EXP)[-_]?\d+)\s*:\s*)?(?P<name>[\w.\-/]+)\s*(?P<op><=|>=|==|!=|<|>)\s*(?P<value>[-+0-9.eE]+)\s*$", re.I)
@@ -104,13 +104,10 @@ def run_check(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, 
     out: Dict[str, Any] = {"check": describe_check(c), "type": c["type"]}
     if c["type"] == "command":
         timeout = float(_policy(p).get("check_timeout_seconds") or 600)
-        try:
-            r = subprocess.run(c["run"], shell=True, cwd=p.root, capture_output=True, text=True, timeout=timeout,
-                               env={**os.environ, "RESEARCH_ROOT": p.root})
-            out.update(ok=r.returncode == 0, detail=f"exit {r.returncode}",
-                       output=((r.stdout or "") + (r.stderr or ""))[-2000:])
-        except subprocess.TimeoutExpired:
-            out.update(ok=False, detail=f"timed out after {timeout:g}s")
+        r = shell_check(c["run"], cwd=p.root, timeout=timeout, output_limit=2000,
+                        env={**os.environ, "RESEARCH_ROOT": p.root})
+        out.update(ok=r["ok"], output=r["output"],
+                   detail=f"timed out after {timeout:g}s" if r["timed_out"] else f"exit {r['exit_code']}")
     elif c["type"] == "file":
         ap = p.abspath(c["path"])
         ok = bool(ap and os.path.exists(ap))
@@ -179,6 +176,8 @@ def verify_task(p: Project, task_id: str, transition: bool = True) -> Dict[str, 
     """Run a task's checks and record the result. A task in `verify` moves to done (pass) or back to running (fail)."""
     from . import plans as P
     tid = normalize_id(task_id, "T")
+    from .orchestrate import assert_frozen_intact
+    assert_frozen_intact(p, tid)
     task = p.get("task", tid)
     checks = task.get("checks") or []
     if not checks:
@@ -192,7 +191,7 @@ def verify_task(p: Project, task_id: str, transition: bool = True) -> Dict[str, 
     rec = record(p, tid, "check", "pass" if passed else "fail", summary, results)
     if transition and task["status"] == "verify":
         if passed:
-            P.update_task(p, tid, status="done", completed_by=P.author_label(p))
+            P._update_task(p, tid, status="done", completed_by=P.author_label(p))
         else:
             P.update_task(p, tid, status="running")
     return {"task": p.get("task", tid), "passed": passed, "results": results, "record": rec}

@@ -81,6 +81,8 @@ def run(run_dir: str, command: str, cwd: Optional[str] = None, tee: bool = False
                                 start_new_session=True)
     except OSError as e:
         err.write(f"[research.runner] failed to start: {e}\n".encode())
+        out.close()
+        err.close()
         write_status(run_dir, **{**status, "state": "failed", "exit_code": 127, "ended_at": _now(), "error": str(e)})
         return 127
     status["pid"] = proc.pid

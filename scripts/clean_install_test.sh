@@ -9,7 +9,9 @@ T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 echo "== clean dir: $T"
 "$PY" -m venv "$T/venv"
-"$T/venv/bin/pip" install -q "$ROOT"/dist/research_panel-*.whl
+"$T/venv/bin/pip" install --no-index --no-deps -q "$ROOT"/dist/research_panel-*.whl
+unset PYTHONPATH PYTHONHOME RESEARCH_ROOT RESEARCH_CONFIG RESEARCH_AGENT_ROLE RESEARCH_AGENT_MODEL || true
+export XDG_CONFIG_HOME="$T/config"
 export PATH="$T/venv/bin:$PATH" RESEARCH_AUTHOR_TYPE=human
 unset CLAUDECODE RESEARCH_AGENT || true
 command -v research
@@ -43,5 +45,9 @@ A="$(research --json artifact list)"
 echo "== scan for leaked build-machine paths"
 if grep -rIl -e "/home/claude" -e "/tmp/claude-0" "$T/moved/.research" "$T/venv/lib"/python*/site-packages/research "$T/venv/lib"/python*/site-packages/research_cli ; then
   echo "LEAK FOUND"; exit 1; fi
-( cd "$T" && unzip -q -o "$ROOT"/dist/research-panel-*.vsix -d vsix && ! grep -rIl -e "/home/claude" -e "/tmp/claude-0" vsix ) && echo "no leaked paths in project, wheel or VSIX"
+( cd "$T" && unzip -q -o "$ROOT"/dist/research-panel-*.vsix -d vsix )
+if grep -rIl -e "/home/claude" -e "/tmp/claude-0" "$T/vsix"; then
+  echo "LEAK FOUND IN VSIX"; exit 1
+fi
+echo "no leaked paths in project, wheel or VSIX"
 echo "ALL CLEAN-INSTALL CHECKS PASSED"

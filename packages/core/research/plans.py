@@ -185,6 +185,20 @@ def update_plan(project: Project, plan_id: str, **fields) -> Dict[str, Any]:
 
 
 def update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
+    """Update a task, enforcing completion through every public update path."""
+    warnings = []
+    if fields.get("status") == "done":
+        from . import orchestrate, verification
+        tid = normalize_id(task_id, "T")
+        orchestrate.assert_frozen_intact(project, tid)
+        warnings = verification.gate_task_completion(project, tid)
+    out = _update_task(project, task_id, **fields)
+    if warnings:
+        out["warnings"] = warnings
+    return out
+
+
+def _update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
     """Update task fields."""
     tid = normalize_id(task_id, "T")
     task = project.q1("SELECT * FROM tasks WHERE id=?", (tid,))
@@ -233,6 +247,14 @@ def update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
                 raise NotFound(f"Task dependency {d} not found")
             dep_ids.append(d)
         updates["depends_on"] = dep_ids or None
+        pending, seen = list(dep_ids), set()
+        while pending:
+            dep = pending.pop()
+            if dep == tid:
+                raise ResearchError(f"Task dependency cycle involving {tid}")
+            if dep not in seen:
+                seen.add(dep)
+                pending.extend(project.get("task", dep).get("depends_on") or [])
 
     # Validate related entities
     if "related_question_id" in updates and updates["related_question_id"]:
@@ -363,6 +385,12 @@ def get_next_ready_task(project: Project, plan_id: str = None) -> Optional[Dict[
 
 def start_task(project: Project, task_id: str, assigned_role: str = None, force: bool = False) -> Dict[str, Any]:
     """Claim a task and mark it running. Refuses a task another actor has claimed (unless force)."""
+    # The read and state transition must share the SQLite write lock.
+    with project.tx():
+        return _claim_task(project, task_id, assigned_role, force)
+
+
+def _claim_task(project: Project, task_id: str, assigned_role: str, force: bool) -> Dict[str, Any]:
     tid = normalize_id(task_id, "T")
     task = get_task_with_deps(project, tid)
     me = author_label(project)
@@ -436,11 +464,7 @@ def complete_task(
     artifacts: List[str] = None
 ) -> Dict[str, Any]:
     """Mark a task as done. If it has checks, they run first and gate completion (see verification)."""
-    from . import verification as _v
     tid = normalize_id(task_id, "T")
-    from . import orchestrate as _o
-    _o.assert_frozen_intact(project, tid)
-    warnings = _v.gate_task_completion(project, tid)
     updates = {
         "status": "done",
         "completed_at": now_iso(),
@@ -451,10 +475,7 @@ def complete_task(
     if artifacts:
         updates["artifacts"] = [normalize_id(a, "A") for a in as_list(artifacts)]
 
-    out = update_task(project, tid, **updates)
-    if warnings:
-        out["warnings"] = warnings
-    return out
+    return update_task(project, tid, **updates)
 
 
 def block_task(project: Project, task_id: str, blockers: str) -> Dict[str, Any]:

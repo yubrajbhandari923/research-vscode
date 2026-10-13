@@ -48,9 +48,11 @@ def load_manifest(p: Project) -> Dict[str, Dict[str, Any]]:
     try:
         with open(path, encoding="utf-8") as f:
             data = yamlio.load(f.read()) or {}
-    except Exception:
-        return {}
-    return {str(k): (v or {}) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception as e:  # normalize errors from either YAML implementation; never discard the manifest
+        raise ResearchError(f"Cannot read skill manifest {path}: {e}") from e
+    if not isinstance(data, dict) or any(v is not None and not isinstance(v, dict) for v in data.values()):
+        raise ResearchError(f"Skill manifest {path} must map skill names to settings")
+    return {str(k): (v or {}) for k, v in data.items()}
 
 
 def save_manifest(p: Project, m: Dict[str, Dict[str, Any]]) -> None:

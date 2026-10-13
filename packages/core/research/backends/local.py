@@ -31,9 +31,9 @@ class LocalBackend(Backend):
         run_dir = project.abspath(run["run_dir"])
         cwd = project.abspath(run.get("working_dir") or ".")
         argv = runner_argv(run_dir, run["command"], cwd)
-        with open(os.devnull, "rb") as devnull:
+        with open(os.devnull, "rb") as devnull, open(os.path.join(run_dir, "runner.err"), "ab") as err:
             proc = subprocess.Popen(argv, cwd=cwd, env=runner_env(), stdin=devnull,
-                                    stdout=subprocess.DEVNULL, stderr=open(os.path.join(run_dir, "runner.err"), "ab"),
+                                    stdout=subprocess.DEVNULL, stderr=err,
                                     start_new_session=True)
         return {"pid": proc.pid, "hostname": hostname(), "status": "running"}
 
@@ -53,8 +53,9 @@ class LocalBackend(Backend):
     def cancel(self, project, run: Dict[str, Any]) -> None:
         st = read_status(project.abspath(run["run_dir"])) or {}
         pid = st.get("runner_pid") or run.get("pid")
-        if st.get("hostname") and st["hostname"] != hostname():
-            raise ResearchError(f"{run['id']} is running on {st['hostname']}; cancel it there.")
+        host = st.get("hostname") or run.get("hostname")
+        if host and host != hostname():
+            raise ResearchError(f"{run['id']} is running on {host}; cancel it there.")
         if not pid or not pid_alive(pid):
             raise ResearchError(f"{run['id']} is not running")
         os.kill(int(pid), signal.SIGTERM)

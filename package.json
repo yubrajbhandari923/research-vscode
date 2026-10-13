@@ -8,8 +8,9 @@
     "build": "npm --prefix packages/vscode-extension run build",
     "typecheck": "npm --prefix packages/vscode-extension run typecheck",
     "package": "bash scripts/package.sh",
-    "test": "python3 -m pytest -q && npm --prefix packages/vscode-extension run typecheck",
+    "test": "python3 -m pytest -q && npm run typecheck && npm run test:client",
     "test:ext": "npm --prefix packages/vscode-extension run test:ext",
-    "demo": "bash examples/alpha-sweep/run_demo.sh"
+    "demo": "bash examples/alpha-sweep/run_demo.sh",
+    "test:client": "npm --prefix packages/vscode-extension run test:client"
   }
 }

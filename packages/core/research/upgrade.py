@@ -1,6 +1,6 @@
 """`research upgrade`: bring an existing project up to the installed Research OS, losing nothing.
 
-Four kinds of change, all previewable, all idempotent:
+Six kinds of change, all previewable, all idempotent:
   * **schema**     — the existing versioned SQLite migrations (`schema.migrate`); the index is rebuildable anyway
   * **filesystem** — create missing managed directories
   * **templates**  — copy missing default skills/prompts/templates; never overwrite a customized file
@@ -19,8 +19,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import agentsmd, schema, yamlio
-from .store import CONFIG_HEADER, DEFAULT_CONFIG, RESEARCH_DIR, SUBDIRS, TEMPLATES, Project, _atomic_write, \
-    _deep_merge, find_root
+from .store import DEFAULT_CONFIG, RESEARCH_DIR, SUBDIRS, TEMPLATES, Project, _atomic_write, find_root
 from .util import NotInitialized, ResearchError
 
 # Managed directories. `hpc` is created only when HPC is configured (the features are opt-in).
@@ -147,18 +146,6 @@ def _legacy_flow_config(root: str) -> bool:
             return not configfile.editable(f.read())
     except OSError:
         return False
-
-
-def _config_additions(raw: Dict[str, Any], defaults: Dict[str, Any], prefix: str = "") -> List[str]:
-    """Dotted keys present in the defaults but absent from the project's own config.yaml."""
-    out = []
-    for k, v in sorted(defaults.items()):
-        key = f"{prefix}{k}"
-        if k not in raw:
-            out.append(key)
-        elif isinstance(v, dict) and isinstance(raw.get(k), dict):
-            out += _config_additions(raw[k], v, key + ".")
-    return out
 
 
 def _raw_config(root: str) -> Dict[str, Any]:

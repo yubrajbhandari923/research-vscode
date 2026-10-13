@@ -538,17 +538,26 @@ def serve(root: str, stdin=None, stdout=None) -> None:
         except ValueError:
             send({"id": None, "error": {"message": "invalid JSON", "code": -32700}})
             continue
-        rid, method, params = req.get("id"), req.get("method", ""), req.get("params") or {}
-        if "author" in params:  # optional author override from the UI
-            srv.author = detect_author(**{k: v for k, v in (params.pop("author") or {}).items()
-                                          if k in ("agent", "model", "author_type")})
-            if srv.p:
-                srv.p.author = srv.author
+        if not isinstance(req, dict) or not isinstance(req.get("method"), str):
+            send({"id": None, "error": {"message": "invalid request", "code": -32600}})
+            continue
+        rid, method, params = req.get("id"), req["method"], req.get("params", {})
+        if not isinstance(params, dict):
+            send({"id": rid, "error": {"message": "params must be an object", "code": -32602}})
+            continue
         fn = getattr(srv, "m_" + method, None)
         if fn is None:
             send({"id": rid, "error": {"message": f"unknown method {method}", "code": -32601}})
             continue
         try:
+            if "author" in params:  # optional author override from the UI
+                author = params.pop("author")
+                if not isinstance(author, dict):
+                    raise TypeError("author must be an object")
+                srv.author = detect_author(**{k: v for k, v in author.items()
+                                              if k in ("agent", "model", "author_type")})
+                if srv.p:
+                    srv.p.author = srv.author
             if method not in ("ping", "init") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)

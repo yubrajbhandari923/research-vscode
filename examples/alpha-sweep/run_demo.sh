@@ -5,7 +5,11 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DEST="${1:-$HERE/demo-project}"
-rm -rf "$DEST" && mkdir -p "$DEST" && cp "$HERE/sim.py" "$HERE/plot.py" "$DEST/"
+if [ -e "$DEST" ]; then
+  echo "Refusing to overwrite $DEST; choose a new destination directory." >&2
+  exit 1
+fi
+mkdir -p "$DEST" && cp "$HERE/sim.py" "$HERE/plot.py" "$DEST/"
 cd "$DEST"
 git init -q && git add sim.py plot.py && git -c user.name=demo -c user.email=demo@example.com commit -qm "demo code"
 export RESEARCH_AUTHOR_TYPE=human; unset CLAUDECODE RESEARCH_AGENT || true

@@ -6,7 +6,7 @@ cd "$ROOT"
 mkdir -p dist
 rm -f dist/*.vsix dist/*.whl dist/*.tar.gz
 echo "==> VS Code extension"
-( cd packages/vscode-extension && [ -d node_modules ] || npm install --no-audit --no-fund )
+( cd packages/vscode-extension && { [ -d node_modules ] || npm ci --no-audit --no-fund; } )
 ( cd packages/vscode-extension && npm run package )
 echo "==> Python package"
 PY="${PYTHON:-python3}"

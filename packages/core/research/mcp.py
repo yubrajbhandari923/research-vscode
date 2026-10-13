@@ -223,10 +223,17 @@ class McpServer:
         self.tools = {t.name: t for t in _tools()}
 
     def handle(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        mid, method, params = msg.get("id"), msg.get("method"), msg.get("params") or {}
+        if (not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0"
+                or not isinstance(msg.get("method"), str)):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid request"}}
+        mid, method, params = msg.get("id"), msg.get("method"), msg.get("params", {})
+        if isinstance(mid, (dict, list, bool)):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid request id"}}
         if mid is None:  # notification (e.g. notifications/initialized): never answered
             return None
         try:
+            if not isinstance(params, dict):
+                raise _RpcError(-32602, "params must be an object")
             return {"jsonrpc": "2.0", "id": mid, "result": self._dispatch(method, params)}
         except _RpcError as e:
             return {"jsonrpc": "2.0", "id": mid, "error": {"code": e.code, "message": str(e)}}
@@ -234,7 +241,10 @@ class McpServer:
     def _dispatch(self, method: str, params: Dict[str, Any]) -> Any:
         if method == "initialize":
             want = params.get("protocolVersion")
-            client = (params.get("clientInfo") or {}).get("name")
+            info = params.get("clientInfo") or {}
+            if not isinstance(info, dict):
+                raise _RpcError(-32602, "clientInfo must be an object")
+            client = info.get("name")
             if client and not self.explicit_author and self.srv.author.get("author_type") == "human":
                 from .util import detect_author
                 self.srv.author = detect_author(agent=str(client).strip().lower().replace(" ", "-"))
@@ -250,7 +260,10 @@ class McpServer:
         if method in ("resources/list", "prompts/list"):
             return {method.split("/")[0]: []}
         if method == "tools/call":
-            return self._call(params.get("name"), params.get("arguments") or {})
+            args = params.get("arguments", {})
+            if not isinstance(params.get("name"), str) or not isinstance(args, dict):
+                raise _RpcError(-32602, "tools/call needs a string name and object arguments")
+            return self._call(params["name"], args)
         raise _RpcError(-32601, f"Method not found: {method}")
 
     def _call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -302,7 +315,7 @@ def serve(root: str, stdin=None, stdout=None, author: Optional[Dict[str, Any]] =
         except ValueError:
             resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
         else:
-            if isinstance(msg, list):  # JSON-RPC batch (older protocol versions)
+            if isinstance(msg, list) and msg:  # JSON-RPC batch (older protocol versions)
                 resps = [r for r in (server.handle(m) for m in msg) if r]
                 resp = resps if resps else None
             else:

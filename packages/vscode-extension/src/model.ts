@@ -29,6 +29,7 @@ export class Model implements vscode.Disposable {
   private timer?: NodeJS.Timeout;
   private inflight?: Promise<void>;
   private again = false;
+  private disposed = false;
   private poll?: NodeJS.Timeout;
 
   constructor(public client: CoreClient, private out: vscode.OutputChannel) {}
@@ -39,11 +40,13 @@ export class Model implements vscode.Disposable {
 
   /** Debounced refresh (file watcher, after mutations). */
   schedule(ms = 250) {
+    if (this.disposed) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => this.refresh(), ms);
   }
 
   async refresh(): Promise<void> {
+    if (this.disposed) return;
     if (this.inflight) {
       this.again = true;
       return this.inflight;
@@ -75,8 +78,10 @@ export class Model implements vscode.Disposable {
         await vscode.commands.executeCommand('setContext', 'research.ready', true);
       } finally {
         this.inflight = undefined;
-        this._onChange.fire();
-        this.updatePolling();
+        if (!this.disposed) {
+          this._onChange.fire();
+          this.updatePolling();
+        }
         if (this.again) {
           this.again = false;
           this.schedule(50);
@@ -114,6 +119,8 @@ export class Model implements vscode.Disposable {
   }
 
   dispose() {
+    this.disposed = true;
+    this._onChange.dispose();
     if (this.poll) clearInterval(this.poll);
     if (this.timer) clearTimeout(this.timer);
   }

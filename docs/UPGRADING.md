@@ -130,3 +130,24 @@ git checkout .research AGENTS.md          # or: rm -rf .research && mv .research
 
 An older Research OS refuses to open a project migrated to a newer schema rather than damaging it, so
 downgrading the tool without restoring `.research/` is safe but will simply decline to run.
+
+## Independent stabilization changes (unreleased)
+
+Software remains 0.7.0 and schema remains 3 pending the
+[1.0.0 review gates](RELEASE_1_0_0_REVIEW.md). No schema migration is required by this hardening pass.
+
+Rebuild now refuses malformed canonical records and duplicate IDs instead of omitting them. It
+backs up a readable live database, rolls back failed imports, and does not rewrite canonical
+mirrors. Complete malformed JSONL records are errors; incomplete trailing records are preserved
+and block appends until repaired. Back up files before repairing them. Resolve front-matter IDs
+and references for branch collisions; changing filenames alone is insufficient.
+
+Enabled required hooks without current approval now block their gate. Review and explicitly
+approve the command or deliberately disable the hook. Generic task completion updates now apply
+the same checks as `task done`. Re-freezing changed tests is refused; use the correction workflow.
+Manually attached completed runs without a zero exit code no longer pass `experiment check`.
+These are intentional correctness changes; existing records are not rewritten to manufacture a pass.
+
+For an unreadable SQLite index, stop clients and back up the project before moving the index aside.
+Do not delete canonical records, logs or journals as an automatic repair step. See the README and
+review for remaining crash-consistency and concurrency limitations.

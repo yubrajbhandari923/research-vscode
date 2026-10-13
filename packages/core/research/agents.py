@@ -235,6 +235,13 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
         raise ResearchError(f"role must be one of {', '.join(ROLES)}")
     if role == "planner" and not (objective or target):
         raise ResearchError("The planner needs an objective (--objective \"…\") or a plan id")
+    preflight = None
+    if target and type_of(target) == "task":
+        from . import hooks
+        tid = normalize_id(target, "T")
+        p.get("task", tid)
+        pre = hooks.gate(p, "preflight", task=tid)
+        preflight = {"ran": [x["hook"] for x in pre["ran"]], "skipped": pre["skipped"]}
     if policy is None and S.active_name(p, strategy):
         cls = led = None
         if target and type_of(target) == "task":
@@ -295,6 +302,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
             f"Dispatched {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else "")
             + (f" [strategy {policy['strategy']}@{policy['fingerprint']} level {policy['level']} model {mdl}]" if policy else ""))
     return {"role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel, "policy": snap,
+            "preflight": preflight,
             "target": label if target else None, "headless": headless, "usage_parser": prof.get("usage_parser"),
             "available": bool(shutil.which(cmd)),
             "shell": " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " + " ".join(shlex.quote(a) for a in argv)}
@@ -305,15 +313,27 @@ def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None)
 
     Only providers whose profile sets `usage_parser` yield usage; otherwise it is recorded as unavailable, never zero."""
     import subprocess
+    from .processes import stop_process
     from . import usage as U
     if not d.get("headless"):
         raise ResearchError("run_headless needs a dispatch prepared with headless=True")
     t0 = time.time()
     try:
-        r = subprocess.run(d["argv"], cwd=p.root, env={**os.environ, **d["env"]}, capture_output=True, text=True, timeout=timeout)
-        code, out, err, timed_out = r.returncode, r.stdout, r.stderr, False
-    except subprocess.TimeoutExpired as e:
-        code, out, err, timed_out = None, (e.stdout or b"").decode() if isinstance(e.stdout, bytes) else (e.stdout or ""), "", True
+        proc = subprocess.Popen(d["argv"], cwd=p.root, env={**os.environ, **d["env"]},
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=os.name == "posix")
+    except OSError as e:
+        raise ResearchError(f"Could not start agent {d['argv'][0]!r}: {e}") from e
+    timed_out = False
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except BaseException as e:
+        stop_process(proc)
+        out, err = proc.communicate()
+        if not isinstance(e, subprocess.TimeoutExpired):
+            raise
+        timed_out = True
+    code = 124 if timed_out else proc.returncode
     parser = U.PARSERS.get(d.get("usage_parser") or "")
     parsed = parser(out) if parser else {}
     pol = d.get("policy") or {}

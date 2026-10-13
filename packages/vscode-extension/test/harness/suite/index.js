@@ -157,11 +157,11 @@ exports.run = async function () {
     const found = path.join(process.env.RESEARCH_TEST_USERDIR, 'User', 'globalStorage', 'research-local.research-panel', 'bin', 'research');
     check('terminal shim written', fs.existsSync(found), found);
     if (found) {
-      const outp = cp.execSync(`${found} --json status`, { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '' } }).toString();
+      const outp = cp.execFileSync(found, ['--json', 'status'], { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '' } }).toString();
       check('shim runs bundled CLI', JSON.parse(outp).project.name === 'alpha-sweep demo');
     }
     // file watcher: CLI change shows up without manual refresh
-    cp.execSync(`${found} finding create "watcher test finding"`, { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '1' } });
+    cp.execFileSync(found, ['finding', 'create', 'watcher test finding'], { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '1' } });
     await new Promise((res) => setTimeout(res, 2500));
     const wf = model.tree.findings.find((f) => f.title === 'watcher test finding');
     check('file watcher picks up agent CLI change', !!wf, wf && wf.author_type);

@@ -1,3 +1,5 @@
+> **Historical design/progress document.** This file preserves earlier reasoning and may describe unimplemented or superseded behavior. Use [SPEC.md](SPEC.md) for implemented interfaces and [the release review](RELEASE_1_0_0_REVIEW.md) for current verification.
+
 # Research OS Architecture Audit & Redesign Plan
 
 **Date:** 2026-10-05

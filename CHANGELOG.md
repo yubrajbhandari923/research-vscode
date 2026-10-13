@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — 1.0.0 stabilization (not a 1.0.0 release)
+
+- Preserve malformed canonical files; abort conflicting or malformed rebuilds transactionally and keep canonical bytes unchanged. Back up the live index without replacing its inode.
+- Serialize POSIX JSONL appends, refuse incomplete tails, surface corrupt complete records and fsync shared text writes. Roll back entity-index updates when canonical export fails.
+- Close task completion and re-freezing bypasses; reject dependency cycles and serialize claims. Fail closed on corrupt orchestration ledgers and skill manifests.
+- Apply preflight hooks across task dispatch paths; block required unapproved hooks and preserve advisory semantics. Require actual zero exit codes in experiment validation.
+- Share hook/check subprocess cleanup and bounded output; report headless timeout failure. Fix local runner descriptor cleanup and remote-host cancellation checks.
+- Validate RPC/MCP input shapes; fix extension RPC restart races, split UTF-8 decoding, startup timeout, stdin errors and refresh disposal.
+- Remove obsolete config-migration helpers, unused constants and duplicate merge/check-process implementations. Remove setuptools from runtime dependencies and repair stale lock metadata.
+- Isolate artifact installation tests; copy extension-test workspaces; refuse destructive demo recreation. Add release regression tests and client lifecycle tests.
+- Rewrite the README and correct obsolete specification claims. Keep software at 0.7.0 and schema at 3 pending the release gates in `docs/RELEASE_1_0_0_REVIEW.md`.
+
 ## 0.7.0 — 2026-10-12
 
 - **Executable harness hooks** (`harness.hooks`, `research hook …`): preflight, post-implementation, pre-experiment and

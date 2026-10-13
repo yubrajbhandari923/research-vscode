@@ -1,6 +1,7 @@
 """Small shared helpers (no project state here)."""
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import hashlib
 import json
@@ -179,3 +180,17 @@ def detect_author(agent: Optional[str] = None, model: Optional[str] = None,
     if at == "agent" and name and role and "/" not in name:
         name = f"{name}/{role}"  # e.g. claude/verifier: roles of one CLI count as different reviewers
     return {"author_type": at, "author_name": name, "author_model": model if at == "agent" else None}
+
+
+def deep_merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge `over` onto `base`, deeply. The result shares no mutable structure with either input:
+    `p.config` is edited in place all over the codebase, and DEFAULT_CONFIG must never be corrupted by it."""
+    out: Dict[str, Any] = {}
+    for k, v in (base or {}).items():
+        out[k] = copy.deepcopy(v)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out

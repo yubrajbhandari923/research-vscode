@@ -17,13 +17,12 @@ is merged, the highest layer winning per key. A one-dispatch override (`--strate
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import shutil
 from typing import Any, Dict, List, Optional
 
-from .util import ResearchError, as_list
+from .util import ResearchError, as_list, deep_merge as _merge
 
 CLASSES = ["planning", "scientific", "verification", "checked", "unchecked", "mechanical"]
 _ROLE_FOR_CLASS = {"planning": "planner", "scientific": "analyst", "verification": "verifier"}
@@ -65,13 +64,6 @@ def _orch(p) -> Dict[str, Any]:
 
 def active_name(p, override: Optional[str] = None) -> Optional[str]:
     return override or _orch(p).get("active_strategy") or None
-
-
-def _merge(base: Dict[str, Any], over: Dict[str, Any]) -> Dict[str, Any]:
-    out = copy.deepcopy(base)
-    for k, v in over.items():
-        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else copy.deepcopy(v)
-    return out
 
 
 def _chain(defs: Dict[str, Any], name: Any) -> List[str]:

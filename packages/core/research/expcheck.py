@@ -43,6 +43,9 @@ def check(p, exp_id: str, request_synthesis: bool = False) -> Dict[str, Any]:
         if r["status"] != "completed":
             bad(rid, f"run {r['status']}" + (f" (exit {r['exit_code']})" if r["exit_code"] is not None else ""))
             continue
+        if r["exit_code"] != 0:
+            bad(rid, f"completed status without a verified zero exit code ({r['exit_code']})")
+            continue
         ok(f"{rid} completed" + (f" (exit {r['exit_code']})" if r["exit_code"] is not None else ""))
         n = p.q1("SELECT COUNT(*) AS n FROM metrics WHERE run_id=?", (rid,))["n"]
         (ok(f"{rid} logged {n} metric value(s)") if n else bad(rid, "completed but logged no metrics"))
@@ -51,7 +54,13 @@ def check(p, exp_id: str, request_synthesis: bool = False) -> Dict[str, Any]:
             (ok(f"{a['id']} {i['status']}") if i["status"] in ("ok", "directory") else bad(rid, f"artifact {a['id']} {i['status']}: {i['detail']}"))
     hr = hooks.run(p, "post_experiment", experiment=exp_id, run_id=(scope[-1]["id"] if scope else None))
     for h in hr["ran"]:
-        (ok(f"hook {h['hook']} passed") if h["ok"] else bad(scope[-1]["id"] if scope else "-", f"hook {h['hook']} failed: {h['output'].strip()[-300:]}"))
+        message = f"hook {h['hook']} failed: {h['output'].strip()[-300:]}"
+        if h["ok"]:
+            ok(f"hook {h['hook']} passed")
+        elif h["required"]:
+            bad(scope[-1]["id"] if scope else "-", message)
+        else:
+            human.append(message)
     human += [f"hook {s['hook']} skipped: {s['reason']}" for s in hr["skipped"]]
     if st["unreviewed_failed"]:
         human.append(f"{st['unreviewed_failed']} failed run(s) have not been reviewed (are they dead ends or bugs?)")
@@ -59,7 +68,8 @@ def check(p, exp_id: str, request_synthesis: bool = False) -> Dict[str, Any]:
     if due:
         human.append("synthesis is due: " + ("run budget reached" if st["over_run_budget"] else f"{st['unsynthesized']} finished run(s) not yet synthesized"))
     out: Dict[str, Any] = {"experiment": exp_id, "checked_at": now_iso(), "runs_checked": [r["id"] for r in scope],
-                           "deterministic": {"validated": validated, "failed": failed, "pending": pending, "all_passed": not failed and not pending and bool(validated)},
+                           "deterministic": {"validated": validated, "failed": failed, "pending": pending,
+                                             "all_passed": not failed and not pending and not hr["blocked"] and bool(scope) and bool(validated)},
                            "needs_human": human, "synthesis": {"due": due, "dispatch": None}}
     if request_synthesis and due and not pending:   # interpretation stays with the analyst role; this only prepares it
         d = agents.dispatch(p, "analyst", exp_id)

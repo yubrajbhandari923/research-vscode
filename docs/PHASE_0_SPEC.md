@@ -1,3 +1,5 @@
+> **Historical design/progress document.** This file preserves earlier reasoning and may describe unimplemented or superseded behavior. Use [SPEC.md](SPEC.md) for implemented interfaces and [the release review](RELEASE_1_0_0_REVIEW.md) for current verification.
+
 # Phase 0: Plan/Task Foundation — Detailed Implementation Spec
 
 **Duration:** Week 1

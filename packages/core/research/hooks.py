@@ -17,14 +17,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
-import signal
-import subprocess
-import time
 from typing import Any, Dict, List, Optional
 
 from .store import append_jsonl
+from .processes import shell_check
 from .util import PolicyBlocked, ResearchError, now_iso
 
 STAGES = ["preflight", "post_implementation", "pre_experiment", "post_experiment"]
@@ -40,7 +39,14 @@ def specs(p) -> Dict[str, Dict[str, Any]]:
 
 
 def timeout_for(p, spec: Dict[str, Any]) -> float:
-    return float(spec.get("timeout") or _h(p).get("hooks_timeout_seconds") or 300)
+    value = spec.get("timeout", _h(p).get("hooks_timeout_seconds", 300))
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError):
+        raise ResearchError("Hook timeout must be a positive finite number")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ResearchError("Hook timeout must be a positive finite number")
+    return timeout
 
 
 def digest(p, spec: Dict[str, Any]) -> str:
@@ -62,8 +68,8 @@ def add(p, name: str, stage: str, command: str, timeout: Optional[float] = None,
     if not (command or "").strip():
         raise ResearchError("A hook needs a command")
     spec = {"stage": stage, "command": command.strip(), "required": bool(required), "enabled": True}
-    if timeout:
-        spec["timeout"] = float(timeout)
+    if timeout is not None:
+        spec["timeout"] = timeout_for(p, {"timeout": timeout})
     if description:
         spec["description"] = description
     p.save_config({f"harness.hooks.{name}": spec})
@@ -130,28 +136,11 @@ def listing(p) -> List[Dict[str, Any]]:
 
 
 def _exec(p, name: str, spec: Dict[str, Any], env_extra: Dict[str, str]) -> Dict[str, Any]:
-    t = timeout_for(p, spec)
-    t0, out, timed_out, code = time.time(), "", False, None
-    try:
-        proc = subprocess.Popen(spec["command"], shell=True, cwd=p.root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, start_new_session=True,
-                                env={**os.environ, "RESEARCH_ROOT": p.root, "RESEARCH_HOOK": name,
-                                     "RESEARCH_HOOK_STAGE": spec["stage"], **env_extra})
-        try:
-            out, _ = proc.communicate(timeout=t)
-            code = proc.returncode
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                proc.kill()
-            out, _ = proc.communicate()
-    except OSError as e:
-        out = f"could not start: {e}"
-    return {"ts": now_iso(), "hook": name, "stage": spec["stage"], "ok": code == 0 and not timed_out, "exit_code": code,
-            "timed_out": timed_out, "seconds": round(time.time() - t0, 2), "required": spec.get("required", True),
-            "output": (out or "")[-4000:], "digest": digest(p, spec)}
+    result = shell_check(spec["command"], cwd=p.root, timeout=timeout_for(p, spec),
+                         env={**os.environ, "RESEARCH_ROOT": p.root, "RESEARCH_HOOK": name,
+                              "RESEARCH_HOOK_STAGE": spec["stage"], **env_extra})
+    return {"ts": now_iso(), "hook": name, "stage": spec["stage"], **result,
+            "required": spec.get("required", True), "digest": digest(p, spec)}
 
 
 def run(p, stage: str, task: Optional[str] = None, experiment: Optional[str] = None, run_id: Optional[str] = None,
@@ -167,7 +156,8 @@ def run(p, stage: str, task: Optional[str] = None, experiment: Optional[str] = N
         if not s.get("enabled", True):
             skipped.append({"hook": n, "reason": "disabled"})
         elif not is_approved(p, n):
-            skipped.append({"hook": n, "reason": "not approved (a human must run `research hook approve`)"})
+            skipped.append({"hook": n, "required": s.get("required", True),
+                            "reason": "not approved (a human must run `research hook approve`)"})
         else:
             r = {**_exec(p, n, s, env), "task": task, "experiment": experiment}
             os.makedirs(os.path.dirname(_results_path(p)), exist_ok=True)
@@ -175,7 +165,9 @@ def run(p, stage: str, task: Optional[str] = None, experiment: Optional[str] = N
             p.event("project", None, "hook_run", f"hook {n} ({stage}): " + ("passed" if r["ok"] else "FAILED" + (" (timeout)" if r["timed_out"] else "")))
             ran.append(r)
     failed = [r for r in ran if not r["ok"]]
-    return {"stage": stage, "ran": ran, "skipped": skipped, "failed": failed, "ok": not [r for r in failed if r["required"]]}
+    blocked = [r for r in skipped if r.get("required")]
+    return {"stage": stage, "ran": ran, "skipped": skipped, "failed": failed, "blocked": blocked,
+            "ok": not blocked and not any(r["required"] for r in failed)}
 
 
 def format_failures(res: Dict[str, Any]) -> List[str]:
@@ -186,6 +178,7 @@ def gate(p, stage: str, **kw: Any) -> Dict[str, Any]:
     """Run a stage and raise PolicyBlocked (exit 3) when a required hook fails."""
     res = run(p, stage, **kw)
     if not res["ok"]:
-        raise PolicyBlocked(f"{stage} hook failed: " + "; ".join(r["hook"] for r in res["failed"] if r["required"]),
-                            hint="\n".join(format_failures(res))[:1500])
+        names = [r["hook"] for r in res["failed"] if r["required"]] + [r["hook"] for r in res["blocked"]]
+        raise PolicyBlocked(f"{stage} hook blocked: " + "; ".join(names),
+                            hint="\n".join(format_failures(res) + [r["reason"] for r in res["blocked"]])[:1500])
     return res

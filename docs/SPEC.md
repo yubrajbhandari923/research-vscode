@@ -1,6 +1,8 @@
 # Research Panel — Features, Design and Technical Specification
 
-**Version:** 0.7.0 · **Schema version:** 3 · **Last verified against code:** 2026-10-12 (uncommitted work on `main` after `de69079`)
+**Version:** 0.7.0 (1.0.0 stabilization in progress) · **Schema version:** 3
+
+**Release evidence:** [Independent engineering review](RELEASE_1_0_0_REVIEW.md), based on `b715c63` and the working-tree hardening changes. This specification is not a release-readiness certificate.
 
 This is the single reference for **what Research Panel does, why it is designed that way, and exactly how it works**.
 A competent engineer should be able to re-implement it from this document alone. It also answers behaviour questions
@@ -11,6 +13,16 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 > TRANSFORMATION_SUMMARY, PHASE_0_SPEC, MCP_INTEGRATION) describe planned work. Where they disagree with this file, this file describes what is actually built.
 
 ---
+
+## Stabilization behavior changes
+
+- Every public task status-update path applies the completion gate. Task verification checks frozen-test integrity before running commands. Task dependency updates reject cycles; claims perform their read and write under one SQLite write transaction.
+- Re-freezing a changed acceptance file is refused; use the authorized correction path with a recorded reason. Malformed orchestration ledgers fail closed instead of resetting tests and attempt counts.
+- All task dispatch preparation paths run preflight hooks through the shared agent dispatcher. Enabled required hooks without approval block the gate. Disabled hooks are skipped; advisory failures cannot alone prove verification success. Experiment checks require a zero exit code, registered runs and no blocked required hooks before reporting all passed.
+- Hooks and task checks share bounded-output subprocess execution. POSIX timeout/interruption cleanup kills the process group. Headless agent timeouts return failure (124). Windows descendant cleanup is not equivalent to a POSIX process group and remains unverified.
+- RPC/MCP validate malformed request shapes and keep serving subsequent requests. The extension client decodes split UTF-8 correctly, bounds startup waiting, handles stdin errors and isolates late exits from an older process after restart.
+- The Python wheel has no runtime dependency on setuptools. The clean-install harness isolates Python import paths and machine configuration and installs offline. The extension-host harness copies its workspace; the demo refuses to erase an existing directory.
+
 
 ## Table of contents
 
@@ -799,18 +811,20 @@ The test suite asserts that no Markdown, JSON, JSONL or YAML file and no DB row 
 ### 5.4 Import-before-export
 
 Before any mirror is written, its on-disk hash is compared with the last recorded hash. If they differ, the hand edit
-is imported **first**, so a concurrent edit is never overwritten.
+is imported **first**. Malformed edits block export and preserve the file. This is not a filesystem lock against an editor writing between the hash check and replacement; concurrent external editing still requires coordination.
 
 ### 5.5 Rebuild (`research rebuild`, or automatic when `research.db` is missing)
 
-1. Move the existing DB to `.research/cache/research.db.bak-YYYYmmdd-HHMMSS` (skipped for the automatic first build).
+1. Back up the readable live DB with SQLite backup into a unique `.research/cache/research.db.bak-*` file (skipped for the automatic first build). Keep the live database inode in place.
 2. In one transaction:
    - import every mirror file
    - import every run directory, re-reading run metrics from offset 0 and restoring the artifact offset from `run.json`
    - ingest the root JSONL files
    - load `events.jsonl`
-3. If two files claim the same id, keep the first and log a `conflict` event naming the file to rename.
-4. Recompute counters, set `meta.built_at`, then re-export all mirrors. Only files whose bytes change are written.
+3. Duplicate IDs, malformed mirrors/run records and malformed complete JSONL records abort the transaction. A readable existing index remains intact. No conflicting file is discarded.
+4. Advance counters and set `meta.built_at`. Rebuild does not rewrite canonical mirrors. Normal sync may refresh generated tails.
+
+Incomplete trailing JSONL lines are not ingested; appending refuses an incomplete tail until repaired. POSIX appenders use an advisory file lock, flush and fsync. SQLite cannot transact atomically with all canonical files: multi-file mutations and audit-log appends still have crash windows. The review records this remaining release blocker. A corrupt index that cannot be opened requires stopping clients, backing up the project, and moving the index aside before reopening; the current rebuild command cannot open it.
 
 ---
 
@@ -2238,20 +2252,18 @@ experiment and the bundle carries them in `manifest.json` for your own script to
 ## 15. Safety guarantees
 
 1. **Never deletes or moves user data.** Artifacts are references. `rebuild` backs up the DB before replacing it.
-   No command deletes runs, artifacts or files.
+   Research records and artifact references are retained. Skill removal moves managed skills to backup; arbitrary user commands and hooks can modify files with the user’s permissions.
 2. **Never commits or pushes** to git, with one opt-in exception: `checkpoint --commit` (or `git.commit_checkpoints: true`)
-   commits `.research/` and nothing else, never pushes, and leaves other staged changes alone. Outside `.research/` it writes
-   only `AGENTS.md` (managed block), its own symlinks in `.claude/skills/` and `.agents/skills/` (never touching entries
-   it didn't create), and MCP config entries when you run `research mcp install`.
+   commits `.research/` and nothing else, never pushes, and leaves other staged changes alone. Managed writes outside `.research/` include the `AGENTS.md` block, skill links, generated agent definitions, the configured Scientist Guide and explicitly installed MCP entries. Runs, checks and hooks can write anywhere permitted by the operating system.
 2a. **Removed skills are kept** in `.research/cache/removed-skills/` (remove, `--force` re-import, update).
 3. **Never silently rewrites history.**
    - Every mutation, including hand edits picked up by sync, is an event in `events.jsonl`.
    - Superseding is the only way to "replace" a finding or decision.
    - Missing mirror files are regenerated and logged.
-4. **Never overwrites a hand edit** (import-before-export, §5.4).
-5. **Malformed input never corrupts the index**: a bad file is skipped and logged.
+4. **Import-before-export** protects detected hand edits (§5.4); there is no lock against concurrent external editors.
+5. **Malformed records:** normal mirror sync logs parse errors and retains the indexed value; export refuses to overwrite malformed files. Rebuild fails and rolls back on malformed records or duplicate IDs. Complete malformed JSONL lines are errors, not silently skipped.
 6. **Version safety:** an older tool refuses a newer schema.
-7. **Atomic writes** for every generated file (temp file + `os.replace`).
+7. **Atomic replacement** is used for managed text writes. The shared writer uses a unique sibling, flush and fsync before replacement. This is not an atomic transaction across multiple files or a guarantee of network-filesystem durability.
 
 ---
 
@@ -2395,7 +2407,7 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 
 | Suite | Command | What it proves |
 |---|---|---|
-| Python suite (pytest, **432 tests** in 16 files under `tests/python/`; `uv run --with pytest --with pytest-xdist pytest tests/python`) | `python -m pytest -q` | all offline: no SSH, no real Slurm, no model, no network. Per file: |
+| Python suite (pytest, baseline **432 tests**, plus release regressions under `tests/python/`; see the release review for final counts) | `python -m pytest -q` | all offline: no SSH, no real Slurm, no model, no network. Per file: |
 | ↳ `test_core.py` (29) · `test_slurm_rpc_cli.py` (11) | | init and AGENTS.md preservation; migrations; rollback journal; ids; hierarchy; experiments and git capture; runs, artifacts, findings, decisions; authorship; run budget; local foreground/detached runs; hand-edit import, rebuild, relocation; checkpoints; SLURM script/submit/completion/TIMEOUT/cancel against mocked `sbatch`/`squeue`/`sacct`; RPC round trip; CLI end to end and exit codes |
 | ↳ `test_plans_tasks.py` (32) · `test_plans_tasks_interfaces.py` (19) · `test_research_os.py` (22) | | plans, tasks, readiness, claims, notes, stale tasks; exact form payloads over RPC; every command in the AGENTS.md template parses; checks gate, finding gate and role-based independence; skills import/update/remove; search; compare; sweeps; reports; checkpoint `--commit`; dispatch; MCP protocol and install |
 | ↳ `test_evidence.py` (16) · `test_guide.py` (7) · `test_orchestrate.py` (11) | | numerical bindings, mismatch blocking `supported`, artifact integrity, provenance, sources; Scientist Guide freshness and AGENTS block; legacy tier routing, frozen tests, attempts, delegation, tuning |
@@ -2502,7 +2514,7 @@ research-vscode/
 │       ├── scripts/                # bundle-python.mjs, preview-entry.ts, theme-*.css
 │       └── test/                   # real-VS-Code harness (run.mjs, harness/)
 ├── examples/alpha-sweep/           # sim.py, plot.py (stdlib only), run_demo.sh
-├── tests/python/                   # pytest suites (16 files, 432 tests)
+├── tests/python/                   # pytest suites (see release review for executed counts)
 ├── scripts/                        # package.sh, clean_install_test.sh, e2e_code_server.py
 └── dist/                           # built VSIX, wheel, sdist
 ```
@@ -2534,7 +2546,7 @@ per window, so Python start-up is paid once.
 ### 21.2 Text is canonical, SQLite is an index
 
 SQLite binaries don't merge in git, and Markdown does. Making the text files canonical gives total reconstructability
-(`rebuild`), human-editable records, clean diffs and safe branch merges. The index exists only for fast queries and
+(`rebuild`), human-editable records, readable diffs and inspectable branch merges (counter-ID conflicts require manual resolution). The index exists only for fast queries and
 relationships. On HPC filesystems the DB uses `journal_mode=DELETE` (WAL needs shared memory, which is unsafe on NFS
 and Lustre), and compute nodes write only to per-run files that the login node ingests later.
 
@@ -2579,16 +2591,16 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 - **No Project table:** project metadata lives in `config.yaml`, where it is human-editable.
 - **Syntheses are records, not mirrored entities.** They render inside the experiment file.
 - **Notes are pure files**, with pin and link state in their own front-matter.
-- **No sweep engine:** a parameter sweep is an experiment whose `parameters` contain lists, plus one run per point.
+- **Bounded sweeps:** the CLI expands a Cartesian parameter grid and creates one run per point; this is not a general scheduling engine.
 - **No diff capture beyond `git.diff`** for dirty runs (capped at 2 MiB).
 - **Preview adapters** are a small TypeScript registry, and unknown binaries show metadata.
-- **No orchestration:** plans and tasks track work; they do not schedule or execute it.
+- **No unattended scheduler:** routing, dispatch preparation, explicit execution, verification and escalation exist; automatic plan progression does not.
 
 ### 21.8 Requirements not in the original brief, and how they are handled
 
 1. **SQLite on NFS/Lustre:** DELETE journal, busy timeout, compute nodes never write the DB.
 2. **Concurrent compute-node writes:** per-run files, ingested later.
-3. **Git merges and ID collisions across branches:** the DB is git-ignored and IDs are counters. Collisions are reported on rebuild.
+3. **Git merges and ID collisions across branches:** the DB is git-ignored and IDs are counters. Duplicate IDs stop sync/rebuild with a diagnostic; resolve IDs and references before retrying.
 4. **Runs that outlive VS Code:** detached processes; status reconciled from files, not from a live process handle.
 5. **Staleness:** the resume data reports what changed since the last checkpoint and flags old checkpoints.
 6. **Baseline:** an explicit `is_baseline` flag on one experiment, plus the checkpoint's baseline text.
@@ -2600,7 +2612,7 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 
 ### 22.1 Known issues
 
-No open bugs are known as of 2026-10-12 (432 pytest tests and the TypeScript typecheck pass; the real-VS-Code harness was last run before 0.5). Fixed since the first review:
+The [release review](RELEASE_1_0_0_REVIEW.md) is the current issue and verification record. The independent baseline passed 432 Python tests; that did not establish production readiness. The following table is historical repair context, not a claim that all defects are resolved:
 
 | # | Was | Fix |
 |---|---|---|
@@ -2634,7 +2646,7 @@ No open bugs are known as of 2026-10-12 (432 pytest tests and the TypeScript typ
 - **The numerical gate also applies to humans.** Unlike other review gates, `supported` is refused for anyone when a bound number fails. Correct by superseding the binding or finding; a history of earlier bindings (including loose ones created before the tolerance cap) is preserved.
 - **Literature sources are offline records.** `research source` validates identifier format only. It never resolves a DOI or fetches a paper; identity, examination and per-finding support are three separate human/agent assertions.
 - **Scientist Guide prose is not machine-verified.** The guide status shows whether each finding's numbers verify, but nothing checks that the narrative quotes them correctly. Review it like any scientific text. Writing and freshness depend on an Opus agent actually being run; `guide refresh` only prepares it.
-- **Orchestration is launched by people or sessions, not a scheduler.** Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier unless an allocation strategy is active, in which case it uses the same resolver as `orchestrate`. The generated `.claude/agents` files and `claude-*-5-5` IDs were checked with `claude --model`, but the subagent `model:` frontmatter was not exercised in a live session.
+- **Orchestration is launched by people or sessions, not a scheduler.** Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier unless an allocation strategy is active, in which case it uses the same resolver as `orchestrate`. The shipped model IDs are configuration defaults, not a current provider-availability guarantee. This review did not exercise a live provider or generated subagent model frontmatter.
 - **Usage is captured only for headless runs** (`--headless`) and manual records; interactive sessions expose none. Hooks execute shell commands only after human approval (see README, Hooks and task contracts).
 - **No MCP tools yet for the guide, strategies, orchestration, hooks, usage, tuning, evidence or sources** (CLI and RPC only), and no VS Code UI for tuning, evidence or sources. Strategies, hooks, task pins, usage, experiment validation, skills and MCP registration have the Agent setup page (§13.5); contracts are shown there but are edited with `research orchestrate contract`; strategy definitions, models, limits and hook commands are edited in `config.yaml` / `research hook add`.
 - **Usage is recorded only when it is exposed.** `--headless` runs record what the provider's JSON reports (parsed defensively; the `claude -p --output-format json` shape was taken from documentation and not exercised against a live session); `usage import` and `orchestrate attempt --usage` take what you supply. Interactive sessions expose nothing, so none is recorded for them. Cost is provider-reported (no price table), so it can be partial; summaries show `reported/records`. Headless Claude cannot answer permission prompts; put the flags you trust in the profile's `headless_args`.
@@ -2645,8 +2657,7 @@ No open bugs are known as of 2026-10-12 (432 pytest tests and the TypeScript typ
 
 #### Core
 
-- **ID collisions across git branches.** Counters are local. Two branches that create the same id produce a `conflict`
-  event on rebuild, and one file must be renamed by hand. A future option is branch-safe ids (e.g. a short hash suffix).
+- **ID collisions across git branches.** Counters are local. Two branches can create the same ID. Sync/rebuild now refuses duplicates. Resolve each front-matter ID and its references; renaming a file alone is insufficient. A future option is branch-safe ids (e.g. a short hash suffix).
 - **Hand edits to `run.json` and the JSONL files are not re-imported** (they are append-only records). Edit runs through
   `research run update`. A hand-edited `run.json` is only read when the run directory is unknown to the index
   (fresh clone or rebuild).
@@ -2656,7 +2667,7 @@ No open bugs are known as of 2026-10-12 (432 pytest tests and the TypeScript typ
 - **Preview formats:** NIfTI, HDF5, NetCDF and NPZ show metadata only.
 - **Real-VS-Code harness:** not runnable in environments that block the VS Code download. The code-server E2E covers the
   same runtime.
-- **Plans and tasks have little automation:** no cycle detection, no automatic plan completion, no automatic move to
+- **Plans and tasks have little automation:** updates reject dependency cycles; there is no automatic plan completion, no automatic move to
   `verify`; starting a non-ready task only warns. Dispatch uses `assigned_role` to pick a role, but nothing schedules work.
 - **Plans and tasks are not part of checkpoints** (draft or stored fields).
 - **The finding gate trusts identities and files.** Roles are self-declared environment variables, and a hand edit of a

@@ -1321,7 +1321,7 @@ def cmd_orchestrate(a, p) -> int:
             _done(a, h, msg=f"headless session finished (exit {h['exit_code']}); usage: {h['usage'] if isinstance(h['usage'], str) else 'recorded'}")
             if not a.json:
                 print(h["result"])
-            return h["exit_code"] or 0
+            return 124 if h["timed_out"] else (h["exit_code"] if h["exit_code"] is not None else 1)
         if not a.json and not a.run:
             print(f"{r['tier']} ({r['model']}) brief → {r['brief']}" + (f"  ⚠ {r['route']['note']}" if r["degraded"] else ""))
             print(r["shell"])
@@ -2305,7 +2305,7 @@ def cmd_dispatch(a, p) -> int:
         else:
             print(h["result"])
             print(dim("usage: " + (h["usage"] if isinstance(h["usage"], str) else "recorded in .research/usage.jsonl")), file=sys.stderr)
-        return h["exit_code"] or 0
+        return 124 if h["timed_out"] else (h["exit_code"] if h["exit_code"] is not None else 1)
     if a.json:
         out_json(d)
         return 0

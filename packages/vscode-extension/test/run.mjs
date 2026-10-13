@@ -15,8 +15,11 @@ const extDir = path.join(tmp, 'extensions');
 const userDir = path.join(tmp, 'user');
 const workspace = process.env.RESEARCH_TEST_WORKSPACE;
 if (!workspace) throw new Error('set RESEARCH_TEST_WORKSPACE to a demo project');
+const testWorkspace = path.join(tmp, 'workspace');
+fs.cpSync(workspace, testWorkspace, { recursive: true });
+fs.rmSync(path.join(testWorkspace, '.research', 'research.db'), { force: true });
 
-let exe = await downloadAndUnzipVSCode('stable');
+let exe = process.env.RESEARCH_TEST_VSCODE_EXECUTABLE || await downloadAndUnzipVSCode('stable');
 // Newer macOS builds name the binary `Code` instead of `Electron`; older @vscode/test-electron still expects `Electron`.
 if (!fs.existsSync(exe) && fs.existsSync(path.join(path.dirname(exe), 'Code'))) exe = path.join(path.dirname(exe), 'Code');
 const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(exe);
@@ -29,7 +32,7 @@ try {
     vscodeExecutablePath: exe,
     extensionDevelopmentPath: path.join(here, 'harness'),
     extensionTestsPath: path.join(here, 'harness', 'suite', 'index.js'),
-    launchArgs: [workspace, '--extensions-dir', extDir, '--user-data-dir', userDir, '--disable-workspace-trust', '--skip-welcome'],
+    launchArgs: [testWorkspace, '--extensions-dir', extDir, '--user-data-dir', userDir, '--disable-workspace-trust', '--skip-welcome'],
     extensionTestsEnv: { RESEARCH_TEST_OUT: out, RESEARCH_TEST_USERDIR: userDir },
   });
 } finally {

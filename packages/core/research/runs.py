@@ -99,7 +99,9 @@ def _update_run_row(p: Project, run_id: str, fields: Dict[str, Any]) -> None:
     enc = {k: (jdump(v) if k in JSON_COLS else (int(v) if isinstance(v, bool) else v)) for k, v in fields.items()}
     enc["updated_at"] = now_iso()
     sets = ",".join(f"{k}=?" for k in enc)
-    p.conn.execute(f"UPDATE runs SET {sets} WHERE id=?", (*enc.values(), run_id))
+    with p.tx():
+        p.conn.execute(f"UPDATE runs SET {sets} WHERE id=?", (*enc.values(), run_id))
+        write_run_json(p, run_id)
 
 
 def command_str(command: Union[str, Sequence[str], None]) -> Optional[str]:
@@ -161,6 +163,7 @@ def create_run(p: Project, experiment: str, command: Union[str, Sequence[str], N
                        tuple(row.values()))
         p.event("run", run_id, "created", f"{run_id} registered under {exp_id}"
                 + (f" [{label}]" if label else "") + (f" (override: {override})" if override else ""))
+        write_run_json(p, run_id)
     if g["dirty"]:
         d = gitinfo.diff(p.root)
         if d:
@@ -170,7 +173,6 @@ def create_run(p: Project, experiment: str, command: Union[str, Sequence[str], N
         with open(os.path.join(p.abspath(run_dir), "command.sh"), "w", encoding="utf-8") as f:
             f.write("#!/bin/bash\n# " + run_id + " — re-run this command (paths relative to the project root)\n"
                     'cd "$(dirname "$0")/../../.." && cd ' + shlex.quote(wd or ".") + "\n" + row["command"] + "\n")
-    write_run_json(p, run_id)
     if exp["status"] in ("proposed", "ready", "needs_review", "completed") and status in ("queued", "running"):
         set_experiment_status(p, exp_id, "running", f"{run_id} started")
     elif not exp.get("started_at"):
@@ -218,7 +220,6 @@ def update_run(p: Project, run_id: str, status: Optional[str] = None, exit_code:
         _update_run_row(p, run["id"], ch)
         p.event("run", run["id"], "updated", f"{run['id']}: " + ", ".join(
             f"{k}={v}" for k, v in ch.items() if k in ("status", "exit_code", "label")) or f"{run['id']} updated")
-    write_run_json(p, run["id"])
     if status in RUN_TERMINAL and run["status"] not in RUN_TERMINAL:
         _after_run_finished(p, run["id"])
     else:
@@ -260,12 +261,10 @@ def exec_run(p: Project, experiment: str, command, *, detach: bool = False, para
             _update_run_row(p, run["id"], {"status": "running", "pid": info["pid"], "hostname": info["hostname"],
                                            "started_at": now_iso()})
             p.event("run", run["id"], "started", f"{run['id']} started locally (pid {info['pid']})")
-        write_run_json(p, run["id"])
         p.export("experiment", run["experiment_id"])
         return get_run(p, run["id"])
     with p.tx():
         _update_run_row(p, run["id"], {"status": "running", "started_at": now_iso(), "pid": os.getpid()})
-    write_run_json(p, run["id"])
     runner_run(p.abspath(run["run_dir"]), run["command"], p.abspath(run["working_dir"]), tee=tee)
     return reconcile_run(p, run["id"], force=True)
 
@@ -280,14 +279,12 @@ def submit_run(p: Project, experiment: str, command, *, parameters=None, label=N
         with p.tx():
             _update_run_row(p, run["id"], {"status": "failed", "ended_at": now_iso(), "notes": f"submit failed: {e}"})
             p.event("run", run["id"], "failed", f"{run['id']} SLURM submission failed: {e}")
-        write_run_json(p, run["id"])
         _after_run_finished(p, run["id"])
         raise
     with p.tx():
         _update_run_row(p, run["id"], {"slurm_job_id": info["slurm_job_id"], "slurm": info["slurm"],
                                        "status": "queued"})
         p.event("run", run["id"], "submitted", f"{run['id']} submitted to SLURM as job {info['slurm_job_id']}")
-    write_run_json(p, run["id"])
     p.export("experiment", run["experiment_id"])
     return get_run(p, run["id"])
 
@@ -345,7 +342,6 @@ def reconcile_run(p: Project, run_id: str, force: bool = False) -> Dict[str, Any
             p.event("run", run["id"], ch["status"], f"{run['id']} {ch['status']}"
                     + (f" (exit {code})" if code is not None else "") + (f" — {st['note']}" if st.get("note") else ""),
                     {"author_type": "system", "author_name": None})
-    write_run_json(p, run["id"])
     if ch.get("status") in RUN_TERMINAL:
         _after_run_finished(p, run["id"])
     else:
@@ -392,11 +388,13 @@ def import_run_dirs(p: Project) -> int:
         try:
             with open(rj, encoding="utf-8") as f:
                 rec = json.load(f)
-        except (OSError, ValueError):
-            continue
+        except (OSError, ValueError) as e:
+            raise ResearchError(f"Cannot import run record {rj}: {e}") from e
+        if not isinstance(rec, dict) or not p.exists("experiment", rec.get("experiment_id")):
+            raise ResearchError(f"Cannot import run record {rj}: missing or unknown experiment")
         rec["id"] = name
         rec.setdefault("run_dir", p.rel(os.path.join(d, name)))
-        mo, ao = rec.get("metrics_offset") or 0, rec.get("artifacts_offset") or 0
+        ao = rec.get("artifacts_offset") or 0
         row = {k: rec.get(k) for k in RUN_JSON_FIELDS}
         for c in JSON_COLS:
             row[c] = jdump(row.get(c))
@@ -409,7 +407,6 @@ def import_run_dirs(p: Project) -> int:
                        tuple(row.values()))
         p._bump_counter(name)
         ingest_run_files(p, name, write_json=False)
-        _ = mo
         n += 1
     return n
 
