@@ -11,6 +11,8 @@ config.yaml → orchestration: {enabled, tiers: {opus|sonnet|haiku: {model, fall
 """
 from __future__ import annotations
 
+from .durability import atomic
+
 import hashlib
 import json
 import os
@@ -103,6 +105,7 @@ def _save(p: Project, tid: str, led: Dict[str, Any]) -> None:
     _atomic_write(_lpath(p, tid), json.dumps(led, indent=1, sort_keys=True) + "\n")
 
 
+@atomic
 def record_dispatch(p: Project, tid: str, snap: Dict[str, Any]) -> None:
     """Append the resolved-allocation snapshot to the task's ledger. History never re-reads the active config."""
     led = ledger(p, tid)
@@ -127,6 +130,7 @@ def _tid(p: Project, tid: str) -> str:
     return tid
 
 
+@atomic
 def freeze(p: Project, tid: str, paths: Any) -> Dict[str, Any]:
     """Freeze the acceptance tests (the oracle). Done by the test author (Sonnet) before Haiku implements."""
     tid = _tid(p, tid)
@@ -170,6 +174,7 @@ def _fast_level(p: Project) -> Optional[str]:
         return None
 
 
+@atomic
 def correct_test(p: Project, tid: str, path: str, reason: str, tier: str) -> Dict[str, Any]:
     implementers = {d["level"] for d in ledger(p, normalize_id(tid, "T")).get("dispatches", []) if d.get("role") == "implementer"}
     if tier == "haiku" or (S.active_name(p) and tier in implementers | {_fast_level(p)}):  # the implementer never edits its oracle
@@ -193,6 +198,7 @@ def _model_of(p: Project, strat: Optional[str], level: str) -> Optional[str]:
         return None
 
 
+@atomic
 def record_attempt(p: Project, tid: str, tier: str, outcome: str, category: Optional[str] = None,
                    note: Optional[str] = None, usage: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Log an implementation attempt and return the bounded next step: review, retry, escalate, or block."""
@@ -254,6 +260,7 @@ def record_attempt(p: Project, tid: str, tier: str, outcome: str, category: Opti
     return {"task": tid, **nxt}
 
 
+@atomic
 def delegate(p: Project, parent: str, title: str, tier: Optional[str] = None, goal: Optional[str] = None,
              acceptance: Optional[str] = None, checks: Any = None, **kw: Any) -> Dict[str, Any]:
     """Create a child task under `parent` (same plan). The parent can't finish before the child (depends_on).
@@ -288,6 +295,7 @@ CONTRACT_FIELDS = ["objective", "context", "expected_outputs", "allowed_files", 
 _LISTS = {"expected_outputs", "allowed_files", "constraints", "verification"}
 
 
+@atomic
 def set_contract(p: Project, tid: str, **fields: Any) -> Dict[str, Any]:
     """The coordinator's delegation contract, kept in the task's ledger (no new task columns). Merges field by field;
     pass an empty value to clear one. Acceptance criteria and checks stay on the task itself."""
@@ -327,6 +335,7 @@ def changed_files(p: Project) -> List[str]:
     return sorted({ln[3:].split(" -> ")[-1].strip().strip('"') for ln in out.splitlines() if len(ln) > 3})
 
 
+@atomic
 def set_override(p: Project, tid: str, level: Optional[str] = None, profile: Optional[str] = None,
                  model: Optional[str] = None, clear: bool = False) -> Dict[str, Any]:
     """Pin the model for one task's implementer dispatches; beats the strategy, loses to per-dispatch flags."""
@@ -363,7 +372,9 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
     from . import hooks, verification
     tid = _tid(p, tid)
     task, led = p.get("task", tid), ledger(p, tid)
-    problems: List[str] = []
+    from .task_spec import effective
+    spec = effective(p, tid)
+    problems: List[str] = ["conflicting specification: " + c['field'] for c in spec['conflicts']]
     ran = 0
     bad = tampered(p, tid)
     if bad:
@@ -371,7 +382,7 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
     allowed = (led.get("contract") or {}).get("allowed_files") or []
     if allowed:
         import fnmatch
-        extra = [f for f in changed_files(p) if f not in set(led.get("baseline") or []) and not any(fnmatch.fnmatch(f, a) or f.startswith(a.rstrip("/") + "/") for a in allowed)]
+        extra = [f for f in changed_files(p) if ((f not in (led.get("baseline_hashes") or {})) or file_snapshot(p).get(f) != led["baseline_hashes"].get(f)) and not any(fnmatch.fnmatch(f, a) or f.startswith(a.rstrip("/") + "/") for a in allowed)]
         if extra:
             problems.append("files changed outside the contract's allowed_files: " + ", ".join(extra))
     hr = hooks.run(p, "post_implementation", task=tid)
@@ -380,13 +391,23 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
     problems += [f"hook {r['hook']} skipped: {r['reason']}" for r in hr["blocked"]]
     checks = None
     if task.get("checks") and not bad:
-        checks = verification.verify_task(p, tid, transition=False)
+        checks = verification._task_checks(p, tid, transition=False, log=False)
         ran += len(checks["results"])
         problems += [f"check {r['check']} failed ({r['detail']})" + (f":\n{r['output'].strip()}" if r.get("output") else "") for r in checks["results"] if not r["ok"]]
+    unresolved = bool(problems)
     if not (any(r["ok"] for r in hr["ran"]) or checks) and not problems:
         problems.append("no deterministic verifier ran (no task checks and no approved post_implementation hooks): this is not a pass")
     passed = not problems
-    out: Dict[str, Any] = {"task": tid, "passed": passed, "diagnostics": problems, "hooks_skipped": hr["skipped"], "verifiers_run": ran}
+    out: Dict[str, Any] = {"task": tid, "passed": passed, "diagnostics": problems, "hooks_skipped": hr["skipped"], "verifiers_run": ran,
+        "obligations_unresolved": unresolved, "checks_executed": len(checks["results"]) if checks else 0,
+        "checks_passed": sum(r["ok"] for r in checks["results"]) if checks else 0,
+        "results": checks["results"] if checks else [], "effective_spec": spec,
+        "independent_review": "separate scientific review required for findings",
+        "verification_state": "passed" if passed else "blocked" if unresolved else "unverified"}
+    summary = "; ".join(([checks["summary"]] if checks else []) + [x for x in problems if not x.startswith("check ")]) \
+        if problems else (checks["summary"] if checks else "All obligations passed")
+    out["record"] = verification.record(p, tid, "check", "pass" if passed else "fail", summary,
+                                        (checks["results"] if checks else problems))
     if record:
         if not tier:
             raise ResearchError("--record needs --tier (the level that made this attempt)")
@@ -437,38 +458,57 @@ _STRAT_PROTOCOL = {
 }
 
 
-def _dispatch_strategy(p: Project, tid: str, task: Dict[str, Any], level, strategy, profile, model, allow_unfrozen, headless=False) -> Dict[str, Any]:
-    from . import agents
-    led = ledger(p, tid)
-    r = S.route_task(p, task, led, level=level, strategy=strategy, profile=profile, model=model)
-    if S.requires_frozen(r, task) and not led["frozen"]:
+def _skill_lines(p, worker_only):
+    out = []
+    for nm in ("ponytail",) if worker_only else ("ponytail", "ponytail-review"):
+        out.append(f"Before editing code run `research skill show {nm}` and follow it." if _ponytail(p, nm) else
+                   f"Optional skill {nm} is not installed; use the built-in engineering standards (smallest complete "
+                   "change, tests, no weakened checks) and report it missing.")
+    out.append("Minimal-code preferences never override scientific correctness, tests, provenance or numerical safeguards.")
+    return out
+
+
+def preparation(p, tid, role, policy=None, allow_unfrozen=None):
+    """Safeguards and guidance shared by every task-preparation interface (plain, routed, orchestrated)."""
+    from .task_spec import effective, assert_consistent
+    assert_consistent(effective(p, tid))
+    assert_frozen_intact(p, tid)
+    task, led = p.get("task", tid), ledger(p, tid)
+    unmet = [d for d in task.get("depends_on") or [] if p.get("task", d)["status"] != "done"]
+    if unmet:
+        raise PolicyBlocked("Unfinished dependencies: " + ", ".join(unmet))
+    if policy and S.requires_frozen(policy, task) and not led["frozen"]:
         if not allow_unfrozen:
-            raise PolicyBlocked(f"{tid}: no frozen acceptance tests; the coordinator ({r['coordinator']}) must write and freeze "
-                                f"them before {r['level']} implements",
+            raise PolicyBlocked(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
+                                f"freeze them before {policy['level']} implements",
                                 hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
-        plans.add_task_note(p, tid, f"{r['level']} dispatched WITHOUT frozen tests: {allow_unfrozen}")
-    sd = S.definition(p, r["strategy"])
-    kind = ("verifier" if r["role"] == "verifier" else "scientist" if r["role"] in ("analyst", "planner")
-            else "coordinator" if r["level"] == sd["coordinator"] else "worker")
-    ins = [_STRAT_PROTOCOL[kind].replace("{id}", tid).replace("{level}", r["level"])
-           .replace("{attempts}", str((sd.get("attempts") or {}).get(r["level"], 2)))]
-    if kind in ("worker", "coordinator"):
-        for nm in ("ponytail", "ponytail-review") if kind == "coordinator" else ("ponytail",):
-            ins.append(f"Before editing code run `research skill show {nm}` and follow it."
-                       if _ponytail(p, nm) else f"Optional skill {nm} is not installed; use the built-in engineering "
-                       "standards (smallest complete change, tests, no weakened checks) and report it missing.")
-        ins.append("Minimal-code preferences never override scientific correctness, tests, provenance or numerical safeguards.")
-    if r["independent"] is False:
-        ins.append("WARNING: " + r["warning"] + ". State this in your review; a human must confirm it.")
-    ins.append(f"Identify yourself with `--agent {r['profile']} --model {r['model']}` on research commands. "
-               f"Strategy {r['strategy']}@{r['fingerprint']}, routing: {r['why']}")
-    if r["role"] == "implementer":
-        led = ledger(p, tid)
-        led["baseline"] = changed_files(p)   # so the file boundary only judges what this attempt changed
-        _save(p, tid, led)
+        plans.add_task_note(p, tid, f"{policy['level']} dispatched WITHOUT frozen tests: {allow_unfrozen}")
+    ins = []
+    if policy:
+        sd = S.definition(p, policy["strategy"])
+        kind = ("verifier" if role == "verifier" else "scientist" if role in ("analyst", "planner")
+                else "coordinator" if policy["level"] == sd["coordinator"] else "worker")
+        ins.append(_STRAT_PROTOCOL[kind].replace("{id}", tid).replace("{level}", policy["level"])
+                   .replace("{attempts}", str((sd.get("attempts") or {}).get(policy["level"], 2))))
+        if kind in ("worker", "coordinator"):
+            ins += _skill_lines(p, kind == "worker")
+        if policy["independent"] is False:
+            ins.append("WARNING: " + policy["warning"] + ". State this in your review; a human must confirm it.")
+        ins.append(f"Identify yourself with `--agent {policy['profile']} --model {policy['model']}` on research commands. "
+                   f"Strategy {policy['strategy']}@{policy['fingerprint']}, routing: {policy['why']}")
+    if role == "implementer":
+        with p.tx():
+            led = ledger(p, tid)
+            led["baseline"] = changed_files(p)
+            led["baseline_hashes"] = file_snapshot(p)
+            _save(p, tid, led)
         ins.append(contract_md(p, tid))
-    d = agents.dispatch(p, r["role"], tid, None, None, None, "\n".join(ins), policy=r, headless=headless)
-    return {**d, "tier": r["level"], "degraded": False, "route": r}
+    return "\n".join(ins)
+
+
+def file_snapshot(p):
+    """Hash already dirty files so later changes cannot hide behind the baseline."""
+    return {f: _hash(p, f) if os.path.isfile(os.path.join(p.root, f)) else None for f in changed_files(p)}
 
 
 def dispatch_task(p: Project, target: str, tier: Optional[str] = None, available: Any = None,
@@ -478,27 +518,25 @@ def dispatch_task(p: Project, target: str, tier: Optional[str] = None, available
     from . import agents
     tid = _tid(p, target)
     task = p.get("task", tid)
+    r = route(p, task, tier, available, strategy, profile, model)
     if S.active_name(p, strategy):
-        return _dispatch_strategy(p, tid, task, tier, strategy, profile, model, allow_unfrozen, headless)
-    r = route(p, task, tier, available)
-    if not r["model"]:
-        raise ResearchError(r["note"], hint="Set orchestration.tiers / orchestration.available in .research/config.yaml.")
-    if r["tier"] == "haiku" and task.get("task_type") in (None, "implementation", "debug") and not ledger(p, tid)["frozen"]:
-        if not allow_unfrozen:
-            raise PolicyBlocked(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
-                                hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
-        plans.add_task_note(p, tid, f"haiku dispatched WITHOUT frozen tests: {allow_unfrozen}")
-    lim = {"haiku_attempts": 3, **limits(p)}
-    ins = [_PROTOCOL[r["tier"]].replace("{id}", tid).replace("{haiku_attempts}", str(lim["haiku_attempts"]))]
-    if r["tier"] in ("haiku", "sonnet"):
-        for nm in ("ponytail", "ponytail-review") if r["tier"] == "sonnet" else ("ponytail",):
-            ins.append(f"Before editing code run `research skill show {nm}` and follow it."
-                       if _ponytail(p, nm) else f"Optional skill {nm} is not installed; use the built-in engineering "
-                       "standards (smallest complete change, tests, no weakened checks) and report it missing.")
-        ins.append("Minimal-code preferences never override scientific correctness, tests, provenance or numerical safeguards.")
-    ins.append(f"Identify yourself with `--agent claude-{r['tier']} --model {r['model']}` on research commands. Routing: {r['why']}"
-               + (f" ({r['note']})" if r.get("note") else ""))
-    d = agents.dispatch(p, r["role"], tid, None, None, r["model"], "\n".join(ins))
+        d = agents.dispatch(p, r["role"], tid, policy=r, headless=headless, allow_unfrozen=allow_unfrozen)
+    else:
+        if not r["model"]:
+            raise ResearchError(r["note"], hint="Set orchestration.tiers / orchestration.available in .research/config.yaml.")
+        if r["tier"] == "haiku" and task.get("task_type") in (None, "implementation", "debug") and not ledger(p, tid)["frozen"]:
+            if not allow_unfrozen:
+                raise PolicyBlocked(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
+                                    hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
+            plans.add_task_note(p, tid, f"haiku dispatched WITHOUT frozen tests: {allow_unfrozen}")
+        lim = {"haiku_attempts": 3, **limits(p)}
+        ins = [_PROTOCOL[r["tier"]].replace("{id}", tid).replace("{haiku_attempts}", str(lim["haiku_attempts"]))]
+        if r["tier"] in ("haiku", "sonnet"):
+            ins += _skill_lines(p, r["tier"] == "haiku")
+        ins.append(f"Identify yourself with `--agent claude-{r['tier']} --model {r['model']}` on research commands. Routing: {r['why']}"
+                   + (f" ({r['note']})" if r.get("note") else ""))
+        d = agents.dispatch(p, r["role"], tid, profile=profile, model=model or r["model"], instructions="\n".join(ins),
+                            headless=headless)
     return {**d, "tier": r["tier"], "degraded": r["degraded"], "route": r}
 
 
@@ -523,7 +561,7 @@ def _tload(p: Project, exp: str) -> Dict[str, Any]:
         with open(_tpath(p, exp), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, ValueError):
-        raise NotFound(f"No tuning plan for {exp}", hint="`research orchestrate tuning declare` first.")
+        raise NotFound(f"No tuning plan for {exp}", hint="`research tuning declare` first.")
 
 
 def _tsave(p: Project, exp: str, t: Dict[str, Any]) -> None:
@@ -531,6 +569,7 @@ def _tsave(p: Project, exp: str, t: Dict[str, Any]) -> None:
     _atomic_write(_tpath(p, exp), json.dumps(t, indent=1, sort_keys=True) + "\n")
 
 
+@atomic
 def tuning_declare(p: Project, exp: str, objective: str, ranges: Dict[str, Any], strategy: str, selection: str,
                    seed: int = 0, budget: Optional[int] = None) -> Dict[str, Any]:
     exp = normalize_id(exp, "EXP")
@@ -550,12 +589,13 @@ def tuning_declare(p: Project, exp: str, objective: str, ranges: Dict[str, Any],
     return t
 
 
+@atomic
 def tuning_trial(p: Project, exp: str, config: Dict[str, Any], split: str, value: float, run: Optional[str] = None) -> Dict[str, Any]:
     exp = normalize_id(exp, "EXP")
     t = _tload(p, exp)
     if split not in ("design", "validation"):
         raise PolicyBlocked("Trials may use only design or validation data; held-out test is evaluated once, after selection",
-                            hint="`research orchestrate tuning test`.")
+                            hint="`research tuning test`.")
     if t["selected"]:
         raise PolicyBlocked("Selection is already frozen; no further trials")
     if len(t["trials"]) >= t["budget"]:
@@ -565,6 +605,7 @@ def tuning_trial(p: Project, exp: str, config: Dict[str, Any], split: str, value
     return {"trials": len(t["trials"]), "remaining": t["budget"] - len(t["trials"])}
 
 
+@atomic
 def tuning_select(p: Project, exp: str, config: Dict[str, Any], rationale: str) -> Dict[str, Any]:
     exp = normalize_id(exp, "EXP")
     t = _tload(p, exp)
@@ -578,6 +619,7 @@ def tuning_select(p: Project, exp: str, config: Dict[str, Any], rationale: str) 
     return t["selected"]
 
 
+@atomic
 def tuning_test(p: Project, exp: str, value: float, run: Optional[str] = None) -> Dict[str, Any]:
     """Record the single held-out evaluation of the frozen selection. One-shot: cannot be repeated to tune."""
     exp = normalize_id(exp, "EXP")

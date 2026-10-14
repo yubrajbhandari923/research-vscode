@@ -126,8 +126,11 @@ def default_role(p: Project, target: Optional[str]) -> str:
 
 
 def task_brief_md(c: Dict[str, Any]) -> str:
+    from .task_spec import render
     t = c["task"]
     L = [f"## Task {t['id']} · {t['title']}  [{t['status']}{', READY' if c['is_ready'] else ''}]", ""]
+    if c.get('effective_spec'):
+        L += [render(c['effective_spec']), '']
     for k, label in (("task_type", "Type"), ("assigned_role", "Role")):
         if t.get(k):
             L.append(f"- **{label}:** {t[k]}")
@@ -139,9 +142,7 @@ def task_brief_md(c: Dict[str, Any]) -> str:
         for k, label in (("objective", "Objective"), ("success_criteria", "Success criteria"), ("context", "Context")):
             if pl.get(k):
                 L.append(f"**{label}:** {pl[k]}")
-    for k, label in (("goal", "Goal"), ("inputs", "Inputs"), ("expected_outputs", "Expected outputs"),
-                     ("acceptance_criteria", "Acceptance criteria"), ("verification", "Verification"),
-                     ("result", "Result so far"), ("blockers", "Blockers"), ("notes", "Notes")):
+    for k, label in (("result", "Result so far"), ("blockers", "Blockers"), ("notes", "Notes")):
         if t.get(k):
             L += ["", f"### {label}", "", str(t[k])]
     if c.get("checks"):
@@ -222,7 +223,7 @@ def build_brief(p: Project, role: str, target: Optional[str] = None, objective: 
 def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
              profile: Optional[str] = None, model: Optional[str] = None, instructions: Optional[str] = None,
              strategy: Optional[str] = None, level: Optional[str] = None, policy: Optional[Dict[str, Any]] = None,
-             headless: bool = False) -> Dict[str, Any]:
+             headless: bool = False, allow_unfrozen: Optional[str] = None) -> Dict[str, Any]:
     """Prepare an agent session: write the brief, build argv + env. Does not start anything.
 
     With an active (or `strategy=`) allocation strategy the profile comes from `strategy.select`; callers that already
@@ -249,6 +250,10 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
             cls = S.task_class(p.get("task", normalize_id(target, "T")))[0] if role == "implementer" else None
             led = O.ledger(p, normalize_id(target, "T"))
         policy = S.select(p, role, cls, level=level, strategy=strategy, profile=profile, model=model, led=led)
+    if target and type_of(target) == "task":
+        from . import orchestrate as O
+        guidance = O.preparation(p, normalize_id(target, "T"), role, policy, allow_unfrozen)
+        instructions = (instructions + "\n" if instructions else "") + guidance
     if policy:
         name, prof = profile_for(p, role, policy["profile"])
         model = policy["model"]
@@ -258,7 +263,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     if hb:
         instructions = (instructions + "\n\n" if instructions else "") + hb
     brief = build_brief(p, role, target, objective, instructions)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + __import__("uuid").uuid4().hex[:12]
     label = normalize_id(target) if target else role
     path = p.path("cache", "dispatch", f"{label.replace('/', '-')}-{role}-{stamp}.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -298,10 +303,14 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
             O.record_dispatch(p, normalize_id(target, "T"), snap)
         env.update(RESEARCH_STRATEGY=policy["strategy"], RESEARCH_STRATEGY_FINGERPRINT=policy["fingerprint"],
                    RESEARCH_AGENT_LEVEL=policy["level"])
-    p.event(type_of(label) if target else "agent", label if target else None, "dispatched",
-            f"Dispatched {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else "")
+    p.event(type_of(label) if target else "agent", label if target else None, "prepared",
+            f"Prepared {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else "")
             + (f" [strategy {policy['strategy']}@{policy['fingerprint']} level {policy['level']} model {mdl}]" if policy else ""))
-    return {"role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel, "policy": snap,
+    execution_id, provider_argv = None, argv
+    if target and type_of(target) == "task":
+        from .execution import prepare
+        execution_id, argv = prepare(p, normalize_id(target, "T"), argv, env)
+    return {"state": "prepared", "execution_id": execution_id, "provider_argv": provider_argv, "role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel, "policy": snap,
             "preflight": preflight,
             "target": label if target else None, "headless": headless, "usage_parser": prof.get("usage_parser"),
             "available": bool(shutil.which(cmd)),
@@ -323,7 +332,7 @@ def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None)
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 start_new_session=os.name == "posix")
     except OSError as e:
-        raise ResearchError(f"Could not start agent {d['argv'][0]!r}: {e}") from e
+        raise ResearchError(f"Could not start agent {d.get('provider_argv', d['argv'])[0]!r}: {e}") from e
     timed_out = False
     try:
         out, err = proc.communicate(timeout=timeout)

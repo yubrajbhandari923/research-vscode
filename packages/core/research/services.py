@@ -1,6 +1,8 @@
 """Entity-level business logic: questions, experiments, syntheses, findings, decisions, notes, skills."""
 from __future__ import annotations
 
+from .durability import atomic
+
 import os
 import re
 import shutil
@@ -48,6 +50,7 @@ def _is_enforced(p: Project) -> bool:
 
 # =============================================================================== questions
 
+@atomic
 def create_question(p: Project, title: str, description: Optional[str] = None, parent: Optional[str] = None,
                     status: str = "open", tags: Any = None) -> Dict[str, Any]:
     if not title or not title.strip():
@@ -58,6 +61,7 @@ def create_question(p: Project, title: str, description: Optional[str] = None, p
         "status": _check_status("question", status), "tags": as_list(tags)})
 
 
+@atomic
 def update_question(p: Project, qid: str, **fields: Any) -> Dict[str, Any]:
     qid = normalize_id(qid, "Q")
     ch = {k: v for k, v in fields.items() if v is not None}
@@ -145,6 +149,7 @@ def check_run_budget(p: Project, exp_id: str, override: Optional[str] = None) ->
     return problems
 
 
+@atomic
 def create_experiment(p: Project, title: str, question: Optional[str] = None, hypothesis: Optional[str] = None,
                       motivation: Optional[str] = None, method: Optional[str] = None,
                       expected_outcome: Optional[str] = None, success_criteria: Optional[str] = None,
@@ -203,6 +208,7 @@ def create_variant(p: Project, source: str, params: Optional[Dict[str, Any]] = N
                              _param_delta=delta, **fields)
 
 
+@atomic
 def update_experiment(p: Project, exp_id: str, **fields: Any) -> Dict[str, Any]:
     exp_id = normalize_id(exp_id, "EXP")
     ch: Dict[str, Any] = {}
@@ -224,6 +230,7 @@ def update_experiment(p: Project, exp_id: str, **fields: Any) -> Dict[str, Any]:
     return p.update_entity("experiment", exp_id, ch)
 
 
+@atomic
 def set_experiment_status(p: Project, exp_id: str, status: str, reason: Optional[str] = None) -> Dict[str, Any]:
     exp_id = normalize_id(exp_id, "EXP")
     status = _check_status("experiment", status)
@@ -237,6 +244,7 @@ def set_experiment_status(p: Project, exp_id: str, status: str, reason: Optional
     return p.update_entity("experiment", exp_id, ch, action="status", summary=summ)
 
 
+@atomic
 def set_baseline(p: Project, exp_id: Optional[str]) -> Optional[Dict[str, Any]]:
     exp_id = normalize_id(exp_id, "EXP") if exp_id else None
     for r in p.q("SELECT id FROM experiments WHERE is_baseline=1"):
@@ -254,6 +262,7 @@ def baseline(p: Project) -> Optional[Dict[str, Any]]:
     return p.get("experiment", r["id"]) if r else None
 
 
+@atomic
 def synthesize(p: Project, exp_id: str, what_happened: Optional[str] = None, what_worked: Optional[str] = None,
                what_failed: Optional[str] = None, interpretation: Optional[str] = None,
                limitations: Optional[str] = None, unresolved: Optional[str] = None,
@@ -310,6 +319,7 @@ def list_syntheses(p: Project, exp_id: str) -> List[Dict[str, Any]]:
 
 # =============================================================================== findings
 
+@atomic
 def create_finding(p: Project, title: str, statement: Optional[str] = None, kind: str = "result",
                    status: str = "preliminary", confidence: Optional[str] = None, supports: Any = None,
                    contradicts: Any = None, related: Any = None, questions: Any = None,
@@ -332,6 +342,7 @@ def create_finding(p: Project, title: str, statement: Optional[str] = None, kind
     }, links)
 
 
+@atomic
 def update_finding(p: Project, fid: str, supports: Any = None, contradicts: Any = None, related: Any = None,
                    questions: Any = None, add_supports: Any = None, **fields: Any) -> Dict[str, Any]:
     fid = normalize_id(fid, "F")
@@ -361,6 +372,7 @@ def update_finding(p: Project, fid: str, supports: Any = None, contradicts: Any 
     return p.update_entity("finding", fid, ch, links=links if changed else None)
 
 
+@atomic
 def supersede_finding(p: Project, fid: str, by: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
     fid = normalize_id(fid, "F")
     by_id = _ids(p, by, "F")[0] if by else None
@@ -370,6 +382,7 @@ def supersede_finding(p: Project, fid: str, by: Optional[str] = None, reason: Op
 
 # =============================================================================== decisions
 
+@atomic
 def create_decision(p: Project, statement: str, reason: Optional[str] = None, title: Optional[str] = None,
                     supporting_findings: Any = None, experiments: Any = None, date: Optional[str] = None,
                     status: str = "active", tags: Any = None, supersedes: Optional[str] = None) -> Dict[str, Any]:
@@ -386,6 +399,7 @@ def create_decision(p: Project, statement: str, reason: Optional[str] = None, ti
     return d
 
 
+@atomic
 def update_decision(p: Project, did: str, supporting_findings: Any = None, experiments: Any = None,
                     **fields: Any) -> Dict[str, Any]:
     did = normalize_id(did, "D")

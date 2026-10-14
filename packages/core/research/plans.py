@@ -148,7 +148,11 @@ def create_task(
         "completed_at": None,
     }
 
-    return project.insert_entity("task", values, summary=f"Task created: {title}")
+    requested_done = status == "done"
+    if requested_done:
+        values["status"] = "todo"
+    task = project.insert_entity("task", values, summary=f"Task created: {title}")
+    return complete_task(project, task["id"]) if requested_done else task
 
 
 def update_plan(project: Project, plan_id: str, **fields) -> Dict[str, Any]:
@@ -187,6 +191,8 @@ def update_plan(project: Project, plan_id: str, **fields) -> Dict[str, Any]:
 def update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
     """Update a task, enforcing completion through every public update path."""
     warnings = []
+    if fields.get("status") == "done" and any(k in fields for k in ("checks", "verification", "acceptance_criteria", "goal")):
+        raise PolicyBlocked("Change task obligations separately before requesting completion")
     if fields.get("status") == "done":
         from . import orchestrate, verification
         tid = normalize_id(task_id, "T")
@@ -490,6 +496,7 @@ def task_context(project: Project, task_id: str) -> Dict[str, Any]:
     (with run/synthesis state), and the agent policy.
     """
     from .services import experiment_state
+    from .task_spec import effective
 
     task = get_task_with_deps(project, task_id)
     plan = project.get("plan", task["plan_id"]) if task.get("plan_id") and project.exists("plan", task["plan_id"]) else None
@@ -526,6 +533,7 @@ def task_context(project: Project, task_id: str) -> Dict[str, Any]:
             findings.append({k: f.get(k) for k in ("id", "title", "status", "kind", "confidence")})
     return {
         "task": brief,
+        "effective_spec": effective(project, task['id']),
         "claimed_by": task.get("claimed_by"),
         "checks": checks,
         "last_verification": {k: last[k] for k in ("id", "verdict", "summary", "created_at")} if last else None,

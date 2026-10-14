@@ -132,7 +132,7 @@ def test_orchestrated_dispatch_snapshot_and_frozen_gate(proj, plan, checked, rep
     (repo / "test_x.py").write_text("def test_a():\n    assert 1\n")
     O.freeze(proj, checked["id"], ["test_x.py"])
     d = O.dispatch_task(proj, checked["id"])
-    assert d["tier"] == "fast" and "claude-haiku-5-5" in d["argv"] and d["profile"] == "claude-fast"
+    assert d["tier"] == "fast" and "claude-haiku-5-5" in d["provider_argv"] and d["profile"] == "claude-fast"
     assert d["env"]["RESEARCH_STRATEGY"] == "sonnet_first" and d["env"]["RESEARCH_AGENT_LEVEL"] == "fast"
     snap = json.load(open(repo / d["brief"].replace(".md", ".policy.json")))
     assert snap["fingerprint"] == S.fingerprint(proj, "sonnet_first") and snap["usage"]["status"] == "unavailable"
@@ -149,11 +149,11 @@ def test_orchestrated_dispatch_snapshot_and_frozen_gate(proj, plan, checked, rep
 
 def test_direct_dispatch_matches_orchestrated_and_explicit_wins(proj, plan, checked, repo):
     use(proj, "sonnet_first")
-    d = agents.dispatch(proj, "implementer", checked["id"])
+    d = agents.dispatch(proj, "implementer", checked["id"], allow_unfrozen="test")
     assert d["model"] == "claude-haiku-5-5"
     assert agents.dispatch(proj, "verifier", checked["id"])["model"] == "claude-sonnet-5-5"
-    assert agents.dispatch(proj, "implementer", checked["id"], profile="codex")["profile"] == "codex"
-    assert agents.dispatch(proj, "implementer", checked["id"], model="m-y")["model"] == "m-y"
+    assert agents.dispatch(proj, "implementer", checked["id"], profile="codex", allow_unfrozen="test")["profile"] == "codex"
+    assert agents.dispatch(proj, "implementer", checked["id"], model="m-y", allow_unfrozen="test")["model"] == "m-y"
     assert agents.dispatch(proj, "planner", None, "obj")["model"] == "claude-sonnet-5-5"
 
 
@@ -233,7 +233,7 @@ def test_harness_independent_of_strategy(proj, plan, checked, repo):
     seen = []
     for n in ("sonnet_first", "haiku_max"):
         use(proj, n)
-        d = agents.dispatch(proj, "implementer", checked["id"])
+        d = agents.dispatch(proj, "implementer", checked["id"], allow_unfrozen="test")
         brief = (repo / d["brief"]).read_text()
         assert "numerical_research" in brief and "research skill show pde" in brief and "pytest tests/oracle -q" in brief
         assert d["policy"]["harness"] == {"name": "numerical_research", "fingerprint": fp}

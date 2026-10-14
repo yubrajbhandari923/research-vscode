@@ -1363,7 +1363,7 @@ def cmd_orchestrate(a, p) -> int:
     else:
         raise ResearchError("unknown action")
     _done(a, r, msg=json.dumps(r, default=str) if not a.json else None)
-    return 0
+    return (0 if r["passed"] else 1) if act == "verify" else 0
 
 
 @mut
@@ -2312,7 +2312,7 @@ def cmd_dispatch(a, p) -> int:
     print(green("✓ ") + f"{d['profile']}/{d['role']} brief → {d['brief']}", file=sys.stderr)
     if a.print or not d["available"]:
         if not d["available"]:
-            print(yellow(f"⚠ `{d['argv'][0]}` is not on PATH; run this where it is:"), file=sys.stderr)
+            print(yellow(f"⚠ `{d['provider_argv'][0]}` is not on PATH; run this where it is:"), file=sys.stderr)
         print(d["shell"])
         return 0
     import subprocess

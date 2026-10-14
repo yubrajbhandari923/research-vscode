@@ -9,6 +9,8 @@ config.yaml:
 """
 from __future__ import annotations
 
+from .durability import atomic
+
 import json
 import os
 from typing import Any, Dict, List
@@ -74,6 +76,7 @@ def init_guide(p: Project) -> Dict[str, Any]:
     return {"path": p.rel(path), "created": True}
 
 
+@atomic
 def mark_done(p: Project, ids: Any = None) -> Dict[str, Any]:
     """Record syntheses as reflected in the guide (default: all currently pending). Idempotent."""
     if not os.path.exists(guide_path(p)):

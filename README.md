@@ -5,9 +5,9 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Release status:** 0.7.0 undergoing independent stabilization for 1.0.0; not yet approved as a
-1.0.0 release. See the [engineering review](docs/RELEASE_1_0_0_REVIEW.md) for verified results,
-remaining blockers and trust assumptions. The storage schema remains version 3.
+**Release status:** 1.0.0 release candidate (built locally; not published, tagged or pushed). See the
+[verification record](docs/TEST_VERIFICATION_1_0_0.md) for what was and was not tested and the
+[engineering review](docs/RELEASE_1_0_0_REVIEW.md) for trust assumptions. The storage schema remains version 3.
 
 Two related lifecycles keep scientific conclusions separate from completed work:
 
@@ -28,8 +28,8 @@ library. Node is needed to build the extension, not to use the Python CLI.
 
 ```bash
 # From artifacts built from this checkout:
-python3 -m pip install dist/research_panel-0.7.0-py3-none-any.whl
-code --install-extension dist/research-panel-0.7.0.vsix
+python3 -m pip install dist/research_panel-1.0.0-py3-none-any.whl
+code --install-extension dist/research-panel-1.0.0.vsix
 ```
 
 The VSIX bundles its Python core, so the panel does not require a separate pip installation.
@@ -148,8 +148,14 @@ Dependency cycles introduced by task updates are rejected. Claims are serialized
 another actor's claim requires an explicit takeover. Starting a task with unmet dependencies
 still warns. Plans do not complete automatically.
 
-Completion checks apply to `task done`, task status updates and `mark`. Failed checks block agents;
-humans receive warnings unless `agent_policy.enforce_for_humans` is enabled. Frozen-test integrity
+Completion checks apply to `task done`, task status updates, `mark` and creating a task already `done`; all
+of them run the same verification (`orchestrate.verify_work`): frozen-test integrity, a consistent task
+specification, file boundaries, approved hooks and task checks. The result is *passed*, *blocked* (a check failed,
+a required hook is unapproved, or the specification conflicts) or *unverified* (nothing deterministic ran). A task with
+no verifier can still be completed administratively, and that is recorded as such; it is never reported as verified.
+`research task verify` exits non-zero unless the result is *passed*. Passing checks never make a finding
+scientifically supported; that needs the separate independent review. Failed checks block agents;
+humans receive warnings and an audit event unless `agent_policy.enforce_for_humans` is enabled. Frozen-test integrity
 blocks completion independently. Roles are self-declared conventions, not authenticated identities.
 Hand-edited files and direct Python internals are outside the CLI policy boundary.
 
@@ -159,8 +165,20 @@ research task dispatch T-001
 research dispatch verifier F-001
 ```
 
-Dispatch prepares a brief and command for a configured agent CLI. Review command help for launch
-options; preparation alone does not prove an agent ran. Missing provider executables, credentials
+`research task context T-001` (also the MCP `task_context` tool, the RPC call behind the editor, and the start of every
+dispatch brief) prints one *effective task specification*: objective, inputs, constraints, permitted files, expected
+outputs, acceptance criteria, checks, frozen tests and hooks needing approval, each with its source. If the task record and
+its orchestration contract disagree, both values are shown as a conflict and dispatch and completion are blocked until
+someone reconciles them; nothing is silently overridden.
+
+Dispatch prepares a brief and, for tasks, a single-use launch command. The active strategy chooses the model by
+default; `--profile`/`--agent-model` are explicit overrides (task pin, then strategy, is the order below them). Every
+task dispatch path (plain, routed, orchestrated, editor, MCP) applies the same specification, dependency,
+frozen-test and preflight checks. Launching the command takes a per-task lock held for the provider's lifetime, so
+two processes cannot run the same task; a second launch exits with code 3. Execution records under
+`.research/orchestration/executions/` distinguish *prepared*, *launched*, *running*, *completed*, *failed* and
+*unknown* (the launcher was interrupted and the provider's fate is unobserved). A launcher killed outright (SIGKILL) cannot update its record, which then stays *running*; the lock, not the record, is the authority on whether the task is still being executed. Preparing or sending a command to a
+terminal is not evidence that an agent ran. Missing provider executables, credentials
 or model access must be resolved in that provider's environment. No third-party skill is installed
 merely by selecting a strategy.
 
@@ -265,6 +283,13 @@ research upgrade --apply
 research config check
 research rebuild
 ```
+
+Every mutation runs under a project write lock (`.research/.write.lock`) with an undo journal
+(`.research/.transaction.json`). If a process dies mid-operation, the next open rolls the canonical files back and
+rebuilds the index, so a half-finished operation is discarded as a whole; an unreadable or unsafe journal is preserved and
+reported instead. This protects against process crashes and concurrent supported writers. It does not protect against
+hand edits made during a write, filesystems whose `fsync`/`flock` are unreliable (some network mounts), or power loss on
+hardware that acknowledges writes it has not persisted.
 
 Rebuild backs up a readable index, imports canonical records transactionally and preserves canonical
 file bytes. Duplicate IDs and malformed canonical records stop recovery rather than silently dropping

@@ -38,7 +38,7 @@ def check(p, exp_id: str, request_synthesis: bool = False) -> Dict[str, Any]:
     for r in scope:
         rid = r["id"]
         if r["status"] in ("queued", "running"):
-            pending.append({"run": rid, "state": r["status"], "next": "`research hpc sync`" if r["backend"] in ("slurm", "hpc-bundle") else "wait or `research run refresh`"})
+            pending.append({"run": rid, "state": r["status"], "next": "`research hpc sync`" if r["backend"] in ("slurm", "hpc-bundle") else "wait or `research run status RUN-…`"})
             continue
         if r["status"] != "completed":
             bad(rid, f"run {r['status']}" + (f" (exit {r['exit_code']})" if r["exit_code"] is not None else ""))

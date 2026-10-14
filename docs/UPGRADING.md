@@ -133,8 +133,9 @@ downgrading the tool without restoring `.research/` is safe but will simply decl
 
 ## Independent stabilization changes (unreleased)
 
-Software remains 0.7.0 and schema remains 3 pending the
-[1.0.0 review gates](RELEASE_1_0_0_REVIEW.md). No schema migration is required by this hardening pass.
+Software is 1.0.0 and the schema remains 3. No schema migration is required. New transient files appear under
+`.research/` (`.write.lock`, `.transaction.json`, `.recovery-needed`, `locks/`); they are gitignored, and
+`orchestration/executions/` holds execution records.
 
 Rebuild now refuses malformed canonical records and duplicate IDs instead of omitting them. It
 backs up a readable live database, rolls back failed imports, and does not rewrite canonical

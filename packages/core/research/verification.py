@@ -10,6 +10,8 @@ Gates (enforced for agents, warnings for humans unless agent_policy.enforce_for_
 """
 from __future__ import annotations
 
+from .durability import atomic
+
 import os
 import re
 import time
@@ -137,6 +139,7 @@ def _next_record_id(p: Project, target: str, letter: str) -> str:
     return rid
 
 
+@atomic
 def record(p: Project, target: str, kind: str, verdict: str, summary: str, details: Any = None) -> Dict[str, Any]:
     if verdict not in REVIEW_VERDICTS[kind]:
         raise ResearchError(f"verdict must be one of {', '.join(REVIEW_VERDICTS[kind])}")
@@ -172,7 +175,7 @@ def latest(p: Project, target: str, kind: str) -> Optional[Dict[str, Any]]:
 
 # =============================================================================== tasks
 
-def verify_task(p: Project, task_id: str, transition: bool = True) -> Dict[str, Any]:
+def _task_checks(p: Project, task_id: str, transition: bool = False, log: bool = True) -> Dict[str, Any]:
     """Run a task's checks and record the result. A task in `verify` moves to done (pass) or back to running (fail)."""
     from . import plans as P
     tid = normalize_id(task_id, "T")
@@ -188,27 +191,41 @@ def verify_task(p: Project, task_id: str, transition: bool = True) -> Dict[str, 
     failed = [r for r in results if not r["ok"]]
     summary = f"{len(results) - len(failed)}/{len(results)} checks passed" + (
         "" if passed else ": " + "; ".join(f"{r['check']} ({r['detail']})" for r in failed))
-    rec = record(p, tid, "check", "pass" if passed else "fail", summary, results)
+    rec = record(p, tid, "check", "pass" if passed else "fail", summary, results) if log else None
     if transition and task["status"] == "verify":
         if passed:
             P._update_task(p, tid, status="done", completed_by=P.author_label(p))
         else:
             P.update_task(p, tid, status="running")
-    return {"task": p.get("task", tid), "passed": passed, "results": results, "record": rec}
+    return {"task": p.get("task", tid), "passed": passed, "results": results, "summary": summary, "record": rec}
+
+
+def verify_task(p: Project, task_id: str, transition: bool = True) -> Dict[str, Any]:
+    """Every public verifier evaluates the same task, contract and hook obligations."""
+    from . import orchestrate, plans
+    tid = normalize_id(task_id, "T")
+    out = orchestrate.verify_work(p, tid)
+    if transition and p.get("task", tid)["status"] == "verify":
+        plans._update_task(p, tid, status="done" if out["passed"] else "running")
+    out["task"] = p.get("task", tid)
+    return out
 
 
 def gate_task_completion(p: Project, task_id: str) -> List[str]:
-    """Called by complete_task. Runs checks; blocks agents on failure, warns humans."""
-    task = p.get("task", task_id)
-    if not task.get("checks") or not _policy(p).get("checks_gate_task_completion", True):
-        return []
-    res = verify_task(p, task_id, transition=False)
+    from . import orchestrate
+    res = orchestrate.verify_work(p, task_id)
     if res["passed"]:
         return []
-    msg = f"{task_id} can't be completed: {res['record']['summary']}"
-    if _enforced(p):
-        raise PolicyBlocked(msg, hint=f"Fix the failures and run `research task done {task_id}` again "
-                            f"(`research task verify {task_id}` re-runs the checks only).")
+    if res["obligations_unresolved"]:
+        msg = f"{task_id} can't be completed: " + res["record"]["summary"]
+        if _enforced(p):  # humans are the explicit override: warned and audited, not blocked
+            raise PolicyBlocked(msg, hint=f"Resolve the obligations and run `research task done {task_id}` again "
+                                f"(`research task verify {task_id}` re-runs them only).")
+        p.event("task", task_id, "completion_override", msg)
+        return [msg]
+    # No executable verifier is honest administrative completion, never a pass.
+    msg = "Completed administratively; no deterministic verifier ran. Scientific review remains separate."
+    p.event("task", task_id, "administrative_completion", msg)
     return [msg]
 
 
@@ -225,6 +242,7 @@ def check_finding_status(p: Project, status: Optional[str], via_review: bool = F
                  "`research finding review F-… --verdict supported --notes \"…\"` (or `research dispatch verifier F-…`).")
 
 
+@atomic
 def review_finding(p: Project, finding_id: str, verdict: str, notes: Optional[str] = None,
                    confidence: Optional[str] = None) -> Dict[str, Any]:
     """Record an independent review. supported → supported · contradicted → contradicted · needs_work → preliminary."""

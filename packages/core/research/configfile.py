@@ -207,7 +207,8 @@ def check(project_raw: Dict[str, Any], defaults: Dict[str, Any], text: Optional[
         if dotted not in inherited_flat:
             # Cluster profiles are user-named, so their sub-keys are legitimately absent from the defaults.
             if re.match(r"^hpc\.clusters\.[^.]+\.", dotted) or re.match(r"^orchestration\.strategies\.[^.]+\.", dotted) \
-                    or re.match(r"^harness\.hooks(_approved)?\.[^.]+", dotted):
+                    or re.match(r"^harness\.hooks(_approved)?\.[^.]+", dotted) \
+                    or re.match(r"^agents\.profiles\.[^.]+\.(command|args|model|model_flag|prompt_flag|headless_args|usage_parser)$", dotted):
                 continue
             out["unknown"].append({"key": dotted, "value": v})
         elif inherited_flat[dotted] == v and dotted not in ALWAYS_KEEP:

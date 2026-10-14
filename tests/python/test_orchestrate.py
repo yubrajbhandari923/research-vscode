@@ -58,7 +58,7 @@ def test_haiku_requires_frozen_tests_first(proj, plan, repo):
     (repo / "test_x.py").write_text("def test_a():\n    assert 1\n")
     O.freeze(proj, t["id"], ["test_x.py"])
     d = O.dispatch_task(proj, t["id"])
-    assert d["tier"] == "haiku" and "claude-haiku-5-5" in d["argv"]
+    assert d["tier"] == "haiku" and "claude-haiku-5-5" in d["provider_argv"]
     brief = (repo / d["brief"]).read_text()
     assert "Never edit, delete or weaken the frozen" in brief and "research skill show ponytail" not in brief  # not installed
     assert "Optional skill ponytail is not installed" in brief
@@ -158,5 +158,5 @@ def test_setup_idempotent_preserves_user_files(proj, repo):
 def test_cli_and_existing_dispatch_unchanged(proj, repo, capsys):
     assert main(["dispatch", "planner", "--objective", "x", "--profile", "codex", "--json"]) == 0
     d = json.loads(capsys.readouterr().out)
-    assert d["argv"][0] == "codex"
+    assert d["provider_argv"][0] == "codex"
     assert main(["setup", "agents", "--json"]) == 0

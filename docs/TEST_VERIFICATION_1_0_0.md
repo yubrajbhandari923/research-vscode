@@ -99,3 +99,29 @@ These limitations and the unresolved P1 engineering findings prevent a READY ver
 `mcp status` example: MCP status exists in core/RPC and the setup UI, not as a public CLI action.
 Parser acceptance checks command syntax only; the demo and clean-install checks provide actual
 workflow execution evidence.
+
+## 1.0.0 release-candidate record (final implementation pass, 2026-10-12)
+
+Versions synchronized to 1.0.0 (root and extension `package.json`, extension lockfile, `pyproject.toml`, `__version__`, `uv.lock`). Schema 3.
+
+| Exact command | Result |
+|---|---|
+| `uv run --offline pytest tests/python -q` | **642 passed, 14 skipped**, 0 failed, 235 s. The 14 skips are README/template snippets containing prose quoting in `test_command_examples.py`. Includes 13 new acceptance tests (`test_release_1_0.py`) and 145 command-example parses |
+| `npm run typecheck` | Passed |
+| `npm run test:client` | 3 passed |
+| `npm run package` (with `.venv/bin` on PATH) | VSIX, wheel, sdist built |
+| `bash scripts/clean_install_test.sh` | Passed: offline fresh venv, runs, records, moved copy with index deleted, path-leak scan |
+| `examples/alpha-sweep/run_demo.sh /private/tmp/claude-501/demo1` then `RESEARCH_TEST_WORKSPACE=… RESEARCH_TEST_VSCODE_EXECUTABLE='/Applications/Visual Studio Code.app/Contents/MacOS/Code' npm run test:ext` | Installed VSIX in real VS Code: **73/73** |
+| `git diff --check` | Passed |
+
+SHA-256: `research_panel-1.0.0-py3-none-any.whl` dda60852…a73a · `research_panel-1.0.0.tar.gz` 594b004c…6ffd · `research-panel-1.0.0.vsix` fdc8eae3…89f6 (full hashes: `shasum -a 256 dist/*`).
+
+What the new tests exercise (real subprocesses and files; the "provider" is a local script, not a model):
+two processes racing one task (exactly one runs, the other exits 3, a consumed command is refused);
+a SIGKILLed launcher with a surviving provider (replacement refused); two processes appending 16 ledger attempts (none lost);
+writers killed mid-transaction and after the SQLite commit (reopen twice → no partial record, journal removed, project usable);
+an unsafe journal (kept, error reported); identical effective specification through core, RPC, MCP and CLI;
+conflicting fields blocking dispatch and completion; an unapproved required hook blocking create-as-done, status update, `task done` and verify;
+no-verifier → unverified; failed verification → non-zero CLI exit; blocked task in a non-selected active plan listed.
+
+**Not tested / not claimed:** live provider or model runs; any real HPC cluster; Windows or Python 3.8 (lock and process-group code paths there are unexercised); CI matrix runs (configuration only); network filesystems and power-loss durability; coordinator continuation (not implemented); the new Home "Needs attention" section and Start flow were type-checked and exercised only through the existing 73 extension-host checks, which do not assert them; measurements of UX improvement are limited to behaviours listed above (e.g. Start is one action instead of a profile picker; no timing study). Engineering tests do not establish scientific validity.

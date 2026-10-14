@@ -230,6 +230,7 @@ export function renderFinding(f: any, ctx: RenderCtx): string {
     <div>${h2('Related findings', rel.length)}${rel.length ? `<div class="card flush"><div class="list" style="padding:4px">${rel.map((b: any) => entityRow(b)).join('')}</div></div>` : empty('None.')}</div></section>`;
   h += `<section>${h2('Reviews', (f.reviews || []).length, btn('Review…', 'research.finding.review', [f.id], { icon: 'add', ghost: true }))}${reviewList(f.reviews)}</section>`;
   h += disclosure('History &amp; provenance', `<div class="meta" style="margin-bottom:10px">${author(f, true)}</div><div class="card">${timeline(f.events, 10)}</div>`, `f-hist-${f.id}`);
+  if (f.numerical_evidence) h += `<section>${h2('Numerical evidence coverage')}<div class="card">${esc(f.numerical_evidence.status)} · ${(f.numerical_evidence.bindings || []).length} declared bindings. This checks declared numbers only; independent scientific review is separate.</div></section>`;
   return h + '</div>';
 }
 
@@ -511,6 +512,8 @@ export function renderTask(t: any): string {
     return `<span class="dep-chip" style="--c:var(--${dc})" data-open="${esc(d.id)}" tabindex="0" role="link" title="${esc(d.status)}">${ic(di)}${esc(truncate(d.title, 48))}</span>`;
   }).join('')}</div></div>`);
   h += `<section><div class="panel"><div class="facts">${facts.join('')}</div></div></section>`;
+
+  if (t.effective_spec_md) h += `<section><div class="panel">${md(t.effective_spec_md)}</div></section>`;
 
   // level 2: progress + checks
   const progress: any[] = t.progress || [];

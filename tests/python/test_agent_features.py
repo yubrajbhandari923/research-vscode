@@ -176,8 +176,8 @@ def test_task_override_applies_is_recorded_and_clears(proj, plan, repo):
     assert ra["model"] == "claude-opus-5-5" and ra["why"] == "task override" and ra["overrides"]["task_override"] == {"level": "deep"}
     assert rb["profile"] == "claude-fast" and rb["model"] == "m-special"
     d = O.dispatch_task(proj, a["id"], allow_unfrozen="test")
-    assert "claude-opus-5-5" in d["argv"] and d["policy"]["overrides"]["task_override"] == {"level": "deep"}
-    assert agents.dispatch(proj, "implementer", a["id"])["model"] == "claude-opus-5-5"
+    assert "claude-opus-5-5" in d["provider_argv"] and d["policy"]["overrides"]["task_override"] == {"level": "deep"}
+    assert agents.dispatch(proj, "implementer", a["id"], allow_unfrozen="test")["model"] == "claude-opus-5-5"
     assert O.route(proj, proj.get("task", a["id"]), "fast")["level"] == "fast"      # per-dispatch beats per-task
     O.set_override(proj, a["id"], clear=True)
     assert O.route(proj, proj.get("task", a["id"]))["level"] == "balanced" and O.ledger(proj, a["id"]).get("override") is None

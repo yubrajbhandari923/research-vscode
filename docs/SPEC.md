@@ -1,6 +1,6 @@
 # Research Panel — Features, Design and Technical Specification
 
-**Version:** 0.7.0 (1.0.0 stabilization in progress) · **Schema version:** 3
+**Version:** 1.0.0 · **Schema version:** 3
 
 **Release evidence:** [Independent engineering review](RELEASE_1_0_0_REVIEW.md), based on `b715c63` and the working-tree hardening changes. This specification is not a release-readiness certificate.
 
@@ -13,6 +13,14 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 > TRANSFORMATION_SUMMARY, PHASE_0_SPEC, MCP_INTEGRATION) describe planned work. Where they disagree with this file, this file describes what is actually built.
 
 ---
+
+## 1.0.0 architecture notes
+
+- **Crash consistency.** `durability.py`: `Project.tx()` takes the project write lock, journals each canonical file (full prior content, or prior length for appends) before the first write, commits SQLite, then marks the journal committed. Opening a project recovers: an uncommitted journal is rolled back and the index rebuilt; a committed one is dropped. Recovery failures leave `.transaction.json` in place. Process-crash safe, not a defence against raw edits or unreliable network filesystems.
+- **Execution ownership.** `execution.py`: dispatch for a task writes a single-use execution record and returns a wrapper command. The wrapper takes `.research/locks/<task>.execution` non-blocking and passes the descriptor to the provider, so the lock outlives a killed wrapper while the provider runs. States: prepared, launched, running, completed, failed, unknown.
+- **Effective task specification.** `task_spec.py` projects task fields and the contract with sources and conflicts; storage is unchanged.
+- **Completion policy.** `orchestrate.verify_work` is the single verifier used by `verify_task`, `gate_task_completion`, `task done`, status updates and create-as-done. `verification_state` is `passed`, `blocked` or `unverified`; humans may complete administratively with an audit event.
+- **Not implemented.** Coordinator continuation (see `DESIGN_UX_REVIEW_1_0_0.md`), a UI view of execution records, and Windows lock/process-tree verification.
 
 ## Stabilization behavior changes
 

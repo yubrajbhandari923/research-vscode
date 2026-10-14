@@ -14,7 +14,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import gitinfo, mirrors, schema, yamlio
+from . import gitinfo, mirrors, schema, yamlio, durability
 from .util import deep_merge as _deep_merge
 from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
@@ -115,6 +115,10 @@ research.db-journal
 research.db-wal
 research.db-shm
 cache/
+.write.lock
+.transaction.json
+.recovery-needed
+locks/
 # run logs can be large; remove these lines if you want them versioned
 runs/*/stdout.log
 runs/*/stderr.log
@@ -143,36 +147,27 @@ def find_root(start: Optional[str] = None) -> Optional[str]:
 
 
 def _atomic_write(path: str, text: str) -> None:
-    # A unique sibling also supports concurrent writers in the same process.
-    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(os.path.abspath(path)))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        if os.path.exists(path):
-            os.chmod(tmp, os.stat(path).st_mode & 0o777)
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+    with durability.writing(path):
+        mode = os.stat(path).st_mode & 0o777 if os.path.exists(path) else None
+        durability.replace_bytes(path, text.encode("utf-8"), mode)
 
 
 def append_jsonl(path: str, record: Dict[str, Any]) -> None:
     line = (json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
-    with open(path, "a+b") as f:
-        if os.name == "posix":
-            import fcntl
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-        f.seek(0, os.SEEK_END)
-        if f.tell():
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                raise ResearchError(f"Cannot append to {path}: incomplete trailing record",
-                                    hint="Back up and repair the incomplete line before retrying; no bytes were discarded.")
-        f.write(line)
-        f.flush()
-        os.fsync(f.fileno())
+    with durability.writing(path, append=True):
+        with open(path, "a+b") as f:
+            if os.name == "posix":
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            f.seek(0, os.SEEK_END)
+            if f.tell():
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    raise ResearchError(f"Cannot append to {path}: incomplete trailing record",
+                                        hint="Back up and repair the incomplete line before retrying; no bytes were discarded.")
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
 
 
 def read_jsonl_from(path: str, offset: int):
@@ -213,6 +208,11 @@ class Project:
         self._suppress_export = False
         self._suppress_events = False
         self._raw_config: Optional[Dict[str, Any]] = None   # this project's own file, pre-merge
+        with durability.lock(self.path(".write.lock")):
+            self._open(sync)
+
+    def _open(self, sync):
+        recovery_needed = durability.recover(self.rdir)
         self.config = self.load_config()
         for d in SUBDIRS:
             os.makedirs(os.path.join(self.rdir, d), exist_ok=True)
@@ -220,7 +220,7 @@ class Project:
         fresh = not os.path.exists(self.db_path)
         self.conn = schema.connect(self.db_path)
         schema.migrate(self.conn)
-        if fresh or self.meta("built_at") is None:
+        if fresh or self.meta("built_at") is None or recovery_needed:
             self.rebuild_index(backup=False)
         elif sync:
             self.sync()
@@ -330,6 +330,7 @@ class Project:
             self.load_config()
         return self._raw_config or {}
 
+    @durability.atomic
     def save_config(self, keys: Optional[Dict[str, Any]] = None) -> None:
         """Persist configuration.
 
@@ -413,16 +414,37 @@ class Project:
             finally:
                 self._tx_depth -= 1
             return
-        self.conn.execute("BEGIN IMMEDIATE")
-        self._tx_depth = 1
-        try:
-            yield
-            self.conn.execute("COMMIT")
-        except BaseException:
-            self.conn.execute("ROLLBACK")
-            raise
-        finally:
-            self._tx_depth = 0
+        with durability.lock(self.path(".write.lock")):
+            if not getattr(self, "_recovering", False) and durability.recover(self.rdir):
+                self._recovering = True
+                try:
+                    self.rebuild_index(backup=False)
+                    os.unlink(self.path(".recovery-needed"))
+                    durability.fsync_dir(self.rdir)
+                finally:
+                    self._recovering = False
+            self.conn.execute("BEGIN IMMEDIATE")
+            self._tx_depth = 1
+            journal = durability.Journal(self.rdir)
+            committed = False
+            resolved = False
+            try:
+                yield
+                self.conn.execute("COMMIT")
+                committed = True
+                journal.commit()
+                resolved = True
+            except BaseException:
+                if not committed:
+                    self.conn.execute("ROLLBACK")
+                if committed:
+                    durability.replace_bytes(self.path(".recovery-needed"), b"rebuild required\n")
+                journal.rollback()
+                resolved = True
+                raise
+            finally:
+                self._tx_depth = 0
+                journal.close(remove=resolved)
 
     def q(self, sql: str, args: tuple = ()) -> List[Dict[str, Any]]:
         return [dict(r) for r in self.conn.execute(sql, args).fetchall()]
@@ -477,6 +499,7 @@ class Project:
             self.conn.execute("INSERT OR REPLACE INTO counters(prefix,next) VALUES(?,?)", (p[0], p[1] + 1))
 
     # ------------------------------------------------------------------ events
+    @durability.atomic
     def event(self, etype: str, eid: Optional[str], action: str, summary: str,
               author: Optional[Dict[str, Optional[str]]] = None) -> None:
         if self._suppress_events:
@@ -598,6 +621,7 @@ class Project:
             self.export(etype, id_)
         return self.get(etype, id_)
 
+    @durability.atomic
     def update_entity(self, etype: str, id_: str, changes: Dict[str, Any],
                       links: Optional[Dict[str, List[str]]] = None, action: str = "updated",
                       summary: Optional[str] = None, log: bool = True, touch: bool = True) -> Dict[str, Any]:
@@ -646,6 +670,7 @@ class Project:
             "INSERT OR REPLACE INTO mirrors(path,entity_type,entity_id,hash,mtime,size) VALUES(?,?,?,?,?,?)",
             (self.rel(path), etype, id_, sha256_bytes(data), st.st_mtime, st.st_size))
 
+    @durability.atomic
     def export(self, etype: str, id_: str) -> Optional[str]:
         if self._suppress_export:
             return None

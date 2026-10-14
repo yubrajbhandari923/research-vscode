@@ -72,6 +72,8 @@ def research_home(p: Project) -> Dict[str, Any]:
         # Get next ready task
         next_task = _plans.get_next_ready_task(p, active_plan["id"])
 
+    blocked_tasks = [t for pl in active_plans for t in _plans.list_tasks(p, plan_id=pl["id"]) if t["status"] == "blocked"]
+
     # --- Current Focus (from plan or checkpoint) ---
     current_focus = None
     cp = r["latest_checkpoint"]
@@ -311,7 +313,7 @@ def resume_context(p: Project) -> Dict[str, Any]:
                         "parameters": e.get("parameters"), "updated_at": e["updated_at"],
                         "author_type": e.get("author_type")})
     needs = [{"id": e["id"], "title": e["title"], "status": e["status"], "state": e["state"]}
-             for e in experiments_needing_synthesis(p)]
+             for e in experiments_needing_synthesis(p) if e["state"]["unsynthesized"]]
 
     blockers: List[Dict[str, Any]] = []
     for q in p.list("question", "status='blocked'"):

@@ -1,8 +1,12 @@
 <!-- research:begin — managed by `research init`; edit outside these markers freely -->
 ## Research OS
 
-This repo uses Research OS for research memory and task coordination. Every tool below is also available as an
-MCP tool if the `research` MCP server is configured (`research mcp install`).
+This repo uses Research OS for research memory and task coordination. The core loop (current state, tasks,
+experiments, runs, findings, review, search) is also exposed as MCP tools if the `research` MCP server is configured
+(`research mcp install`). MCP does **not** cover orchestration (`orchestrate freeze|contract|attempt|delegate|verify`),
+hooks, skills editing, strategy/configuration, tuning, or most `hpc` commands: use the CLI for those.
+`research task context T-…` prints the effective task specification (objective, constraints, permitted files,
+acceptance criteria, checks, hooks needing human approval, conflicts) and is the same on CLI, MCP and the editor.
 
 ### Running the CLI (no install needed)
 Use `.research/bin/research` from the project root (e.g. `.research/bin/research current`). It is a project-local

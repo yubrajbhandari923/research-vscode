@@ -23,7 +23,9 @@ PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 INSTRUCTIONS = """Research memory and coordination for this project. Start with research_current (project state),
 then task_next / task_context for your work. Register an experiment before computing; every run belongs to one
 (run_start). Record results as findings with evidence; they stay preliminary until an independent review
-(finding_review). task_done runs the task's checks. Errors with code 3 are policy blocks: read the hint."""
+(finding_review). task_done runs the task's checks; no verifier means unverified, never passed. Errors with code 3
+are policy blocks: read the hint. MCP covers the core loop only: orchestration, hooks, tuning, strategy and most hpc
+commands need the CLI (`.research/bin/research`)."""
 
 S = {"type": "string"}
 I = {"type": "integer"}

@@ -13,6 +13,8 @@ rewritten), run provenance with explicit limitations, and lightweight literature
 """
 from __future__ import annotations
 
+from .durability import atomic
+
 import json
 import math
 import os
@@ -132,6 +134,7 @@ def list_bindings(p: Project, fid: str, include_superseded: bool = False) -> Lis
     return rows if include_superseded else [r for r in rows if r["id"] not in dead]
 
 
+@atomic
 def bind(p: Project, fid: str, run: Optional[str] = None, metric: Optional[str] = None, step: Optional[int] = None,
          select: Optional[str] = None, claim: Any = None, unit: Optional[str] = None, derive: Optional[str] = None,
          inputs: Any = None, factor: Optional[float] = None, rel_tol: Optional[float] = None,
@@ -437,6 +440,7 @@ def _sources(p: Project) -> Dict[str, Dict[str, Any]]:
     return out
 
 
+@atomic
 def source_add(p: Project, doi: Optional[str] = None, arxiv: Optional[str] = None, url: Optional[str] = None,
                title: Optional[str] = None) -> Dict[str, Any]:
     """Offline. `identity` is 'format-valid' at best until someone records that they checked it resolves to this paper."""
@@ -455,6 +459,7 @@ def source_add(p: Project, doi: Optional[str] = None, arxiv: Optional[str] = Non
     return _sources(p)[rec["id"]]
 
 
+@atomic
 def source_mark(p: Project, sid: str, identity_verified: bool = False, examined: bool = False, locator: Optional[str] = None,
                 finding: Optional[str] = None, verdict: Optional[str] = None, note: Optional[str] = None) -> Dict[str, Any]:
     if sid not in _sources(p):

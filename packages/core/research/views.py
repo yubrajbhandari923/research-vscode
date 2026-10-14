@@ -128,6 +128,8 @@ def finding_detail(p: Project, fid: str) -> Dict[str, Any]:
     f["events"] = p.q("SELECT * FROM events WHERE entity_id=? ORDER BY id DESC LIMIT 20", (fid,))
     from .verification import list_records
     f["reviews"] = list_records(p, fid, "review")
+    from .evidence import verify_finding
+    f["numerical_evidence"] = verify_finding(p, fid)
     f["awaiting_review"] = (f["status"] == "preliminary" and f.get("author_type") == "agent" and not f["reviews"])
     return f
 
@@ -213,6 +215,9 @@ def task_detail(p: Project, task_id: str) -> Dict[str, Any]:
     """Get detailed task view with dependencies and related entities."""
     from . import plans as _plans
     task = _plans.get_task_with_deps(p, task_id)
+    from .task_spec import effective, render
+    task["effective_spec"] = effective(p, task["id"])
+    task["effective_spec_md"] = render(task["effective_spec"])
 
     # Add related entity details
     task["plan"] = _brief(p, task["plan_id"]) if task.get("plan_id") else None

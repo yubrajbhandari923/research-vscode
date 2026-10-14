@@ -140,7 +140,7 @@ export function lineChart(points: { id: string; label: string; value: number | n
   const area = `${d} L${x(pts.length - 1).toFixed(1)},${H - B} L${x(0).toFixed(1)},${H - B} Z`;
   const short = (s: string) => (s.length > 12 ? s.slice(0, 11) + '…' : s);
   const g = pts.map((p, i) => {
-    const isBest = p.value === best;
+    const isBest = typeof o.higherIsBetter === 'boolean' && p.value === best;
     const anchor = i === 0 ? 'start' : i === pts.length - 1 ? 'end' : 'middle';
     return `<g data-open="${esc(p.id)}"><title>${esc(p.label)}: ${esc(fmtVal(p.value))}</title>
       <circle class="pt${isBest ? ' best' : ''}" cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="${isBest ? 3.6 : 3}"></circle>

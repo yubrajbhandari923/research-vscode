@@ -4,6 +4,8 @@ Review date: 2026-10-12 (America/New_York). Baseline: `main`, `b715c63`.
 The initial working tree and untracked-file report were clean. No pre-existing changes were
 removed. No research directory was deleted, no external release was published, and no tag was pushed.
 
+> **Superseded by the final implementation pass (see `TEST_VERIFICATION_1_0_0.md`, last section, and `DESIGN_UX_REVIEW_1_0_0.md` dispositions).** The three P1 blockers below (crash consistency, execution ownership, completion integrity) were addressed and covered by multi-process and kill tests; the software is now a 1.0.0 release candidate (not published). The text below is the original 0.7.0 assessment, kept as history.
+
 **Release verdict: NOT READY.** These changes are a substantial stabilization pass, not a
 certification that the entire requested production review is complete. Software remains **0.7.0**;
 schema remains **3**. Passing tests and installable artifacts do not close the blockers below.

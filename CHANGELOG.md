@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased — 1.0.0 stabilization (not a 1.0.0 release)
+## 1.0.0 — 2026-10-12
+
+- Crash consistency: project write lock plus undo journal across canonical files, audit log, orchestration state and the index; recovery on open. Concurrency and kill tests.
+- Exclusive task execution: single-use launch wrappers holding a per-task lock for the provider's lifetime; execution states prepared/launched/running/completed/failed/unknown.
+- One effective task specification (`research task context`) across CLI, RPC, MCP, editor and dispatch briefs; contradictions are surfaced and block dispatch/completion.
+- One dispatch preparation path (specification, dependency, frozen-test, preflight) for plain and orchestrated dispatch; the project strategy governs by default, VS Code overrides only on explicit request. Plain dispatch under a strategy that needs frozen tests now requires them or `allow_unfrozen`.
+- One verification/completion policy for `task verify`, `task done`, status updates and create-as-done; `passed`/`blocked`/`unverified`; `task verify` exits non-zero on failure.
+- Home lists blocked tasks across all active plans; Start replaces Dispatch; charts no longer infer metric direction; findings show numerical evidence coverage separately from review.
+- Agent docs state what MCP omits; wrong command examples fixed; a test parses every shipped example.
+- Deferred: coordinator continuation, execution state in the panel, Windows verification. See `DESIGN_UX_REVIEW_1_0_0.md`.
+
+### Hardening included in 1.0.0 (previously unreleased)
 
 - Preserve malformed canonical files; abort conflicting or malformed rebuilds transactionally and keep canonical bytes unchanged. Back up the live index without replacing its inode.
 - Serialize POSIX JSONL appends, refuse incomplete tails, surface corrupt complete records and fsync shared text writes. Roll back entity-index updates when canonical export fails.
@@ -10,7 +21,7 @@
 - Validate RPC/MCP input shapes; fix extension RPC restart races, split UTF-8 decoding, startup timeout, stdin errors and refresh disposal.
 - Remove obsolete config-migration helpers, unused constants and duplicate merge/check-process implementations. Remove setuptools from runtime dependencies and repair stale lock metadata.
 - Isolate artifact installation tests; copy extension-test workspaces; refuse destructive demo recreation. Add release regression tests and client lifecycle tests.
-- Rewrite the README and correct obsolete specification claims. Keep software at 0.7.0 and schema at 3 pending the release gates in `docs/RELEASE_1_0_0_REVIEW.md`.
+- Rewrite the README and correct obsolete specification claims. Schema stays at 3.
 
 ## 0.7.0 — 2026-10-12
 

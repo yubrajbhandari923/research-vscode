@@ -372,3 +372,28 @@ Success criteria for the proposed changes:
 - Project-local skills and proposed checks can evolve without modifying Research OS infrastructure or weakening approval boundaries.
 
 The architecture can reach this target through focused consolidation. Its scientific foundations should remain; the competing operational paths and misleading projections should not.
+
+## Implementation dispositions (1.0.0 work)
+
+Status values: **implemented** (code and a test), **modified** (done differently than proposed), **deferred**, **rejected**.
+Evidence for each "implemented" row is in `tests/python/test_release_1_0.py`, `test_command_examples.py` and the existing suites.
+
+| Recommendation | Disposition | Rationale |
+|---|---|---|
+| Unified effective task specification | **implemented** (`task_spec.py`) | Read-only projection over task fields and the orchestration contract; storage unchanged. Contradictions are listed with their sources and block dispatch and completion until reconciled. Present in `task_context`, `task_detail`, dispatch briefs and resume/MCP briefs. |
+| Shared preparation for plain and orchestrated dispatch | **implemented** (`orchestrate.preparation`, called from `agents.dispatch`) | Plain `research dispatch`, orchestrated dispatch, RPC (VS Code) and MCP now share the specification, frozen-test, dependency and preflight checks. Behaviour change: plain dispatch under a strategy that requires frozen tests now refuses without them (or `allow_unfrozen`, logged). |
+| Strategy governs normal execution; VS Code must not override it | **implemented** | The Start action calls `dispatch` with no profile; an optional "Advanced model override" passes an explicit profile. The notice shows model, strategy and reason. |
+| Exclusive launch ownership | **implemented** (`execution.py`, `durability.lock`) | Prepared commands are single-use wrappers that take a non-blocking per-task kernel lock held by the provider process, so a killed wrapper does not release it while the provider lives. Tested with real processes. Limits: advisory locks; a provider that daemonizes away from the inherited descriptor escapes it; network filesystems with broken `flock` are unsupported. |
+| Crash-consistent mutation | **modified** | Instead of a write-ahead log or database, each mutation runs under a project lock with an undo journal (fsynced before each canonical write); recovery rolls back an uncommitted transaction and rebuilds the index. Kill tests cover mid-transaction and after-SQLite-commit. Not covered: raw edits outside the protocol, power loss on filesystems that ignore fsync. |
+| One verification and completion policy | **implemented** | `verify_task`, `task done`, status updates and create-as-done all call `orchestrate.verify_work`. States: passed / blocked / unverified; no verifier is never a pass. Agents are blocked; humans are warned and an audit event (`completion_override` / `administrative_completion`) is written. CLI `verify` exits non-zero on failure. |
+| Distinguish "implemented / checked / reviewed / scientifically supported" | **modified** | The verification result carries executed/passed counts, state and an explicit note that findings need separate independent review. Findings show numerical evidence coverage in a card separate from the review list. A dedicated "manual completion" field was not added: the audit event is the record. |
+| Home: project-wide exceptions separate from focus | **implemented** | `blocked_tasks` now spans every active plan; Home renders a "Needs attention (project-wide)" section. |
+| Home: next authorized action, human vs routine | **modified** | The Start button is on the next-task row and project-wide blockers are marked as needing human judgment. A full human-vs-agent queue was not built. |
+| Execution states | **modified** | Core records prepared/launched/running/failed/completed/unknown per execution. The VS Code message now says the command was sent and execution is unconfirmed; the panel does not yet read the execution record, so it cannot show "running". |
+| Neutral metric display | **implemented** | Charts no longer infer direction from metric names and do not highlight a "best" point unless a direction is declared. |
+| Agent-facing instruction fixes | **implemented** | Managed block and MCP instructions state exactly what MCP omits and to use the CLI; wrong examples fixed (`research tuning`, `run status`, `run submit`); a parser test validates every shipped example. |
+| Custom provider profile validation | **implemented** | `agents.profiles.<name>.*` keys are no longer reported as unknown. |
+| Configuration provenance | **deferred (already present)** | `research config show --sources` already exists; no new UI. |
+| Bounded coordinator continuation | **deferred** | Not implemented and not claimed. Smallest safe design: a session-scoped `research orchestrate continue` that loops claim → dispatch → verify only while `verify_work` passes, the attempt limit and budget hold, and no task has an unapproved hook, changed acceptance criteria or unresolved conflict; every other state exits with the reason. It depends on the ownership lock above, which now exists. Until then dispatch, retry and escalation decisions remain manual. |
+| Retire legacy tier routing | **rejected** | Legacy `orchestration.tiers` remain supported; `route()` already delegates to one strategy resolver when a strategy is active. |
+| Frontend framework | **rejected** | Existing string renderers were extended. |

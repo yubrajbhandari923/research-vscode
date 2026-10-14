@@ -125,7 +125,7 @@ function focusBlock(r: any): string {
     rows.push(`<div class="k"><span class="ichip" style="--c:var(--red)">${ic('circle-slash')}</span>Blocked</div><div class="v blocked">${esc(truncate(f.blocker, 220))}${blockedTask ? ` <a data-open="${esc(blockedTask.id)}">${esc(truncate(blockedTask.title, 48))}</a>` : ''}</div>`);
   }
   if (f.next_step) {
-    const act = next && next.status === 'todo' ? btn('Dispatch', 'research.dispatch', [next.id], { icon: 'hubot', cls: 'sm', title: 'Hand this task to an agent' }) : '';
+    const act = next && next.status === 'todo' ? btn('Start', 'research.dispatch', [next.id], { icon: 'hubot', cls: 'sm', title: 'Start an agent on this task using the project strategy' }) : '';
     rows.push(`<div class="k"><span class="ichip" style="--c:var(--green)">${ic('arrow-right')}</span>Next</div><div class="v"><span class="next">${next ? `<a data-open="${esc(next.id)}">${esc(f.next_step)}</a>` : esc(truncate(f.next_step, 220))}${act}</span></div>`);
   }
   if (!f.blocker) rows.push(`<div class="k"><span class="ichip" style="--c:var(--green)">${ic('pass')}</span>Blockers</div><div class="v muted">None recorded</div>`);
@@ -134,6 +134,14 @@ function focusBlock(r: any): string {
     <div class="q">${esc(f.question || 'No current question')}</div>
     <div class="facts">${rows.join('')}</div>
   </section>`;
+}
+
+// Project-wide: independent of the selected focus, so a blocked task in any active plan stays discoverable.
+function exceptionsBlock(r: any): string {
+  const blocked: any[] = r.blocked_tasks || [];
+  if (!blocked.length) return '';
+  return `<section class="blk panel o1" aria-label="Project-wide exceptions">${blkHd('circle-slash', 'Needs attention (project-wide)', 'var(--red)')}
+    <ol class="steps">${blocked.map((t) => stepRow(t, { sub: `${esc(truncate(t.blockers || 'Blocked', 130))} · human judgment needed`, warn: true })).join('')}</ol></section>`;
 }
 
 function planBlock(r: any): string {
@@ -255,7 +263,6 @@ function inFlight(r: any): string {
   return `<div class="subhd" style="margin:0 10px 2px">${ic('pulse')}Running now</div><div>${runs.slice(0, 3).map((x) => `<div class="flight" data-open="${esc(x.id)}" tabindex="0" role="link"><span class="dot pulse" style="--c:var(--accent)"></span><span class="grow ellipsis">${esc(x.label || x.id)} <span class="muted">· ${esc(x.experiment_id)}${x.slurm_job_id ? ' · job ' + esc(x.slurm_job_id) : ''}</span></span>${idLink(x.id)}</div>`).join('')}</div>`;
 }
 
-const LOWER_BETTER = /(err|loss|mae|mse|rmse|frac|time|runtime|latency|nll|ppl|dist|bias)/i;
 
 function resultsBlock(r: any, ctx: HomeCtx): string {
   const charts: any[] = r.result_charts || [];
@@ -263,11 +270,11 @@ function resultsBlock(r: any, ctx: HomeCtx): string {
   if (!charts.length && !outs.length) return '';
   const cards = charts.map((c) => {
     const pair = c.metrics.map((m: string, k: number) => {
-      const higher = !LOWER_BETTER.test(m);
-      const svg = lineChart(c.runs.map((x: any) => ({ id: x.id, label: x.label, value: x.values[k] })), { higherIsBetter: higher, name: m });
-      return svg ? `<div><div class="mname"><span class="mono">${esc(m)}</span><span class="dir">${higher ? 'higher is better' : 'lower is better'}</span></div>${svg}</div>` : '';
+
+      const svg = lineChart(c.runs.map((x: any) => ({ id: x.id, label: x.label, value: x.values[k] })), { name: m });
+      return svg ? `<div><div class="mname"><span class="mono">${esc(m)}</span><span class="dir">direction not declared</span></div>${svg}</div>` : '';
     }).join('');
-    return `<div class="chart-card"><div class="ct"><a data-open="${esc(c.experiment_id)}">${esc(c.title)}</a></div><div class="cs">${c.runs.length} runs · best highlighted</div><div class="chart-pair">${pair}</div></div>`;
+    return `<div class="chart-card"><div class="ct"><a data-open="${esc(c.experiment_id)}">${esc(c.title)}</a></div><div class="cs">${c.runs.length} runs · observed values</div><div class="chart-pair">${pair}</div></div>`;
   }).join('');
   const gallery = outs.length ? `<div class="outs">${outs.map((o) => {
     const img = o.type === 'image' && o.abspath ? ctx.uri(o.abspath) : '';
@@ -293,7 +300,7 @@ export function renderHome(r: any, ctx: HomeCtx): string {
     ${header(r)}
     ${sinceStrip(r)}
     <div class="cols">
-      <div class="col-main">${focusBlock(r)}${planBlock(r)}${insightsBlock(r)}${resultsBlock(r, ctx)}</div>
+      <div class="col-main">${focusBlock(r)}${exceptionsBlock(r)}${planBlock(r)}${insightsBlock(r)}${resultsBlock(r, ctx)}</div>
       <div class="col-side">${attentionBlock(r)}<div class="o2">${inFlight(r)}</div>${activityBlock(r)}</div>
     </div>
   </div>`;

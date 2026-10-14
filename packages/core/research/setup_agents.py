@@ -50,7 +50,7 @@ def _recommend(p: Project) -> List[str]:
     if has("pyproject.toml", "requirements.txt", "setup.py"):
         out.append("python: use the project's existing numpy/scipy/pytest; prefer scipy.optimize or optuna for tuning")
     if (p.config.get("backends") or {}).get("slurm", {}).get("partition") or has("slurm", "job.sbatch"):
-        out.append("hpc: SLURM backend already integrated (`research run exec --backend slurm`)")
+        out.append("hpc: SLURM backend already integrated (`research run submit`)")
     if any(f.endswith(".tex") for _, _, fs in os.walk(r) for f in fs[:200]):
         out.append("writing: LaTeX sources found; keep bibliography tooling as-is")
     return out
@@ -150,7 +150,7 @@ def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) 
             from . import agents
             m = model_of(t)
             d = agents.dispatch(p, "analyst", None, "routing check", None, m, None) if apply else None
-            disp[t] = bool(d and m in d["argv"]) if d else "dry-run"
+            disp[t] = bool(d and m in d["provider_argv"]) if d else "dry-run"
         except ResearchError as e:
             disp[t] = f"failed: {e}"
     r["routing_verified"] = disp

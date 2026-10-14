@@ -713,7 +713,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
   };
   reg('research.dispatch', async (a?: any, roleArg?: string, objectiveArg?: string) => {
     let target = idArg(a);
-    let role = roleArg;
+    let role = roleArg || (target ? defaultRole(target) : undefined);
     if (!role) {
       const def = defaultRole(target);
       const roles = ['implementer', 'verifier', 'analyst', 'planner'].sort((x, y) => (x === def ? -1 : y === def ? 1 : 0));
@@ -730,20 +730,24 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       target = await pickEntity(ROLE_TARGET[role], `Which ${ROLE_TARGET[role]} should the ${role} work on?`);
       if (!target) return;
     }
-    const ag = await rpc('agents');
-    const preferred = ag.roles?.[role] || ag.default_profile;
-    const profiles = (ag.profiles || []).slice().sort((x: any, y: any) => (x.name === preferred ? -1 : y.name === preferred ? 1 : Number(y.available) - Number(x.available)));
-    const prof: any = await vscode.window.showQuickPick(profiles.map((x: any) => ({
-      label: x.name, description: `${x.command}${x.model ? ' · ' + x.model : ''}${x.name === preferred ? ' · configured for ' + role : ''}`,
-      detail: x.available ? undefined : '$(warning) not found on PATH', name: x.name,
-    })), { placeHolder: 'Which agent? (profiles live in .research/config.yaml → agents)' });
-    if (!prof) return;
-    const d = await rpc('dispatch', { role, target, objective, profile: prof.name });
+    let d = await rpc('dispatch', { role, target, objective });
+    const choice = await vscode.window.showInformationMessage(
+      `${d.model || d.profile} · ${d.policy?.strategy || 'project profiles'} · ${d.policy?.why || 'configured role'}`,
+      'Start', 'Advanced model override');
+    if (!choice) return;
+    if (choice === 'Advanced model override') {
+      const ag = await rpc('agents');
+      const prof: any = await vscode.window.showQuickPick((ag.profiles || []).map((x: any) => ({
+        label: x.name, description: x.model || x.command, name: x.name,
+      })), { placeHolder: 'Explicit override of project strategy and task pin' });
+      if (!prof) return;
+      d = await rpc('dispatch', { role, target, objective, profile: prof.name });
+    }
     const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: model.root, env: { ...shim.env(), ...d.env } });
     term.show();
     term.sendText(d.argv.map(shq).join(' '), true);
-    done(`${d.profile}/${d.role} dispatched`);
-    if (!d.available) vscode.window.showWarningMessage(`\`${d.argv[0]}\` was not found on PATH. Install it, or point the "${d.profile}" profile at the right command in .research/config.yaml.`);
+    done(`${d.profile}/${d.role}: launch command sent; execution not yet confirmed`);
+    if (!d.available) vscode.window.showWarningMessage(`\`${d.provider_argv[0]}\` was not found on PATH. Install it, or point the "${d.profile}" profile at the right command in .research/config.yaml.`);
   });
   reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
 

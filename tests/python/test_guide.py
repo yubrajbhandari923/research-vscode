@@ -48,7 +48,7 @@ def test_every_synthesis_pending_until_done(proj):
 def test_refresh_prepares_opus_and_marks_nothing(proj):
     s = _syn(proj)
     r = G.refresh(proj)  # "interrupted"/failed agent: nothing was marked
-    assert r["model"] == "claude-opus-5-5" and "claude-opus-5-5" in r["argv"] and s["id"] in r["pending"]
+    assert r["model"] == "claude-opus-5-5" and "claude-opus-5-5" in r["provider_argv"] and s["id"] in r["pending"]
     assert G.status(proj)["pending"] and not G.status(proj)["up_to_date"]
     assert G.refresh(proj)["pending"] == [s["id"]]  # retry safe
     G.mark_done(proj)

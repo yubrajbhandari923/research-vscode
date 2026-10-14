@@ -159,8 +159,8 @@ def test_verify_moves_verify_tasks(proj, repo):
     assert res["passed"] and res["task"]["status"] == "done" and res["record"]["id"] == f"{t['id']}/V1"
     t2 = P.create_task(proj, plan["id"], "impl2", checks=["file:nope.png"], status="verify")
     assert V.verify_task(proj, t2["id"])["task"]["status"] == "running"
-    with pytest.raises(ResearchError, match="has no checks"):
-        V.verify_task(proj, P.create_task(proj, plan["id"], "x")["id"])
+    bare = V.verify_task(proj, P.create_task(proj, plan["id"], "x")["id"])
+    assert not bare["passed"] and bare["verification_state"] == "unverified"
 
 
 # ============================================================================ verification: finding gate
@@ -362,12 +362,12 @@ def test_dispatch_profiles_roles_and_briefs(proj, repo):
     proj.config["agents"]["roles"]["verifier"] = "codex"
     proj.config["agents"]["profiles"]["codex"]["model"] = "gpt-5"
     d = AG.dispatch(proj, None, t["id"])
-    assert d["role"] == "implementer" and d["profile"] == "claude" and d["argv"][0] == "claude"
-    assert d["env"]["RESEARCH_AGENT_ROLE"] == "implementer" and d["brief"] in d["argv"][-1]
+    assert d["role"] == "implementer" and d["profile"] == "claude" and d["provider_argv"][0] == "claude"
+    assert d["env"]["RESEARCH_AGENT_ROLE"] == "implementer" and d["brief"] in d["provider_argv"][-1]
     brief = (repo / d["brief"]).read_text()
     assert "IMPLEMENTER" in brief and "Task T-001" in brief and "file: x.png" in brief and "match fig 3" in brief
     v = AG.dispatch(proj, None, f["id"])
-    assert v["role"] == "verifier" and v["argv"][:3] == ["codex", "-m", "gpt-5"]
+    assert v["role"] == "verifier" and v["provider_argv"][:3] == ["codex", "-m", "gpt-5"]
     vb = (repo / v["brief"]).read_text()
     assert "check a claim against its evidence" in vb and "task verify" not in vb
     g = AG.dispatch(proj, "planner", objective="Reproduce Table 2", profile="gemini")
