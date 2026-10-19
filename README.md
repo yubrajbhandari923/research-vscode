@@ -125,7 +125,9 @@ historical context.
 `research evidence` binds numerical claims to recorded metrics or supported calculations.
 Numerical consistency is distinct from scientific validity: software cannot establish that the
 experiment, metric or interpretation is appropriate. `research guide refresh` prepares a brief
-for maintaining the Scientist Guide; it does not run a model or write a verified narrative.
+for maintaining the Scientist Guide; it does not run a model or write a verified narrative. From 1.1 the guide can be
+a Quarto book with claim and figure provenance, scientific and researcher editions, and separate review and approval
+(`docs/SCIENTIST_GUIDE_V2.md`).
 
 In VS Code, open **Research Home** with `Ctrl/Cmd+Alt+R`. Questions, experiments, findings,
 decisions, checkpoints and plans also have sidebar views. Experiment pages expose runs, logs,

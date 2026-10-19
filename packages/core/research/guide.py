@@ -11,9 +11,10 @@ from __future__ import annotations
 
 from .durability import atomic
 
+import glob
 import json
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .store import Project, _atomic_write
 from .util import NotFound, ResearchError, as_list, now_iso
@@ -53,7 +54,21 @@ def status(p: Project) -> Dict[str, Any]:
         if s["id"] not in done:
             pending.append({**s, "findings": _findings(p, s["experiment_id"])})
     return {"enabled": bool(settings(p).get("enabled", True)), "path": p.rel(path), "exists": os.path.exists(path),
-            "pending": pending, "up_to_date": not pending, "processed": len(done)}
+            "pending": pending, "up_to_date": not pending, "processed": len(done), "provenance": _provenance(p)}
+
+
+def _provenance(p: Project) -> Optional[Dict[str, Any]]:
+    """Per-section freshness of the Quarto guide, or None for a project that has not adopted it (v1.0 behaviour)."""
+    from . import provenance as PV
+    if not any(os.path.exists(PV.prov_path(p, n)) for n in ("claims.json", "figures.json", "sections.json")):
+        return None
+    v = PV.validate(p)
+    return {"ok": v["ok"], "errors": v["errors"], "warnings": v["warnings"],
+            "sections": {k: {"state": s["state"], "owner": s["owner"], "why": (s["stale_because"] + s["errors"] + s["contains_errors"])[:5]}
+                         for k, s in v["sections"].items()},
+            "proposals": sorted(os.path.relpath(x, PV.guide_dir(p)).replace(os.sep, "/")
+                                for x in glob.glob(os.path.join(PV.guide_dir(p), "_proposals", "**", "*.md"), recursive=True)),
+            "uncited_experiments": v["coverage"]["uncited_experiments"], "uncited_findings": v["coverage"]["uncited_findings"]}
 
 
 def init_guide(p: Project) -> Dict[str, Any]:
@@ -120,11 +135,28 @@ def refresh(p: Project, profile: str = None, model: str = None, strategy: str = 
                             hint="Fix orchestration.available / guide.model in .research/config.yaml.")
     init_guide(p)
     st = status(p)
-    if st["up_to_date"]:
+    prov = st.get("provenance")
+    stale = [k for k, s in (prov or {}).get("sections", {}).items() if s["state"] != "fresh"]
+    uncited = (prov or {}).get("uncited_experiments", []) + (prov or {}).get("uncited_findings", [])
+    if st["up_to_date"] and not stale and not uncited:
         return {"up_to_date": True, "path": st["path"]}
     ids = [s["id"] for s in st["pending"]]
     obj = (f"Refresh the Scientist Guide at {st['path']} with `research skill show scientist-guide`. Pending syntheses: "
-           f"{', '.join(ids)}. Process them together. Only after the guide is edited, run "
+           f"{', '.join(ids) or 'none'}. Process them together. Only after the guide is edited, run "
            f"`research guide done {' '.join(ids)}`; if you cannot finish, leave them pending and say why.")
-    d = agents.dispatch(p, "analyst", None, obj, profile or cfg.get("profile"), model, policy=policy)
-    return {**d, "pending": ids, "path": st["path"]}
+    if prov is not None:  # the project adopted the Quarto guide: update only what is affected, in the Quarto chapters
+        obj += (f" This project uses the Quarto Scientist Guide: follow the scientific-briefing skill. Revise only these sections: "
+                f"{', '.join(stale) or 'none stale'}; not yet covered: {', '.join(uncited) or 'nothing'}. Leave human-owned "
+                f"sections untouched and put proposed changes in the guide's _proposals/ folder.")
+    d = agents.dispatch(p, "analyst", None, obj, profile or cfg.get("profile"), model, policy=policy,
+                        require_skills=["scientific-briefing"] if prov is not None else None)
+    return {**d, "pending": ids, "path": st["path"], "stale_sections": stale, "uncovered": uncited}
+
+
+def overview(p: Project) -> Dict[str, Any]:
+    """`status` plus, once the Quarto guide is adopted, the review/approval label of each chapter and Quarto availability.
+    Read-only (callers open the project without sync)."""
+    from . import guide_quarto as GQ
+    from . import guide_review as GR
+    st = status(p)
+    return {**st, "review": GR.status(p) if st.get("provenance") is not None else None, "quarto": GQ.doctor(p)}

@@ -11,16 +11,22 @@ settings live in .research/skills.yaml, so imported SKILL.md files are never mod
       added_at: '…'
       always: true          # list in current.md as always-on for every agent session
       applies_to: []        # task types / roles / tags it is suggested for in `research task context`
+      level: recommended    # recommended (optional) | required (blocks dispatch if absent; body injected + hashed)
+                            # | protocol (required, plus `checks:` that `research skill verify` runs)
+      checks: []            # protocol only: `research …` commands that must exit 0
 
 Skills are exposed to agents by per-skill symlinks in .claude/skills/ (Claude Code) and .agents/skills/ (Codex and
 other Agent Skills tools), controlled by config `skills.link`.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +35,7 @@ from . import yamlio
 from .store import Project, _atomic_write
 from .util import NotFound, ResearchError, as_list, now_iso, slugify
 
+LEVELS = ["recommended", "required", "protocol"]
 LINK_TARGETS = {"claude": ".claude/skills", "agents": ".agents/skills"}
 _SKIP_DIRS = {"node_modules", "__pycache__", "venv", ".venv"}
 _GH_TREE = re.compile(r"^(https?://github\.com/[^/]+/[^/]+?)(?:\.git)?/tree/([^/]+)/(.+)$")
@@ -78,8 +85,14 @@ def list_skills(p: Project) -> List[Dict[str, Any]]:
         meta = m.get(s["dir"] or s["name"]) or m.get(s["name"]) or {}
         out.append({**s, "source": meta.get("source"), "subpath": meta.get("subpath"), "ref": meta.get("ref"),
                     "added_at": meta.get("added_at"), "always": bool(meta.get("always")),
-                    "applies_to": as_list(meta.get("applies_to"))})
+                    "applies_to": as_list(meta.get("applies_to")), "level": _level(meta),
+                    "checks": [str(c) for c in as_list(meta.get("checks"))]})
     return out
+
+
+def _level(meta: Dict[str, Any]) -> str:
+    lv = str(meta.get("level") or "recommended").strip().lower()
+    return lv if lv in LEVELS else "recommended"  # an unknown value never silently becomes a gate
 
 
 def get_skill(p: Project, name: str) -> Dict[str, Any]:
@@ -254,10 +267,24 @@ def remove_skill(p: Project, name: str) -> Dict[str, Any]:
     return {"removed": n, "kept_at": p.rel(moved), "links": link_skills(p)}
 
 
-def set_skill(p: Project, name: str, always: Optional[bool] = None, applies_to: Any = None) -> Dict[str, Any]:
+def set_skill(p: Project, name: str, always: Optional[bool] = None, applies_to: Any = None,
+              level: Optional[str] = None, checks: Any = None) -> Dict[str, Any]:
     n = get_skill(p, name)["dir"] or slugify(name)
     m = load_manifest(p)
     e = m.get(n) or {}
+    if level is not None:
+        if level not in LEVELS:
+            raise ResearchError(f"level must be one of {', '.join(LEVELS)}")
+        e["level"] = level
+    if checks is not None:
+        cs = [str(c).strip() for c in as_list(checks) if str(c).strip()]
+        bad = [c for c in cs if not c.startswith("research ")]
+        if bad:
+            raise ResearchError(f"Protocol checks must be `research …` commands: {bad[0]!r}")
+        e["checks"] = cs
+    if (level or e.get("level")) == "protocol" and not e.get("checks"):
+        raise ResearchError("A protocol skill needs at least one check (--check 'research …')",
+                            hint="Without a machine-checkable requirement use level `required`.")
     if always is not None:
         e["always"] = bool(always)
     if applies_to is not None:
@@ -265,7 +292,7 @@ def set_skill(p: Project, name: str, always: Optional[bool] = None, applies_to: 
     m[n] = e
     save_manifest(p, m)
     p.event("skill", n, "updated", f"Skill '{n}' settings: always={e.get('always', False)}, "
-            f"applies_to={e.get('applies_to') or []}")
+            f"applies_to={e.get('applies_to') or []}, level={e.get('level', 'recommended')}")
     return next(s for s in list_skills(p) if (s["dir"] or s["name"]) == n)
 
 
@@ -348,3 +375,156 @@ def skills_for(p: Project, task: Optional[Dict[str, Any]] = None, plan: Optional
         if s["always"]:
             add(s["name"], "always on")
     return list(out.values())
+
+
+# =============================================================================== enforcement
+
+def digest(p: Project, name: str) -> str:
+    """Content hash of a whole skill folder (names + bytes, sorted), so a changed script or reference counts too."""
+    s = get_skill(p, name)
+    base = os.path.dirname(p.abspath(s["path"]))
+    h = hashlib.sha256()
+    if not s["dir"]:  # a single loose <name>.md
+        with open(p.abspath(s["path"]), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    for root, dirs, files in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
+        for fn in sorted(files):
+            fp = os.path.join(root, fn)
+            h.update(os.path.relpath(fp, base).replace(os.sep, "/").encode() + b"\0")
+            with open(fp, "rb") as f:
+                h.update(f.read())
+            h.update(b"\0")
+    return h.hexdigest()
+
+
+def required_for(p: Project, role: Optional[str] = None, task: Optional[Dict[str, Any]] = None,
+                 plan: Optional[Dict[str, Any]] = None, extra: Any = None) -> Dict[str, Any]:
+    """Skills a managed dispatch must load. Required = level required/protocol among the skills that apply to the task
+    (assigned, task type/role match, always-on) or to the role alone, plus `extra` names the caller insists on.
+    Returns {"required": [{name, level, why, sha256}], "recommended": [names], "missing": [names]}. Never raises."""
+    have = {s["name"].lower(): s for s in list_skills(p)}
+    have.update({(s["dir"] or "").lower(): s for s in have.values() if s["dir"]})
+    cand: Dict[str, str] = {}
+    for x in skills_for(p, task, plan):
+        cand.setdefault(x["name"].lower(), x["why"])
+    if role:
+        for s in have.values():
+            if role.lower() in {str(a).lower() for a in s["applies_to"]}:
+                cand.setdefault(s["name"].lower(), f"applies to role {role}")
+    for n in as_list(extra):
+        cand[str(n).lower()] = "required by this dispatch"
+    req, rec, missing = [], [], []
+    man = {k.lower(): v for k, v in load_manifest(p).items()}
+    for key, meta in man.items():  # a gated skill whose folder vanished must block, not silently drop out
+        if key not in have and _level(meta) != "recommended" and (
+                key in cand or meta.get("always") or (role and role.lower() in {str(a).lower() for a in as_list(meta.get("applies_to"))})):
+            missing.append(key)
+    for key, why in cand.items():
+        s = have.get(key)
+        forced = why == "required by this dispatch"
+        if s is None:
+            if forced:
+                missing.append(key)
+            continue
+        if forced or s["level"] in ("required", "protocol"):
+            try:
+                req.append({"name": s["name"], "level": "protocol" if s["level"] == "protocol" else "required",
+                            "why": why, "sha256": digest(p, s["name"])})
+            except (OSError, NotFound):
+                missing.append(s["name"])
+        else:
+            rec.append(s["name"])
+    seen, uniq = set(), []
+    for r in req:
+        if r["name"] not in seen:
+            seen.add(r["name"])
+            uniq.append(r)
+    return {"required": uniq, "recommended": sorted(set(rec)), "missing": sorted(set(missing))}
+
+
+def injected_md(p: Project, required: List[Dict[str, Any]]) -> str:
+    """The required skills' instructions, verbatim, for the dispatch brief."""
+    if not required:
+        return ""
+    L = ["## Required skills (loaded by Research OS — follow them; do not skip)", "",
+         "These were injected by the dispatch, so you do not need to look them up. Their content hashes are recorded; "
+         "bundled scripts and references are under `.research/skills/<name>/`."]
+    for r in required:
+        L += ["", f"### Skill `{r['name']}` [{r['level']}] — sha256 {r['sha256'][:12]}", "",
+              get_skill(p, r["name"])["markdown"].strip()]
+        if r["level"] == "protocol":
+            L += ["", "Verifiable requirements for this skill: " + "; ".join(f"`{c}`" for c in
+                                                                              (get_skill(p, r["name"]).get("checks") or [])),
+                  f"They are run by `research skill verify {r['name']}`."]
+    return "\n".join(L)
+
+
+def drift(p: Project, recorded: List[Dict[str, Any]]) -> List[str]:
+    """Problems between recorded {name, sha256} pairs and the skills now on disk (empty = unchanged)."""
+    out = []
+    for r in recorded or []:
+        try:
+            now = digest(p, r["name"])
+        except (NotFound, OSError):
+            out.append(f"required skill {r['name']!r} is no longer installed")
+            continue
+        if now != r.get("sha256"):
+            out.append(f"required skill {r['name']!r} changed since it was dispatched ({r['sha256'][:12]} → {now[:12]})")
+    return out
+
+
+def run_checks(p: Project, name: str, timeout: int = 300) -> Dict[str, Any]:
+    """Run a protocol skill's machine-checkable requirements. Each is a `research …` command that must exit 0.
+    A skill with no checks has nothing to verify: that is reported, never counted as compliance."""
+    s = get_skill(p, name)
+    results = []
+    core = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "RESEARCH_ROOT": p.root,
+           "PYTHONPATH": os.pathsep.join(x for x in (core, os.path.join(os.path.dirname(core), "cli"),
+                                                       os.environ.get("PYTHONPATH", "")) if x)}
+    for c in s["checks"]:
+        argv = shlex.split(c)[1:]
+        try:
+            r = subprocess.run([sys.executable, "-m", "research_cli", *argv], cwd=p.root, env=env, capture_output=True,
+                               text=True, timeout=timeout)
+            results.append({"check": c, "ok": r.returncode == 0, "exit_code": r.returncode,
+                            "output": (r.stdout + r.stderr).strip()[-400:]})
+        except subprocess.TimeoutExpired:
+            results.append({"check": c, "ok": False, "exit_code": 124, "output": "timed out"})
+    verified = bool(results) and all(r["ok"] for r in results)
+    return {"skill": s["name"], "level": s["level"], "sha256": digest(p, name), "checks": results,
+            "verdict": "pass" if verified else ("fail" if results else "no_checks")}
+
+
+def audit(p: Project) -> Dict[str, Any]:
+    """What a *direct* agent session (Claude Code / Codex started without `research dispatch`) can and cannot rely on.
+    Dispatch injects required skills; a direct session only sees what its tool discovers, so list that honestly."""
+    sk = list_skills(p)
+    linked = {}
+    for key, rel in LINK_TARGETS.items():
+        d = os.path.join(p.root, rel)
+        linked[key] = sorted(n for n in (os.listdir(d) if os.path.isdir(d) else [])
+                             if os.path.exists(os.path.join(d, n, "SKILL.md")))
+    agents_md = os.path.join(p.root, "AGENTS.md")
+    try:
+        with open(agents_md, encoding="utf-8") as f:
+            mentioned = f.read()
+    except OSError:
+        mentioned = ""
+    rows = []
+    for s in sk:
+        n = s["dir"] or s["name"]
+        rows.append({"name": s["name"], "level": s["level"], "always": s["always"],
+                     "discoverable_claude": n in linked.get("claude", []), "discoverable_agents": n in linked.get("agents", []),
+                     "named_in_agents_md": s["name"] in mentioned,
+                     "has_checks": bool(s["checks"])})
+    gated = [r for r in rows if r["level"] != "recommended"]
+    problems = [f"{r['name']}: {r['level']} but not linked for "
+                + " or ".join(k for k, v in (("Claude Code", r["discoverable_claude"]), ("Codex", r["discoverable_agents"])) if not v)
+                for r in gated if not (r["discoverable_claude"] and r["discoverable_agents"])]
+    return {"skills": rows, "problems": problems,
+            "note": "Managed dispatches (`research dispatch`, orchestrate, guide refresh) block on missing required skills and "
+                    "inject them with a recorded hash. A direct Claude Code or Codex session is NOT gated: it can only discover "
+                    "linked skills and read AGENTS.md. Use `research skill verify` and the deterministic Guide validators "
+                    "to check the work regardless of how it was produced."}

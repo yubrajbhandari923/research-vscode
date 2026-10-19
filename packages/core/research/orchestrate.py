@@ -110,7 +110,7 @@ def record_dispatch(p: Project, tid: str, snap: Dict[str, Any]) -> None:
     """Append the resolved-allocation snapshot to the task's ledger. History never re-reads the active config."""
     led = ledger(p, tid)
     keep = ("ts", "role", "strategy", "fingerprint", "level", "profile", "provider", "model", "why", "overrides",
-            "independent", "revision", "status")
+            "independent", "revision", "status", "skills")
     led.setdefault("dispatches", []).append({**{k: snap[k] for k in keep if k in snap},
                                              "harness": (snap.get("harness") or {}).get("fingerprint")})
     _save(p, tid, led)
@@ -394,6 +394,14 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
         checks = verification._task_checks(p, tid, transition=False, log=False)
         ran += len(checks["results"])
         problems += [f"check {r['check']} failed ({r['detail']})" + (f":\n{r['output'].strip()}" if r.get("output") else "") for r in checks["results"] if not r["ok"]]
+    from . import skills as SK
+    last = ([d for d in (led.get("dispatches") or []) if d.get("skills")] or [{}])[-1].get("skills") or []
+    problems += SK.drift(p, last)  # a required skill edited after dispatch means the worker did not follow what is now approved
+    for r in last:
+        if r.get("level") == "protocol":
+            pc = SK.run_checks(p, r["name"])
+            ran += len(pc["checks"])
+            problems += [f"protocol skill {r['name']}: `{c['check']}` failed (exit {c['exit_code']})" for c in pc["checks"] if not c["ok"]]
     unresolved = bool(problems)
     if not (any(r["ok"] for r in hr["ran"]) or checks) and not problems:
         problems.append("no deterministic verifier ran (no task checks and no approved post_implementation hooks): this is not a pass")

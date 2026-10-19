@@ -909,7 +909,7 @@ def cmd_skills_list(a, p) -> int:
         out_json(rows)
     else:
         for s in rows:
-            tags = ([green("always")] if s["always"] else []) + ([f"applies to {', '.join(s['applies_to'])}"] if s["applies_to"] else [])
+            tags = ([green("always")] if s["always"] else []) + ([yellow(s["level"])] if s["level"] != "recommended" else []) + ([f"applies to {', '.join(s['applies_to'])}"] if s["applies_to"] else [])
             src = dim(f" ← {s['source']}" + (f"@{s['ref'][:8]}" if s.get("ref") else "")) if s.get("source") else ""
             print(f"{bold(s['name'])}  {dim(s['path'])}{src}" + (f"  {' · '.join(tags)}" if tags else ""))
             print(f"    {s['description'][:200]}")
@@ -1036,6 +1036,9 @@ def _print_upgrade(r, applied: bool) -> None:
         for x in r["preserved"]:
             print(f"  = {x}")
         print(f"  = {dim('user-authored AGENTS.md sections, custom config values, unknown config keys')}")
+    gs = r.get("guide") or {}
+    if gs.get("next"):
+        print("\n  " + bold("Scientist Guide v2 (optional):") + " " + gs["next"])
     print("\n  " + r["note"])
     if r.get("backup"):
         print(dim(f"  backup of edited metadata files: {r['backup']}"))
@@ -1046,9 +1049,216 @@ def _print_upgrade(r, applied: bool) -> None:
 
 
 @mut
+def _src_list(a) -> list:
+    return list(getattr(a, "source", None) or [])
+
+
+def _guide_prov(a, p) -> int:
+    """claim | figure | section | validate | coverage: the provenance side of the Scientist Guide."""
+    from research import provenance as PV
+    act, args = a.action, list(a.ids)
+    verb = args[0] if args else ("list" if act != "validate" and act != "coverage" else "")
+    if act == "claim" and verb == "add":
+        if len(args) < 2 or not a.kind or not a.section:
+            raise ResearchError('usage: research guide claim add "<statement>" --kind observation|… --section chapter.qmd '
+                                '--source F-003 [--source challenges:F-004] [--figure FIG-001] [--historical]')
+        r = PV.claim_add(p, args[1], a.kind, a.section, _src_list(a), a.figure, a.historical)
+        _done(a, r, msg=f"{r['id']} ({r['kind']}) → {r['section']}; mark it in the text as [..]{{#{r['id'].lower()} .claim}}")
+    elif act == "claim" and verb in ("retire", "update"):
+        r = PV.claim_update(p, args[1], status="retired" if verb == "retire" else None, kind=a.kind, section=a.section,
+                            sources=_src_list(a) or None, figures=a.figure or None, historical=a.historical or None)
+        _done(a, r, msg=f"{r['id']} {r['status']}")
+    elif act == "claim" and verb in ("list", "show"):
+        cl = PV.load_claims(p)
+        if verb == "show" and len(args) > 1:
+            if args[1].upper() not in cl:
+                raise NotFound(f"Claim {args[1]} not found")
+            cl = {args[1].upper(): cl[args[1].upper()]}
+        v = PV.validate(p)["claims"]
+        if a.json:
+            out_json({k: {**c, "validation": v.get(k)} for k, c in cl.items()})
+        else:
+            for k, c in cl.items():
+                print(f"{bold(k)} [{c['kind']}] {v[k]['status']:12} {c['section']}  {c['statement'][:100]}")
+                if verb == "show":
+                    for s in c["sources"]:
+                        print(f"    {s['role']:10} {s['ref']}")
+                    for i in v[k]["issues"]:
+                        print(f"    {i['severity']}: {i['message']}")
+                    for m in v[k]["stale"]:
+                        print(yellow(f"    stale: {m}"))
+    elif act == "figure" and verb == "add":
+        if len(args) < 2 or not (a.fig_kind and a.section and a.label and a.title):
+            raise ResearchError("usage: research guide figure add FILE --fig-kind archived|recreated|derived|conceptual "
+                                "--section chapter.qmd --label fig-name --title \"…\" [--source A-0001 …] [--script x.py --input data.csv]")
+        gen = {"script": a.script, "inputs": a.input} if (a.script or a.input) else None
+        r = PV.figure_add(p, a.fig_kind, args[1], a.section, a.label, a.title, _src_list(a), gen)
+        _done(a, r, msg=f"{r['id']} ({r['kind']}) {r['label']}")
+    elif act == "figure" and verb == "refresh":
+        if len(args) < 2:
+            raise ResearchError("usage: research guide figure refresh FIG-001 [--notes TEXT]   (after regenerating it on purpose)")
+        r = PV.figure_refresh(p, args[1], a.notes)
+        _done(a, r, msg=f"{r['id']} re-pinned to the regenerated file ({len(r['history'])} earlier version(s) kept)")
+    elif act == "figure":
+        fg = PV.load_figures(p)
+        out_json(fg) if a.json else [print(f"{bold(k)} [{f['kind']}] {f['label']}  {f['file']}  {f['title']}") for k, f in fg.items()]
+    elif act == "section" and verb == "pin":
+        r = PV.pin_section(p, args[1])
+        _done(a, r, msg=f"{r['section']}: re-pinned {r['claims_repinned']} claim(s) to the current records")
+    elif act == "section" and verb == "set":
+        r = PV.section_set(p, args[1], a.owner, _src_list(a) or None)
+        _done(a, r, msg=f"{r['section']}: owner {r['owner']}, {len(r['depends_on'])} dependencies")
+    elif act == "section":
+        v = PV.validate(p)["sections"]
+        if a.json:
+            out_json(v)
+        else:
+            for k, s in v.items():
+                print(f"{bold(k)} [{s['owner']}] {s['state']}" + ("  (prose edited since last pin)" if s["edited_since_pin"] else ""))
+                for m in s["stale_because"] + s["errors"] + s["contains_errors"]:
+                    print(dim("    " + m))
+    elif act == "coverage":
+        out = PV.coverage(p)
+        if a.json:
+            out_json(out)
+        else:
+            print("experiments not yet in the guide: " + (", ".join(out["uncited_experiments"]) or "none"))
+            print("findings not yet in the guide:    " + (", ".join(out["uncited_findings"]) or "none"))
+    elif act == "validate":
+        r = PV.validate(p)
+        if a.json:
+            out_json(r)
+        else:
+            for sect in ("claims", "figures"):
+                for k, x in r[sect].items():
+                    mark = green("✓") if x["status"] in ("traceable", "ok", "historical") else red("✗") if any(
+                        i["severity"] == "error" for i in x["issues"]) else yellow("~")
+                    print(f"{mark} {k} {x['status']}")
+                    for i in x["issues"]:
+                        if i["severity"] != "info":
+                            print(f"    {i['severity']}: {i['message']}")
+                    for m in x["stale"]:
+                        print(yellow(f"    stale: {m}"))
+            for i in r["prose"]:
+                print(red(f"✗ {i['message']}"))
+            print(f"{r['errors']} error(s), {r['warnings']} warning(s), {r['stale']} stale · uncited experiments: "
+                  f"{', '.join(r['coverage']['uncited_experiments']) or 'none'}")
+            print(dim(r["note"]))
+        return 0 if r["ok"] else 1
+    else:
+        raise ResearchError(f"unknown {act} action {verb!r}")
+    return 0
+
+
+def _guide_review(a, p) -> int:
+    """review request|record|approve|status: independent scientific review and human approval of the guide's chapters."""
+    from research import guide_review as GR
+    verb = a.ids[0] if a.ids else "status"
+    chap = a.ids[1] if len(a.ids) > 1 else a.section
+    if verb == "status":
+        st = GR.status(p)
+        if a.json:
+            out_json(st)
+        else:
+            for k, x in st.items():
+                d = x["deterministic"]
+                print(f"{bold(k)}  {x['label']}  (provenance: {d['state']}, {d['errors']} error(s), {d['stale']} stale)")
+                for kind, who in (("model_review", "reviewer"), ("human_approval", "by")):
+                    e = x[kind]
+                    if e:
+                        print(dim(f"    {kind.replace('_', ' ')}: {e.get('verdict', 'approved')} · {e[who]} · {e['at'][:10]}"
+                                  + ("" if e["current"] else " · OUTDATED (chapter or evidence changed since)")))
+            print(dim("  Deterministic provenance, independent model review and human approval are separate; only approval approves."))
+    elif verb == "request":
+        r = GR.request(p, chap, a.profile, getattr(a, "model", None), a.strategy)
+        _done(a, r, msg="reviewer session prepared: " + " ".join(r["argv"]))
+    elif verb == "record":
+        if not chap or not a.verdict or not a.reviewer:
+            raise ResearchError("usage: research guide review record CHAPTER.qmd --verdict sound|concerns|unsound --reviewer NAME "
+                                "[--rating CRITERION=ok|concern|fail|not_assessed …] [--concern TEXT …] [--notes TEXT]")
+        ratings = dict(x.split("=", 1) for x in (a.rating or []) if "=" in x)
+        r = GR.record(p, chap, a.verdict, a.reviewer, ratings, a.notes, a.concern, getattr(a, "model", None))
+        _done(a, r, msg=f"{r['section']}: independent review recorded ({r['verdict']}). This is not approval.")
+    elif verb == "approve":
+        if not chap or not a.by:
+            raise ResearchError("usage: research guide review approve CHAPTER.qmd --by YOUR-NAME [--notes TEXT] [--force]")
+        r = GR.approve(p, chap, a.by, a.notes, a.force)
+        _done(a, r, msg=f"{r['section']}: approved by {r['by']}")
+    else:
+        raise ResearchError("usage: research guide review status|request|record|approve")
+    return 0
+
+
+def _guide_quarto(a, p) -> int:
+    """quarto init|prepare|build|preview|doctor · chapter add"""
+    from research import guide_quarto as GQ
+    verb = a.ids[0] if a.ids else ("doctor" if a.action == "quarto" else "")
+    if a.action == "chapter" and verb == "add" and len(a.ids) > 1:
+        r = GQ.chapter_add(p, a.ids[1], a.title, a.owner or "agent")
+        _done(a, r, msg=f"{r['chapter']} " + ("created and " if r["file_created"] else "") + ("added to the book" if r["added_to_book"] else "already in the book"))
+    elif a.action == "quarto" and verb == "init":
+        r = GQ.init_quarto(p, dry_run=a.dry_run)
+        if a.json:
+            out_json(r)
+        elif r.get("dry_run"):
+            for f in r["files"]:
+                print(("exists   " if f["exists"] else "would add") + "  " + f["path"])
+        else:
+            print(green("✓ ") + f"Quarto guide in {r['guide_dir']}: {len(r['created'])} file(s) created, {len(r['left_untouched'])} left untouched")
+            if r["legacy_guide"]:
+                print(dim(f"  {r['legacy_guide']} is untouched and appears as an appendix in the researcher edition"))
+            print(dim("  next: " + " · ".join(r["next"])))
+    elif a.action == "quarto" and verb == "prepare":
+        r = GQ.prepare(p)
+        _done(a, r, msg=f"{r['files_written']} generated file(s) updated in {r['generated']}")
+    elif a.action == "quarto" and verb == "doctor":
+        r = GQ.doctor(p)
+        if a.json:
+            out_json(r)
+        else:
+            print((green("✓ ") if r["ok"] else red("✗ ")) + f"Quarto {r['version'] or 'not found'}" + (f" at {r['quarto']}" if r["quarto"] else ""))
+            print(f"  HTML: {'yes' if r['html'] else 'no'} · PDF (Typst): {'yes' if r['pdf'] else 'no'}")
+            for x in r["problems"] + r["hints"]:
+                print(yellow("  " + x))
+        return 0 if r["ok"] else 1
+    elif a.action == "quarto" and verb in ("build", "preview"):
+        eds = ["scientific", "researcher"] if a.edition == "both" else [a.edition or "scientific"]
+        if verb == "preview":
+            import subprocess
+            argv = GQ.preview_argv(p, eds[0])
+            p.close()
+            return subprocess.call(argv)
+        rc, results = 0, []
+        for ed in eds:
+            r = GQ.build(p, ed, a.pdf, a.allow_invalid)
+            results.append(r)
+            if not a.json:
+                print((green("✓ ") if r["ok"] else red("✗ ")) + f"{ed} edition → {r['html']['dir']}"
+                      + (f"  ({r['validation']['errors']} provenance error(s))" if r["validation"]["errors"] else ""))
+                for l in r.get("leaks") or []:
+                    print(red(f"    identifier {l['identifier']} visible in {l['file']}"))
+                for w in r["warnings"]:
+                    print(yellow("  " + w))
+                if not r["ok"] and not r.get("leaks"):
+                    print(dim(r["html"]["log"][-600:]))
+            rc = rc or (0 if r["ok"] else 1)
+        if a.json:
+            out_json(results)
+        return rc
+    else:
+        raise ResearchError("usage: research guide quarto init|prepare|build|preview|doctor  ·  research guide chapter add PATH [--title …]")
+    return 0
+
+
 def cmd_guide(a, p) -> int:
     from research import guide as G
     act = a.action
+    if act in ("claim", "figure", "section", "validate", "coverage"):
+        return _guide_prov(a, p)
+    if act in ("quarto", "chapter"):
+        return _guide_quarto(a, p)
+    if act == "review":
+        return _guide_review(a, p)
     if act == "init":
         r = G.init_guide(p)
         _done(a, r, msg=f"{r['path']} " + ("created" if r["created"] else "already exists (left untouched)"))
@@ -1081,6 +1291,14 @@ def cmd_guide(a, p) -> int:
                 print(yellow(f"  pending {s['id']}") + dim("  findings: " + (", ".join(f"{f['id']}[{f['status']}, numbers {f['numerical']}]" for f in s["findings"]) or "none")))
             if r["up_to_date"]:
                 print(green("✓ ") + "all syntheses reflected")
+            pv = r.get("provenance")
+            if pv:
+                for k, s in pv["sections"].items():
+                    col = green if s["state"] == "fresh" else red if s["state"] == "invalid" else yellow
+                    print(col(f"  {s['state']:8}") + f" {k} [{s['owner']}]" + "".join(dim("\n      " + w) for w in s["why"]))
+                if pv["uncited_experiments"] or pv["uncited_findings"]:
+                    print(yellow("  not yet in the guide: ") + ", ".join(pv["uncited_experiments"] + pv["uncited_findings"]))
+                print(f"  provenance: {pv['errors']} error(s), {pv['warnings']} warning(s)  (research guide validate)")
     return 0
 
 
@@ -2392,8 +2610,37 @@ def cmd_skills_update(a, p) -> int:
 @mut
 def cmd_skills_set(a, p) -> int:
     from research import skills as SKL
-    r = SKL.set_skill(p, a.name, a.always, a.applies_to)
-    _done(a, r, msg=f"{r['name']}: always={r['always']}, applies_to={', '.join(r['applies_to']) or '—'}")
+    r = SKL.set_skill(p, a.name, a.always, a.applies_to, a.level, a.check)
+    _done(a, r, msg=f"{r['name']}: level={r['level']}, always={r['always']}, applies_to={', '.join(r['applies_to']) or '—'}")
+    return 0
+
+
+def cmd_skills_verify(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.run_checks(p, a.name)
+    if a.json:
+        out_json(r)
+    else:
+        for c in r["checks"]:
+            print((green("✓ ") if c["ok"] else red("✗ ")) + c["check"] + ("" if c["ok"] else f"  → {c['output']}"))
+        print(f"{r['skill']} [{r['level']}] sha256 {r['sha256'][:12]}: {r['verdict']}"
+              + (dim("  (no machine-checkable requirements declared: nothing verified)") if r["verdict"] == "no_checks" else ""))
+    return 0 if r["verdict"] == "pass" else 1
+
+
+def cmd_skills_audit(a, p) -> int:
+    from research import skills as SKL
+    r = SKL.audit(p)
+    if a.json:
+        out_json(r)
+        return 0
+    for s in r["skills"]:
+        flags = [("claude" if s["discoverable_claude"] else None), ("codex" if s["discoverable_agents"] else None),
+                 ("AGENTS.md" if s["named_in_agents_md"] else None)]
+        print(f"{bold(s['name']):30} {s['level']:12} discoverable: {', '.join(f for f in flags if f) or 'no'}")
+    for x in r["problems"]:
+        print(yellow("  ! " + x))
+    print(dim(r["note"]))
     return 0
 
 
@@ -2548,12 +2795,38 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--apply", action="store_true", help="apply the upgrade")
     x.add_argument("--status", action="store_true", help="version/compatibility summary only")
 
-    x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…]")
-    x.add_argument("action", nargs="?", default="status", choices=["init", "status", "refresh", "done"])
-    x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending)")
+    x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…] | claim | figure | section | "
+                                     "validate | coverage | quarto init|prepare|build|preview|doctor | chapter add | review status|request|record|approve")
+    x.add_argument("action", nargs="?", default="status", choices=["init", "status", "refresh", "done", "claim", "figure",
+                                                                    "section", "validate", "coverage", "quarto", "chapter", "review"])
+    x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending); or the verb and arguments of "
+                                          "claim/figure/section (add|list|show|retire|pin|set)")
+    x.add_argument("--kind", help="claim kind: observation|derivation|interpretation|hypothesis|speculation|proposed")
+    x.add_argument("--section", help="chapter file (relative to the guide directory)")
+    x.add_argument("--source", action="append", metavar="[ROLE:]REF", help="cited record (repeatable); ROLE = supports|challenges|context")
+    x.add_argument("--figure", action="append", metavar="FIG-001", help="claim: figure(s) that illustrate it")
+    x.add_argument("--historical", action="store_true", help="claim: records an earlier belief, allowed to cite retracted evidence")
+    x.add_argument("--fig-kind", choices=["archived", "recreated", "derived", "conceptual"])
+    x.add_argument("--label", help="figure: Quarto id, e.g. fig-sensitivity")
+    x.add_argument("--title")
+    x.add_argument("--script", help="figure: generator script (repo-relative)")
+    x.add_argument("--input", action="append", help="figure: generator input file (repeatable)")
+    x.add_argument("--owner", choices=["human", "agent"], help="section: who may rewrite it")
+    x.add_argument("--edition", choices=["scientific", "researcher", "both"], help="quarto build/preview: which edition (default scientific)")
+    x.add_argument("--pdf", action="store_true", help="quarto build: also try a PDF (Typst); failure never affects the HTML")
+    x.add_argument("--allow-invalid", action="store_true", help="quarto build: publish the scientific edition despite provenance errors")
+    x.add_argument("--dry-run", action="store_true", help="quarto init: show what would be created")
     x.add_argument("--run", action="store_true", help="refresh: start the agent now instead of printing the command")
     x.add_argument("--profile")
     x.add_argument("--strategy", help="refresh: use this allocation strategy for this call only")
+    x.add_argument("--verdict", choices=["sound", "concerns", "unsound"], help="review record")
+    x.add_argument("--reviewer", help="review record: who or which model reviewed")
+    x.add_argument("--rating", action="append", metavar="CRITERION=RATING", help="review record: evidence_fidelity|scientific_validity|"
+                   "explanatory_quality|uncertainty|historical_consistency|provenance = ok|concern|fail|not_assessed")
+    x.add_argument("--concern", action="append", help="review record: a specific concern (repeatable)")
+    x.add_argument("--notes", help="review record/approve")
+    x.add_argument("--by", help="review approve: the researcher approving")
+    x.add_argument("--force", action="store_true", help="review approve: approve despite provenance errors (recorded)")
 
     x = add(sub, "setup", cmd_setup, "optional setup: `setup agents --provider claude --preset scientific [--apply]`")
     x.add_argument("what", choices=["agents"])
@@ -2949,6 +3222,12 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--always", dest="always", action="store_true", default=None)
     x.add_argument("--no-always", dest="always", action="store_false")
     x.add_argument("--applies-to", nargs="*", metavar="TYPE")
+    x.add_argument("--level", choices=["recommended", "required", "protocol"],
+                   help="required/protocol skills block managed dispatch when missing and are injected with a hash")
+    x.add_argument("--check", action="append", metavar="'research …'", help="protocol skills: a command that must exit 0 (repeatable)")
+    x = add(g, "verify", cmd_skills_verify, "run a protocol skill's machine-checkable requirements")
+    x.add_argument("name")
+    add(g, "audit", cmd_skills_audit, "which skills gate managed dispatch, and what direct Claude Code/Codex sessions can see")
     x = add(g, "link", cmd_skills_link, "(re)create .claude/skills and .agents/skills links")
     x.add_argument("--target", action="append", help="claude, agents, or a folder")
     x = add(g, "new", cmd_skills_new, "create a skill", aliases=["create"])

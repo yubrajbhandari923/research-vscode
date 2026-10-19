@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — Scientist Guide v2
+
+- **Quarto Scientist Guide** (`research guide quarto init|prepare|build|preview|doctor`, `guide chapter add`): one set of `.qmd` chapters rendered as a *scientific edition* (no Research OS identifiers) and a *researcher edition* (same prose, exact evidence panels, legacy guide appendix). Opt-in; Quarto is needed only to render. Rendering never executes code.
+- **Provenance** (`guide claim|figure|section|validate|coverage`): claims and figures linked to canonical records with a pinned basis; typed claims (observation … proposed) and figures (archived, recreated, derived, conceptual); detects missing, stale, contradicted, superseded, unreviewed and inconsistent evidence; per-section freshness; coverage of experiments and findings not yet in the guide.
+- **Independent review** (`guide review request|record|approve|status`): deterministic validation, independent model review and human approval are separate records bound to a fingerprint of text and evidence.
+- **Skill levels** (`skills set --level recommended|required|protocol`, `skill verify`, `skills audit`): required skills block managed dispatch when missing, are injected with a recorded hash, and drift is reported by `orchestrate verify`. First-party `scientific-briefing` skill; required for Quarto-guide refresh and review.
+- `guide refresh` targets only stale or uncovered sections; RPC `guide_status`/`guide_validate` and MCP `guide_status`/`guide_validate` (read-only); `research upgrade` reports the optional guide and adds the new skill without touching records. Schema stays at 3.
+- `guide figure refresh` re-pins a deliberately regenerated figure (history kept); PDF is scientific-edition only and no longer removes the HTML output; the researcher HTML links claims to evidence panels.
+- Docs: `docs/SCIENTIST_GUIDE_V2.md`. Known limits: no dedicated VS Code Guide view; independent reviewer routing does not know who authored a chapter.
+
 ## 1.0.0 — 2026-10-12
 
 - Crash consistency: project write lock plus undo journal across canonical files, audit log, orchestration state and the index; recovery on open. Concurrency and kill tests.

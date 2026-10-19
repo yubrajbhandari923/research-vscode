@@ -64,6 +64,24 @@ def _tools() -> List[Tool]:
         c = P.task_context(p, id)
         return A.task_brief_md(c)
 
+    def guide_status(p):
+        from . import guide as G
+        from .store import Project
+        ro = Project(p.root, author=p.author, sync=False)
+        try:
+            return G.overview(ro)
+        finally:
+            ro.close()
+
+    def guide_validate(p):
+        from . import provenance as PV
+        from .store import Project
+        ro = Project(p.root, author=p.author, sync=False)
+        try:
+            return PV.validate(ro)
+        finally:
+            ro.close()
+
     def report_full(p, scope=None, check=True):
         """Export against a read-only snapshot of the same project, so rendering mutates nothing."""
         from .store import Project
@@ -192,7 +210,7 @@ def _tools() -> List[Tool]:
              "commit=true also commits .research/ to git.", {"understanding": S, "problem": S, "next": S, "commit": B},
              [], checkpoint),
         Tool("skills_list", "Project skills (name, description, always-on, applies_to).", {}, [],
-             lambda p: [{k: s[k] for k in ("name", "description", "always", "applies_to")} for s in SK.list_skills(p)], False),
+             lambda p: [{k: s[k] for k in ("name", "description", "always", "applies_to", "level")} for s in SK.list_skills(p)], False),
         Tool("skill_show", "The full SKILL.md of a project skill. Load the skills a task lists before working on it.",
              {"name": S}, ["name"], lambda p, name: SK.get_skill(p, name)["markdown"], False),
         Tool("dispatch_prepare", "Prepare a brief for another agent role (planner|implementer|verifier|analyst) on a "
@@ -202,6 +220,12 @@ def _tools() -> List[Tool]:
              "Q-/EXP-/PLAN-), with coverage verification. Use it for a complete context hand-off. It retrieves and "
              "renders records only — it is not a synthesis and interprets nothing.",
              {"scope": S, "check": B}, [], report_full, False),
+        Tool("guide_status", "Scientist Guide state: pending syntheses, per-section freshness (fresh|stale|invalid), uncovered "
+             "experiments/findings, review/approval label per chapter. Read-only; a clean state is not scientific approval.",
+             {}, [], guide_status, False),
+        Tool("guide_validate", "Validate the Scientist Guide's claim/figure provenance against the live records (missing, "
+             "stale, contradicted, superseded, inconsistent). Read-only; provenance only, not a scientific review.",
+             {}, [], guide_validate, False),
         Tool("upgrade_preview", "What `research upgrade` would change in this project. Changes nothing.",
              {}, [], lambda p: UP.plan(p.root), False),
         Tool("hpc_doctor", "Whether remote execution is available on a configured cluster, and which modes are "

@@ -66,6 +66,18 @@ Nothing here is required; every new setting defaults to off. Existing projects k
 Hooks stay inert until you run `research hook approve`. Running agent sessions keep the configuration they started with, so stop them
 before switching if you want a clean cut-over.
 
+## 4c. Optional: Scientist Guide v2 (1.1)
+
+`upgrade --apply` only adds the `scientific-briefing` skill; it never creates the Quarto guide. To adopt it:
+
+```bash
+.research/bin/research guide quarto init --dry-run   # lists files; existing ones are left untouched
+.research/bin/research guide quarto init             # your docs/SCIENTIST_GUIDE.md stays and appears as an appendix
+.research/bin/research guide coverage                # what the new guide does not cover yet
+```
+
+Nothing in `.research/` records changes. Details: `docs/SCIENTIST_GUIDE_V2.md`.
+
 ## 5. Prove nothing was lost
 
 ```bash

@@ -185,6 +185,16 @@ def _bin_state(root: str) -> Dict[str, Any]:
             "reason": f"stamped {stamp.split(':')[0] or 'unknown'}, installed {__version__}"}
 
 
+def _guide_state(root: str, raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Informational only: the Quarto Scientist Guide is opt-in and is never created by an upgrade."""
+    g = raw.get("guide") if isinstance(raw.get("guide"), dict) else {}
+    legacy = os.path.join(root, g.get("path") or "docs/SCIENTIST_GUIDE.md")
+    quarto = os.path.isfile(os.path.join(root, g.get("dir") or "docs/scientist-guide", "_quarto.yml"))
+    return {"legacy_guide": os.path.relpath(legacy, root) if os.path.exists(legacy) else None, "quarto_guide": quarto,
+            "next": None if quarto else "`research guide quarto init` adds the Quarto Scientist Guide beside any existing guide "
+                                        "(nothing is overwritten); `research guide coverage` then lists what it does not cover yet."}
+
+
 def plan(where: Optional[str] = None) -> Dict[str, Any]:
     """What an upgrade would change. Read-only: opens no database, writes nothing, logs nothing."""
     root = os.path.abspath(where or find_root() or ".")
@@ -255,6 +265,7 @@ def plan(where: Optional[str] = None) -> Dict[str, Any]:
         "up_to_date": not steps,
         "preserved": preserved,
         "agents_md": {k: am.get(k) for k in ("action", "problem", "up_to_date")},
+        "guide": _guide_state(root, raw),
         "note": "No research records are removed or rewritten by an upgrade.",
     }
 

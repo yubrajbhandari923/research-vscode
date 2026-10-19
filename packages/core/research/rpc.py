@@ -313,6 +313,24 @@ class Server:
         from . import report as RP
         return RP.write_report(self.project(), scope, fmt)
 
+    def m_guide_status(self) -> Dict[str, Any]:
+        """Scientist Guide: pending syntheses, per-section freshness, review/approval state and Quarto availability. Read-only."""
+        from . import guide as G
+        p = Project(self.root, author=self.author, sync=False)
+        try:
+            return G.overview(p)
+        finally:
+            p.close()
+
+    def m_guide_validate(self) -> Dict[str, Any]:
+        """Deterministic claim/figure/section provenance validation. Read-only; not a scientific review."""
+        from . import provenance as PV
+        p = Project(self.root, author=self.author, sync=False)
+        try:
+            return PV.validate(p)
+        finally:
+            p.close()
+
     def m_report_full(self, scope: Optional[str] = None, check: bool = True) -> Dict[str, Any]:
         """Deterministic full context export. Read-only: opened without sync so nothing is mutated."""
         from . import fullreport as FR
@@ -413,7 +431,7 @@ class Server:
         return {"strategy": S.show(p) if cur else None, "strategies": [
                     {**s, "ok": S.validate(p, s["name"])["ok"], "routes": S.definition(p, s["name"])["route"]} for s in S.listing(p)],
                 "harness": hr, "harness_warnings": H.warnings(p),
-                "skills": [{**{k: s.get(k) for k in ("name", "dir", "description", "path", "source", "always", "applies_to")},
+                "skills": [{**{k: s.get(k) for k in ("name", "dir", "description", "path", "source", "always", "applies_to", "level")},
                             "in_harness": s["name"] in hr["skills"]} for s in SK.list_skills(p)],
                 "mcp": MCP.status(p.root),
                 "orchestration": {"enabled": bool(O.cfg(p).get("enabled")), "limits": O.limits(p), "tiers": O.cfg(p).get("tiers"),
@@ -497,8 +515,9 @@ class Server:
     def m_skills_update(self, names: Any = None) -> Dict[str, Any]:
         return SK.update_skills(self.project(), names)
 
-    def m_skills_set(self, name: str, always: Optional[bool] = None, applies_to: Any = None) -> Dict[str, Any]:
-        return SK.set_skill(self.project(), name, always, applies_to)
+    def m_skills_set(self, name: str, always: Optional[bool] = None, applies_to: Any = None,
+                     level: Optional[str] = None, checks: Any = None) -> Dict[str, Any]:
+        return SK.set_skill(self.project(), name, always, applies_to, level, checks)
 
     def m_skills_link(self) -> Dict[str, Any]:
         return SK.link_skills(self.project(sync=False))
