@@ -8,6 +8,7 @@
 - **Skill levels** (`skills set --level recommended|required|protocol`, `skill verify`, `skills audit`): required skills block managed dispatch when missing, are injected with a recorded hash, and drift is reported by `orchestrate verify`. First-party `scientific-briefing` skill; required for Quarto-guide refresh and review.
 - `guide refresh` targets only stale or uncovered sections; RPC `guide_status`/`guide_validate` and MCP `guide_status`/`guide_validate` (read-only); `research upgrade` reports the optional guide and adds the new skill without touching records. Schema stays at 3.
 - `guide figure refresh` re-pins a deliberately regenerated figure (history kept); PDF is scientific-edition only and no longer removes the HTML output; the researcher HTML links claims to evidence panels.
+- `research dispatch --require-skill NAME` (repeatable) makes a skill mandatory for one dispatch; claim status "established" renamed "traceable" (provenance only).
 - Docs: `docs/SCIENTIST_GUIDE_V2.md`. Known limits: no dedicated VS Code Guide view; independent reviewer routing does not know who authored a chapter.
 
 ## 1.0.0 — 2026-10-12

@@ -92,7 +92,7 @@ sections, never regenerate the book, and `quarto init` / `chapter add` never ove
   injected into the brief and its content hash recorded; `orchestrate verify` reports a skill edited after dispatch.
 * **protocol**: required, plus `research …` commands that must exit 0 (`research skill verify NAME`).
 
-`guide refresh` on a project that adopted the Quarto guide, and `guide review request`, require `scientific-briefing`.
+`guide refresh` on a project that adopted the Quarto guide, and `guide review request`, require `scientific-briefing`; for any other dispatch use `research dispatch analyst --require-skill scientific-briefing …`. `research skills link` makes skills discoverable to direct Claude Code/Codex sessions.
 A *direct* Claude Code or Codex session bypasses dispatch and is not gated: it only sees linked skills and `AGENTS.md`.
 `research skills audit` lists exactly what such a session can discover. Subjective compliance cannot be proven by injection;
 use `guide validate` and `skill verify` on the result.

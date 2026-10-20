@@ -135,3 +135,18 @@ def test_audit_is_honest_about_direct_sessions(proj):
     assert any(r["name"] == "careful" and r["level"] == "required" for r in a["skills"])
     SK.link_skills(proj, ["claude", "agents"])
     assert SK.audit(proj)["problems"] == []
+
+
+def test_cli_dispatch_require_skill_flag_injects_and_blocks(proj, capsys):
+    import subprocess, sys, json
+    _skill(proj, "needed-skill", body="NEEDED-RULE-XYZ")
+    root = proj.root
+    proj.close()
+    base = [sys.executable, "-m", "research_cli", "--root", root, "--json", "dispatch", "analyst", "--print"]
+    ok = subprocess.run(base + ["--require-skill", "needed-skill"], capture_output=True, text=True)
+    assert ok.returncode == 0, ok.stderr
+    d = json.loads(ok.stdout)
+    assert [r["name"] for r in d["skills"]["required"]] == ["needed-skill"]
+    assert "NEEDED-RULE-XYZ" in open(os.path.join(root, d["brief"]), encoding="utf-8").read()
+    bad = subprocess.run(base + ["--require-skill", "no-such-skill"], capture_output=True, text=True)
+    assert bad.returncode != 0 and "no-such-skill" in (bad.stdout + bad.stderr)

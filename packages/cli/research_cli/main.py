@@ -2515,7 +2515,7 @@ def cmd_dispatch(a, p) -> int:
     target = getattr(a, "target", None)
     d = AG.dispatch(p, getattr(a, "role", None), target, getattr(a, "objective", None), a.profile, a.agent_model,
                     getattr(a, "instructions", None), strategy=getattr(a, "strategy", None), level=getattr(a, "level", None),
-                    headless=getattr(a, "headless", False))
+                    headless=getattr(a, "headless", False), require_skills=getattr(a, "require_skill", None))
     if d["headless"] and not a.print:
         h = AG.run_headless(p, d)
         if a.json:
@@ -3356,6 +3356,8 @@ def _dispatch_args(x) -> None:
     x.add_argument("--headless", action="store_true", help="run non-interactively and record the usage the provider reports")
     x.add_argument("--instructions", help="extra instructions added to the brief")
     x.add_argument("--print", action="store_true", help="print the command instead of starting the agent")
+    x.add_argument("--require-skill", action="append", metavar="NAME",
+                   help="make this skill mandatory for this dispatch (repeatable): blocked if missing, injected and hash-recorded")
 
 
 def _finding_args(x) -> None:
