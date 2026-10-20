@@ -357,7 +357,19 @@ def describe_ref(p: Project, ref: str) -> str:
     return "(unavailable)"
 
 
-def _panel(p: Project, section: str, rep: Dict[str, Any], claims: Dict[str, Any], figs: Dict[str, Any], secs: Dict[str, Any]) -> str:
+def _review_line(rv: Optional[Dict[str, Any]]) -> str:
+    """One line on the guide's own review state: deterministic validation, model review, human approval (never merged)."""
+    if not rv:
+        return "**Guide review:** none recorded · **human approval:** none"
+    m, h = rv.get("model_review"), rv.get("human_approval")
+    ms = (f"{m['verdict']} by {m['reviewer'].split(' (')[0]} ({m['at'][:10]}, {'current' if m['current'] else 'OUTDATED: text or evidence changed since'})"
+          if m else "none")
+    hs = f"approved by {h['by']} ({h['at'][:10]}, {'current' if h['current'] else 'OUTDATED'})" if h else "none"
+    return f"**Independent model review:** {ms} · **human approval:** {hs} · overall: {rv['label']}"
+
+
+def _panel(p: Project, section: str, rep: Dict[str, Any], claims: Dict[str, Any], figs: Dict[str, Any], secs: Dict[str, Any],
+           rv: Optional[Dict[str, Any]] = None) -> str:
     L = ["", "::: {.callout-note collapse=\"false\" appearance=\"minimal\"}", "## Evidence for this chapter {.unnumbered}", ""]
     st = rep["sections"].get(section)
     if st:
@@ -365,7 +377,7 @@ def _panel(p: Project, section: str, rep: Dict[str, Any], claims: Dict[str, Any]
                  + (" · prose edited since last pin" if st.get("edited_since_pin") else "") + f" · owner: {st['owner']}")
         for m in st["stale_because"] + st["errors"] + st["contains_errors"]:
             L.append(f"- ⚠ {_md(m)}")
-        L.append("")
+        L += ["", _review_line(rv), ""]
     mine = {k: c for k, c in claims.items() if c.get("section") == section}
     if mine:
         L += ["| Claim | Kind | Status | Statement |", "|---|---|---|---|"]
@@ -404,7 +416,7 @@ def _panel(p: Project, section: str, rep: Dict[str, Any], claims: Dict[str, Any]
     return "\n".join(L)
 
 
-def _status_page(p: Project, rep: Dict[str, Any]) -> str:
+def _status_page(p: Project, rep: Dict[str, Any], rvs: Optional[Dict[str, Any]] = None) -> str:
     L = ["# Evidence status {.unnumbered}", "", f"Validation: **{'passed' if rep['ok'] else 'FAILED'}** — {rep['errors']} error(s), "
          f"{rep['warnings']} warning(s), {rep['stale']} stale. Provenance and freshness only; this is neither an independent "
          "scientific review nor human approval.", ""]
@@ -420,8 +432,8 @@ def _status_page(p: Project, rep: Dict[str, Any]) -> str:
     cov = rep["coverage"]
     L += ["", "## Not yet in the guide", "", f"- Experiments: {', '.join(cov['uncited_experiments']) or 'none'}",
           f"- Findings: {', '.join(cov['uncited_findings']) or 'none'}", "", "## Chapters", "",
-          "| Chapter | Owner | State |", "|---|---|---|"]
-    L += [f"| {k} | {s['owner']} | {s['state']} |" for k, s in rep["sections"].items()]
+          "| Chapter | Owner | Provenance | Review and approval |", "|---|---|---|---|"]
+    L += [f"| {k} | {s['owner']} | {s['state']} | {(rvs or {}).get(k, {}).get('label', 'unreviewed')} |" for k, s in rep["sections"].items()]
     return "\n".join(L) + "\n"
 
 
@@ -445,11 +457,13 @@ def prepare(p: Project) -> Dict[str, Any]:
         raise NotFound("No Quarto guide here", hint="Run `research guide quarto init` first.")
     rep = PV.validate(p)
     claims, figs, secs = PV.load_claims(p), PV.load_figures(p), PV.load_sections(p)
+    from . import guide_review as GR
+    rvs = GR.status(p)
     chapters = sorted(set(listed_chapters(p)) | set(rep["sections"]))
     wrote = 0
     for ch in chapters:
-        wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence", slug_of(ch) + ".md"), _panel(p, ch, rep, claims, figs, secs))
-    wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence-status.qmd"), _status_page(p, rep))
+        wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence", slug_of(ch) + ".md"), _panel(p, ch, rep, claims, figs, secs, rvs.get(ch)))
+    wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence-status.qmd"), _status_page(p, rep, rvs))
     legacy = os.path.join(p.root, (p.config.get("guide") or {}).get("path") or "docs/SCIENTIST_GUIDE.md")
     body = ("# Legacy narrative {.unnumbered}\n\nThe earlier Markdown guide, preserved unchanged.\n\n{{< include "
             + os.path.relpath(legacy, os.path.join(gd, "_generated")).replace(os.sep, "/") + " >}}\n") if os.path.exists(legacy) else \

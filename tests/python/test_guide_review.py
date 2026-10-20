@@ -182,3 +182,19 @@ def test_proposals_for_human_owned_sections_are_listed_and_not_rendered(proj, st
     assert st["proposals"] == ["_proposals/investigations/sensitivity.md"]
     assert st["sections"][CH]["owner"] == "human"
     assert PV.validate(proj)["ok"]  # a proposal file is not a chapter and is not validated as one
+
+
+def test_researcher_panels_show_review_and_approval_state_separately(proj, story):
+    GQ.prepare(proj)
+    panel = open(os.path.join(PV.guide_dir(proj), "_generated", "evidence", GQ.slug_of(CH) + ".md"), encoding="utf-8").read()
+    assert "Independent model review:** none" in panel and "human approval:** none" in panel
+    GR.record(proj, CH, "concerns", "reviewer-x", {"uncertainty": "concern"})
+    GQ.prepare(proj)
+    panel = open(os.path.join(PV.guide_dir(proj), "_generated", "evidence", GQ.slug_of(CH) + ".md"), encoding="utf-8").read()
+    assert "concerns by reviewer-x" in panel and "current" in panel and "human approval:** none" in panel
+    open(os.path.join(PV.guide_dir(proj), CH), "a").write("\nMore text.\n")
+    GQ.prepare(proj)
+    panel = open(os.path.join(PV.guide_dir(proj), "_generated", "evidence", GQ.slug_of(CH) + ".md"), encoding="utf-8").read()
+    assert "OUTDATED" in panel
+    status = open(os.path.join(PV.guide_dir(proj), "_generated", "evidence-status.qmd"), encoding="utf-8").read()
+    assert "review outdated" in status
