@@ -18,8 +18,9 @@ from . import gitinfo, mirrors, schema, yamlio, durability
 from .util import deep_merge as _deep_merge
 from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
-from .util import NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
+from .util import IncompatibleProject, NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
 
+PROJECT_FORMAT = 2   # the on-disk project layout; independent of schema.SCHEMA_VERSION (the SQLite index layout)
 RESEARCH_DIR = ".research"
 SUBDIRS = ["questions", "experiments", "findings", "decisions", "checkpoints", "notes", "runs",
            "plans", "tasks",  # Plan/Task entities (Phase 0)
@@ -149,6 +150,28 @@ hpc/incoming/
 
 
 
+def check_format(rdir: str) -> None:
+    """Refuse any project that is not a v2 project. Nothing is converted, moved or deleted."""
+    f = os.path.join(rdir, "format.json")
+    try:
+        with open(f, encoding="utf-8") as fh:
+            fmt = json.load(fh).get("format")
+    except FileNotFoundError:
+        fmt = None
+    except (OSError, ValueError):
+        raise IncompatibleProject(f"{f} is unreadable", hint="Restore it from backup; Research OS will not guess the project format.")
+    if fmt != PROJECT_FORMAT:
+        raise IncompatibleProject(
+            f"{os.path.dirname(rdir)} is a Research OS " + ("v1" if fmt is None else f"format-{fmt}") + f" project; this is Research OS 2 (project format {PROJECT_FORMAT}).",
+            hint="Research OS 2 does not read or upgrade v1 projects. Keep the old records: rename `.research` to `.research-v1-archive` "
+                 "(it is only moved by you, never deleted), then run `research init` for a fresh v2 project. See docs/GUIDE_V2_START_FRESH.md.")
+
+
+def write_format(rdir: str) -> None:
+    from . import __version__
+    _atomic_write(os.path.join(rdir, "format.json"), json.dumps({"format": PROJECT_FORMAT, "created_with": __version__}, indent=2) + "\n")
+
+
 def find_root(start: Optional[str] = None) -> Optional[str]:
     """The directory to open as a project: where `.research/` lives, or, in shared-ledger mode, the source worktree
     that reaches the shared ledger through its git repository (see workspace.py)."""
@@ -228,6 +251,7 @@ class Project:
                                  hint="Run `research init` (or 'Research: Initialize Project' in VS Code).")
         self.ledger_root = self.location.ledger_root  # where .research/ lives; equals root in classic mode
         self.rdir = os.path.join(self.ledger_root, RESEARCH_DIR)
+        check_format(self.rdir)
         self.author = author or detect_author()
         self._tx_depth = 0
         self._suppress_export = False
@@ -264,6 +288,8 @@ class Project:
              description: Optional[str] = None, agents_md: bool = True) -> "Project":
         root = os.path.abspath(root)
         rdir = os.path.join(root, RESEARCH_DIR)
+        if os.path.isfile(os.path.join(rdir, "config.yaml")):
+            check_format(rdir)          # an existing project must be a v2 one before anything is written
         os.makedirs(rdir, exist_ok=True)
         for d in SUBDIRS:
             os.makedirs(os.path.join(rdir, d), exist_ok=True)
@@ -280,6 +306,8 @@ class Project:
             }}
             _atomic_write(cfg_path, configfile.render(own, DEFAULT_CONFIG))
             created = True
+        if not os.path.exists(os.path.join(rdir, "format.json")) and created:
+            write_format(rdir)
         gi = os.path.join(rdir, ".gitignore")
         if not os.path.exists(gi):
             _atomic_write(gi, GITIGNORE)
@@ -375,7 +403,7 @@ class Project:
             new = configfile.set_keys(text, keys)
         else:
             # A legacy flow-style file has no line to rewrite per key; re-serialize it sparsely rather
-            # than risk corrupting it. `research config migrate` converts it once, after which edits
+            # than risk corrupting it. a block-style file lets edits
             # become surgical and comments are preserved.
             merged = _deep_merge(self.raw_config, configfile.unflatten(keys))
             new = configfile.render(configfile.sparse(merged, DEFAULT_CONFIG), DEFAULT_CONFIG)

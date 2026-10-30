@@ -202,3 +202,20 @@ def test_cli_lists_and_agents_cannot_approve_through_it(world):
     r = subprocess.run([sys.executable, "-m", "research_cli", "promote", "approve", c["id"]], cwd=repo, capture_output=True, text=True,
                        env={**os.environ, "RESEARCH_AGENT": "claude"})
     assert r.returncode == 3
+
+
+def test_tests_only_count_for_the_exact_clean_revision_they_ran_against(world):
+    p = world["p"]
+    c = candidate(world)
+    assert PR.verify(p, c["id"])["gates"]["tests"]["state"] == "passed"
+    open(os.path.join(c["path"], "solver.py"), "a").write("# edited after the tests, not committed\n")
+    s = PR.show(p, c["id"])
+    assert s["gates"]["tests"]["state"] == "stale" and s["state"] == "prepared" and not s["classification"]["technically_correct"]
+    with pytest.raises(ResearchError, match="uncommitted"):
+        PR.verify(p, c["id"])                       # cannot "verify" a tree that matches no commit
+    git(c["path"], "commit", "-qam", "tweak")
+    assert PR.show(p, c["id"])["gates"]["tests"]["state"] == "unverified"     # new revision: the old result does not carry over
+    assert PR.verify(p, c["id"])["gates"]["tests"]["state"] == "passed"
+    # the recorded result names the commit that was tested
+    ver = [r for r in PR._records(p) if r["op"] == "verify"]
+    assert ver[-1]["head"] == head(c["path"]) and ver[0]["head"] != ver[-1]["head"] and ver[-1]["command"] and ver[-1]["exit_code"] == 0

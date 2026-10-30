@@ -1,6 +1,9 @@
 import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import type { Host } from './host';
 import { HomePage, ResearchPage, WorkPage } from './pages';
+import { Incompatible, Setup } from './Setup';
+import { NewExperiment } from './NewExperiment';
+import { useAsync } from './common';
 import { SettingsPage } from './SettingsPage';
 import type { Page } from './types';
 
@@ -12,6 +15,16 @@ const TABS: { id: Page; label: string; hint: string }[] = [
 ];
 
 export function App({ host, initial }: { host: Host; initial?: { page?: Page; target?: string } }) {
+  const ping = useAsync<any>(() => host.call('ping'), []);
+  const [ready, setReady] = useState(0);
+  if (ping.loading && !ping.data) return <div className="state" role="status"><span className="spinner" aria-hidden /> Starting…</div>;
+  if (ping.error) return <div className="state error" role="alert"><b>Could not load.</b> {ping.error} <button className="link" onClick={ping.reload}>Try again</button></div>;
+  if (ping.data?.incompatible) return <Incompatible host={host} message={ping.data.incompatible} />;
+  if (ping.data && !ping.data.initialized && !ready) return <Setup host={host} onDone={() => { setReady(1); ping.reload(); }} />;
+  return <Shell host={host} initial={initial} />;
+}
+
+function Shell({ host, initial }: { host: Host; initial?: { page?: Page; target?: string } }) {
   const [page, setPage] = useState<Page>(initial?.page || (host.getState().page as Page) || 'home');
   const [target, setTarget] = useState<string | undefined>(initial?.target);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);

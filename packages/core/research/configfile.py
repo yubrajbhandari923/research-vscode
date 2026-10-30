@@ -9,7 +9,7 @@ Two properties matter more than brevity:
 
 **Edits are surgical.** Writing one key rewrites that key's line (or inserts it under its block) and leaves
 every other byte alone — comments, ordering, blank lines, line endings. Research OS owns the values it was
-asked to change and nothing else. A full re-serialization happens only when the user explicitly migrates.
+asked to change and nothing else. A full re-serialization happens only for a flow-style file that cannot be edited line by line.
 
 **Unknown keys are never discarded.** A key this version does not recognize is kept verbatim in the file and
 reported by `check()`, because it may belong to a newer Research OS or to the user.
@@ -345,8 +345,8 @@ def editable(text: str) -> bool:
 
     The line-anchored editor understands block style only. A legacy file written in flow style
     (`project: {name: x, goal: y}`) has no line to rewrite for `project.goal`, so editing it in place
-    would corrupt it: such a file is re-serialized wholesale instead. `research config migrate` converts
-    a project to block style once, after which every later edit is surgical.
+    would corrupt it: such a file is re-serialized wholesale instead. Block style (what `research init` writes)
+    keeps every later edit surgical.
     """
     for line in text.replace("\r\n", "\n").split("\n"):
         stripped = line.strip()
@@ -572,28 +572,3 @@ def sparse(project_raw: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, A
 
 
 # =============================================================================== migration
-
-def migrate_preview(path: str, defaults: Dict[str, Any]) -> Dict[str, Any]:
-    """What `config migrate` would do to one file: the new text, a diff, and a safety verdict."""
-    import difflib
-    with open(path, encoding="utf-8", newline="") as f:
-        old = f.read()
-    raw = yamlio.load(old.replace("\r\n", "\n")) or {}
-    if not isinstance(raw, dict):
-        raise ResearchError(f"{path} is not a mapping")
-    new = render(sparse(raw, defaults), defaults)
-    before = effective(raw, defaults)
-    after = effective(yamlio.load(new) or {}, defaults)
-    out = {
-        "path": path, "old": old, "new": new, "changed": old != new,
-        "lines_before": old.count("\n"), "lines_after": new.count("\n"),
-        "effective_identical": before == after,
-        "dropped_keys": sorted(set(_flat(before)) - set(_flat(after))),
-        "changed_values": sorted(k for k, v in _flat(before).items()
-                                 if k in _flat(after) and _flat(after)[k] != v),
-        "comments_before": sum(1 for l in old.split("\n") if l.strip().startswith("#")),
-        "diff": "".join(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
-                                             fromfile="a/config.yaml", tofile="b/config.yaml", n=2)),
-    }
-    out["safe"] = bool(out["effective_identical"] and not out["dropped_keys"] and not out["changed_values"])
-    return out

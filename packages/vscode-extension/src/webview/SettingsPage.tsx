@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { SettingRow } from './Controls';
 import { Breadcrumbs, Dialog, Diff, State, useAsync } from './common';
+import { Doctor } from './Doctor';
 import type { Host } from './host';
 import type { Preview, SettingOption, SettingsPayload } from './types';
 
@@ -11,6 +12,7 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
   const [draft, setDraft] = useState<Record<string, any>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [review, setReview] = useState<{ preview: Preview; scope: string } | null>(null);
+  const [advanced, setAdvanced] = useState<boolean>(!!saved.advanced);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const a = useAsync<SettingsPayload>(() => host.call('settings'), []);
@@ -20,7 +22,7 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
 
   const options = (d: SettingsPayload) => {
     const q = query.trim().toLowerCase();
-    return d.options.filter((o) => q ? [o.key, o.label, o.help, o.why].join(' ').toLowerCase().includes(q) : o.category === cat);
+    return d.options.filter((o) => q ? [o.key, o.label, o.help, o.why].join(' ').toLowerCase().includes(q) : o.category === cat && (advanced || !o.advanced));
   };
 
   const change = async (o: SettingOption, v: any) => {
@@ -67,16 +69,20 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
           </div>
           <div className="settings-grid">
             <nav aria-label="Settings categories" className="cats">
+              <button type="button" aria-current={!query && cat === 'health' ? 'true' : undefined} className={!query && cat === 'health' ? 'on' : ''}
+                onClick={() => { setQuery(''); setCat('health'); remember('health', ''); }}>Project health</button>
               {d.categories.map((c) => {
-                const n = d.options.filter((o) => o.category === c.id).length;
+                const n = d.options.filter((o) => o.category === c.id && (advanced || !o.advanced)).length;
                 return n ? <button key={c.id} type="button" aria-current={!query && cat === c.id ? 'true' : undefined} className={!query && cat === c.id ? 'on' : ''}
                   onClick={() => { setQuery(''); setCat(c.id); remember(c.id, ''); }}>{c.label}<span className="muted">{n}</span></button> : null;
               })}
+              <label className="check cats-note"><input type="checkbox" checked={advanced} onChange={(e) => { setAdvanced(e.target.checked); host.setState({ ...host.getState(), advanced: e.target.checked }); }} /> Show advanced settings</label>
               <p className="muted small cats-note">Other keys remain editable in <code>.research/config.yaml</code>.</p>
             </nav>
             <section aria-label="Settings" className="list">
               {notice && <div className={'banner ' + (notice.ok ? 'ok' : 'bad')} role={notice.ok ? 'status' : 'alert'}>{notice.text} <button className="link" onClick={() => setNotice(null)}>Dismiss</button></div>}
-              {options(d).length === 0 && <p className="muted">No settings match “{query}”.</p>}
+              {!query && cat === 'health' && <Doctor host={host} embedded />}
+              {!(cat === 'health' && !query) && options(d).length === 0 && <p className="muted">No settings match “{query}”.</p>}
               {options(d).map((o) => {
                 const dep = o.depends_on ? d.options.find((x) => x.key === o.depends_on) : null;
                 const depOff = dep && dep.type === 'bool' && !(draft[dep.key] ?? dep.value);

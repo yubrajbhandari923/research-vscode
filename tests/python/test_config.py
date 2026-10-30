@@ -451,45 +451,11 @@ def test_non_mapping_config_is_refused(proj):
     assert "not a mapping" in str(e.value)
 
 
-# --------------------------------------------------------------------------- migration
-
-def test_migrate_preview_is_safe_and_changes_nothing(proj):
-    legacy = yamlio.dump(proj.config)            # flow style, every effective key, as 0.2.0 wrote it
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(legacy)
-    before = open(proj.config_path, "rb").read()
-    prev = CF.migrate_preview(proj.config_path, DEFAULT_CONFIG)
-    assert prev["safe"] and prev["effective_identical"]
-    assert not prev["dropped_keys"] and not prev["changed_values"]
-    assert prev["lines_after"] < prev["lines_before"] or "{" not in prev["new"]
-    assert prev["diff"]
-    assert open(proj.config_path, "rb").read() == before      # a preview writes nothing
 
 
-def test_migration_preserves_the_effective_config_exactly(proj):
-    proj.config["my_lab"] = {"grid": "0.25deg"}
-    proj.config["context"]["max_chars"] = 44
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(yamlio.dump(proj.config))
-    with Project(proj.root, sync=False) as p1:
-        before = dict(p1.config)
-    prev = CF.migrate_preview(proj.config_path, DEFAULT_CONFIG)
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(prev["new"])
-    with Project(proj.root, sync=False) as p2:
-        assert p2.config == before
-        assert p2.config["my_lab"] == {"grid": "0.25deg"}
-        assert p2.config["context"]["max_chars"] == 44
 
 
-def test_migrate_is_idempotent(proj):
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(yamlio.dump(proj.config))
-    first = CF.migrate_preview(proj.config_path, DEFAULT_CONFIG)
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(first["new"])
-    second = CF.migrate_preview(proj.config_path, DEFAULT_CONFIG)
-    assert not second["changed"]
+
 
 
 # --------------------------------------------------------------------------- write paths
@@ -576,8 +542,6 @@ def test_cli_config_surface(proj):
     assert json.loads(r.stdout)["project.name"]["source"] == "project"
     r = _cli(root, "config", "check", "--json")
     assert r.returncode == 0 and json.loads(r.stdout)["ok"]
-    r = _cli(root, "config", "migrate")
-    assert r.returncode == 0 and "already sparse" in r.stdout
 
 
 def test_cli_config_check_exits_nonzero_on_a_real_error(proj):
@@ -589,20 +553,6 @@ def test_cli_config_check_exits_nonzero_on_a_real_error(proj):
     assert r.returncode == 1 and "max_chars" in r.stdout
 
 
-def test_cli_config_migrate_dry_run_then_apply(proj):
-    root = proj.root
-    with open(proj.config_path, "w", encoding="utf-8") as f:
-        f.write(yamlio.dump(proj.config))
-    proj.close()
-    before = open(os.path.join(root, ".research", "config.yaml"), "rb").read()
-    r = _cli(root, "config", "migrate")
-    assert r.returncode == 0 and "--- a/config.yaml" in r.stdout
-    assert open(os.path.join(root, ".research", "config.yaml"), "rb").read() == before
-    r = _cli(root, "config", "migrate", "--apply")
-    assert r.returncode == 0, r.stderr
-    assert os.path.exists(os.path.join(root, ".research", "config.yaml.before-migrate"))
-    with Project(root, sync=False) as p:
-        assert p.config["agent_policy"]["max_runs_without_synthesis"] == 5
 
 
 def test_rpc_update_project_preserves_comments(proj, repo):

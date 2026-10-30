@@ -235,20 +235,6 @@ def test_rpc_report_full_and_coverage(proj, repo):
         assert p2.q("SELECT COUNT(*) AS n FROM events")[0]["n"] == events_before
 
 
-def test_rpc_upgrade_preview_and_agents_md(proj, repo):
-    import shutil
-    proj.close()
-    shutil.rmtree(repo / ".research" / "reports", ignore_errors=True)
-    out = rpc(repo, ("upgrade", {"apply": False}), ("agents_md_state", {}))
-    plan_ = out[1]["result"]
-    assert plan_["steps"] and plan_["note"]
-    assert not plan_["downgrade_refused"]
-    assert (repo / ".research").exists() and not (repo / ".research" / "reports").exists()  # preview only
-    state = out[2]["result"]
-    assert state["problem"] is None and "diff" in state
-    applied = rpc(repo, ("upgrade", {"apply": True}))[1]["result"]
-    assert applied["ok"], applied["failed"]
-    assert (repo / ".research" / "reports").exists()
 
 
 def test_rpc_hpc_status_is_off_by_default(proj, repo):
@@ -260,9 +246,9 @@ def test_rpc_hpc_status_is_off_by_default(proj, repo):
 def test_mcp_exposes_the_new_tools_without_duplicating_logic():
     from research.mcp import _tools
     names = {t.name for t in _tools()}
-    assert {"report_full", "upgrade_preview", "hpc_doctor", "hpc_sync", "hpc_bundle"} <= names
+    assert {"report_full", "hpc_doctor", "hpc_sync", "hpc_bundle"} <= names
     read_only = {t.name for t in _tools() if not t.mutating}
-    assert {"report_full", "upgrade_preview", "hpc_doctor"} <= read_only   # these must never mutate
+    assert {"report_full", "hpc_doctor"} <= read_only   # these must never mutate
 
 
 # ---------------------------------------------------------------------------- extension UI surface
@@ -297,7 +283,7 @@ def test_new_features_are_reachable_from_the_ui_not_only_the_palette():
     """Palette-only commands are effectively undiscoverable, so each feature needs a menu home."""
     d = _manifest()
     menus = d["contributes"]["menus"]
-    for cmd in ("research.reportFull", "research.upgradePreview", "research.agentsMdDiff",
+    for cmd in ("research.reportFull", "research.agentsMdDiff",
                 "research.hpcSync", "research.config.check", "research.config.effective"):
         homes = [w for w, items in menus.items()
                  if w != "commandPalette" and any(i.get("command") == cmd for i in items)]

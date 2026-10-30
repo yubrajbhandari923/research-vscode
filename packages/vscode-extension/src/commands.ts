@@ -57,18 +57,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
   };
 
   // ------------------------------------------------------------------ basics
-  reg('research.init', async () => {
-    const name = await vscode.window.showInputBox({ prompt: 'Project name', value: path.basename(model.root), ignoreFocusOut: true });
-    if (name === undefined) return;
-    const goal = await vscode.window.showInputBox({ prompt: 'What is this project trying to understand? (goal — shown when you resume)', placeHolder: 'e.g. Recover physically plausible material maps from CT without paired supervision', ignoreFocusOut: true });
-    if (goal === undefined) return;
-    await rpc('init', { name, goal });
-    await model.refresh();
-    vscode.window.showInformationMessage(`Research project initialized: .research/ + AGENTS.md block.`, 'New Question', 'Open AGENTS.md').then((c) => {
-      if (c === 'New Question') vscode.commands.executeCommand('research.question.create');
-      if (c === 'Open AGENTS.md') vscode.commands.executeCommand('research.agents.open');
-    });
-  });
+  reg('research.init', () => panels.openControlCenter()); // the guided setup lives in the Control Center
   reg('research.refresh', async () => {
     await rpc('run_refresh', {});
     await model.refresh();
@@ -828,26 +817,6 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       const c = await vscode.window.showErrorMessage(
         `Full context export FAILED coverage verification: ${problems}`, 'Open');
       if (c === 'Open') openPath(model.root, r.path);
-    }
-  });
-  reg('research.upgradePreview', async () => {
-    const r = await rpc('upgrade', { apply: false });
-    if (r.downgrade_refused) { vscode.window.showErrorMessage(r.downgrade_refused); return; }
-    if (r.up_to_date) { vscode.window.showInformationMessage('Project is already up to date with this Research OS.'); return; }
-    const lines = [`Research OS Upgrade Preview`, ``,
-      `  Current project schema: ${r.project_schema}`, `  Target project schema:  ${r.target_schema}`, ``,
-      `Required:`,
-      ...r.steps.map((s: any) => `  ${s.change === 'refuse' ? '!' : (s.change === 'create' || s.change === 'add' ? '+' : '~')} ${s.path || s.kind}${s.detail ? `   (${s.detail})` : ''}`),
-      ``, `Preserved:`, ...r.preserved.map((x: string) => `  = ${x}`),
-      `  = user-authored AGENTS.md sections, custom config values, unknown config keys`,
-      ``, `  ${r.note}`, ``, `Nothing has been changed. Apply with:  research upgrade --apply`];
-    const doc = await vscode.workspace.openTextDocument({ content: lines.join('\n'), language: 'plaintext' });
-    await vscode.window.showTextDocument(doc, { preview: true });
-    const c = await vscode.window.showInformationMessage(`${r.changes} change(s) pending.`, 'Apply upgrade');
-    if (c === 'Apply upgrade') {
-      const applied = await rpc('upgrade', { apply: true });
-      if (applied.ok) done(`upgrade applied (${applied.applied.length} step(s))`);
-      else vscode.window.showErrorMessage(`Upgrade incomplete: ${(applied.failed || []).map((f: any) => f.error).join('; ')}`);
     }
   });
   reg('research.agentsMdDiff', async () => {

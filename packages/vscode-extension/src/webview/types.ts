@@ -5,7 +5,7 @@ export interface SettingOption {
   category: string; label: string; help: string; why: string; effect: string;
   risk: 'normal' | 'policy' | 'risky'; choices: string[] | null; min: number | null; max: number | null;
   nullable: boolean; affects: string[]; scopes: string[]; restart: boolean; depends_on: string | null;
-  doc: string | null; unit: string | null; approval: boolean;
+  doc: string | null; unit: string | null; approval: boolean; advanced: boolean;
   value: any; default: any; source: 'default' | 'machine' | 'project'; inherited: boolean;
   overridden_in: string[]; errors: string[];
 }

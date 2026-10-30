@@ -7,7 +7,7 @@ line endings and a missing trailing newline.
 Deliberately a human-reviewed workflow: no merge heuristics, no three-way merge. If the markers are
 missing we propose adding the block; if they are malformed or duplicated we refuse and say how to fix it.
 
-The `*_for_root` functions take a path so `research upgrade --dry-run` can preview AGENTS.md without
+The `*_for_root` functions take a path so previews can render AGENTS.md without
 opening (and therefore migrating) the project database.
 """
 from __future__ import annotations

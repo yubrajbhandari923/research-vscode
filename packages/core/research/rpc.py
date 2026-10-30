@@ -51,8 +51,20 @@ class Server:
         return workspace.locate(self.root) is not None
 
     # ------------------------------------------------------------------ methods
+    def _compat(self) -> Optional[str]:
+        """None when the project is a v2 project (or there is none yet); otherwise the reason it cannot be opened."""
+        from . import store, workspace
+        loc = workspace.locate(self.root)
+        if not loc:
+            return None
+        try:
+            store.check_format(os.path.join(loc.ledger_root, store.RESEARCH_DIR))
+        except ResearchError as e:
+            return f"{e} {e.hint or ''}".strip()
+        return None
+
     def m_ping(self) -> Dict[str, Any]:
-        return {"version": __version__, "root": self.root, "initialized": self.initialized(),
+        return {"version": __version__, "root": self.root, "initialized": self.initialized(), "incompatible": self._compat(),
                 "python": sys.executable, "pid": os.getpid()}
 
     def m_init(self, name: Optional[str] = None, goal: Optional[str] = None) -> Dict[str, Any]:
@@ -96,6 +108,34 @@ class Server:
         if action == "abandon":
             return PR.abandon(p, id, note)
         raise ResearchError(f"unknown promotion action {action!r}")
+
+    def m_doctor(self, fix: Optional[str] = None) -> Dict[str, Any]:
+        """The Project Doctor. Without `fix` it is read-only; a fix touches only generated files."""
+        from . import doctor
+        return doctor.apply_fix(self.root, fix) if fix else doctor.run(self.root)
+
+    def m_setup_environment(self) -> Dict[str, Any]:
+        from . import setup
+        return setup.environment(self.root)
+
+    def m_setup_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import setup
+        return setup.plan(self.root, spec)
+
+    def m_setup_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import setup
+        if self.p:
+            self.p.close()
+            self.p = None
+        return setup.apply(self.root, spec)
+
+    def m_new_experiment_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import setup
+        return setup.new_experiment_plan(self.project(sync=False), spec)
+
+    def m_new_experiment(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import setup
+        return setup.new_experiment(self.project(), spec)
 
     def m_settings(self, category: Optional[str] = None, search: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
@@ -409,11 +449,6 @@ class Server:
         finally:
             p.close()
 
-    def m_upgrade(self, apply: bool = False) -> Dict[str, Any]:
-        """Preview (default) or apply the project upgrade. A preview opens no database."""
-        from . import upgrade as UP
-        return UP.apply(self.root) if apply else UP.plan(self.root)
-
     def m_agents_md_state(self) -> Dict[str, Any]:
         """The managed-block action, the block itself and a unified diff. Touches no file."""
         from . import agentsmd as AM
@@ -646,7 +681,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init") and not srv.initialized():
+            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)
             if method in MUTATING and srv.p is not None:

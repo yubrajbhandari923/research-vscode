@@ -22,8 +22,14 @@ fs.rmSync(path.join(testWorkspace, '.research', 'research.db'), { force: true })
 let exe = process.env.RESEARCH_TEST_VSCODE_EXECUTABLE || await downloadAndUnzipVSCode('stable');
 // Newer macOS builds name the binary `Code` instead of `Electron`; older @vscode/test-electron still expects `Electron`.
 if (!fs.existsSync(exe) && fs.existsSync(path.join(path.dirname(exe), 'Code'))) exe = path.join(path.dirname(exe), 'Code');
-const [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(exe);
-const r = spawnSync(cli, [...args, '--extensions-dir', extDir, '--user-data-dir', userDir, '--install-extension', path.join(repo, 'dist', vsix)], { encoding: 'utf8' });
+let [cli, ...args] = resolveCliArgsFromVSCodeExecutablePath(exe);
+let cliEnv = process.env;
+if (process.platform === 'linux') {   // bin/code asks for confirmation under WSL; run the CLI entry point with the bundled Electron-as-Node instead
+  cli = exe;
+  args = [path.join(path.dirname(exe), 'resources', 'app', 'out', 'cli.js')];
+  cliEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+}
+const r = spawnSync(cli, [...args, '--extensions-dir', extDir, '--user-data-dir', userDir, '--install-extension', path.join(repo, 'dist', vsix)], { encoding: 'utf8', env: cliEnv });
 console.log(r.stdout, r.stderr);
 if (r.status !== 0) throw new Error('VSIX install failed');
 const out = path.join(tmp, 'results.json');
@@ -32,7 +38,7 @@ try {
     vscodeExecutablePath: exe,
     extensionDevelopmentPath: path.join(here, 'harness'),
     extensionTestsPath: path.join(here, 'harness', 'suite', 'index.js'),
-    launchArgs: [testWorkspace, '--extensions-dir', extDir, '--user-data-dir', userDir, '--disable-workspace-trust', '--skip-welcome'],
+    launchArgs: [testWorkspace, '--extensions-dir', extDir, '--user-data-dir', userDir, '--disable-workspace-trust', '--skip-welcome', ...(process.platform === 'linux' ? ['--no-sandbox'] : [])],
     extensionTestsEnv: { RESEARCH_TEST_OUT: out, RESEARCH_TEST_USERDIR: userDir },
   });
 } finally {

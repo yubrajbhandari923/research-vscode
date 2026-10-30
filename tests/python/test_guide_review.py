@@ -15,7 +15,6 @@ from research.util import NotFound, PolicyBlocked, ResearchError
 from test_research_os import as_agent, as_human
 from test_guide_quarto import write_story_chapter
 import guide_story as GS
-from test_upgrade import legacy  # noqa: F401  (fixture)
 
 CH = "investigations/sensitivity.qmd"
 
@@ -129,30 +128,6 @@ def test_shipped_briefing_skill_is_installed_and_names_the_review_commands(proj)
         assert needle in md
 
 
-def test_v1_0_project_upgrades_non_destructively_and_quarto_guide_stays_opt_in(legacy):
-    from research import upgrade as UP
-    from test_upgrade import _records, _tree
-    shutil.rmtree(legacy.path("skills", "scientific-briefing"))  # what a v1.0 project looks like
-    gdir = os.path.join(legacy.root, "docs")
-    os.makedirs(gdir, exist_ok=True)
-    mine = os.path.join(gdir, "SCIENTIST_GUIDE.md")
-    open(mine, "w").write("# My guide\n\nHand-written.\n")
-    records, root = _records(legacy), legacy.root
-    legacy.close()
-    pl = UP.plan(root)
-    assert any(x["path"].endswith("skills/scientific-briefing/SKILL.md") and x["change"] == "add" for x in pl["steps"])
-    assert pl["guide"]["legacy_guide"] == "docs/SCIENTIST_GUIDE.md" and pl["guide"]["quarto_guide"] is False
-    assert not os.path.exists(os.path.join(root, "docs", "scientist-guide"))  # planning and applying never create it
-    before = _tree(os.path.join(root, ".research", "experiments"))
-    UP.apply(root)
-    assert open(mine).read() == "# My guide\n\nHand-written.\n"
-    assert not os.path.exists(os.path.join(root, "docs", "scientist-guide"))
-    assert _tree(os.path.join(root, ".research", "experiments")) == before
-    assert os.path.exists(os.path.join(root, ".research", "skills", "scientific-briefing", "SKILL.md"))
-    from research.store import Project
-    with Project(root, sync=False) as p2:
-        assert _records(p2) == records
-    assert UP.plan(root)["up_to_date"]  # idempotent
 
 
 def test_rpc_and_mcp_guide_views_are_read_only(proj, story, repo):

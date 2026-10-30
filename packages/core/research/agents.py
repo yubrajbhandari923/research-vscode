@@ -290,7 +290,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     sk = SK.required_for(p, role, task_row, plan_row, require_skills)
     if sk["missing"]:
         raise PolicyBlocked(f"Required skill(s) not available: {', '.join(sk['missing'])}. Dispatch blocked.",
-                            hint="Install or restore them (`research skills add …`, `research upgrade --apply`), "
+                            hint="Install or restore them (`research skills add …`), "
                                  "or lower the skill's level with `research skills set NAME --level recommended`.")
     required_md = SK.injected_md(p, sk["required"])
     hb = H.brief_md(p)

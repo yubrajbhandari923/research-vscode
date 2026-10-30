@@ -56,18 +56,19 @@ const qa = (root, sel) => Array.from(root.querySelectorAll(sel));
 const byText = (root, sel, t) => qa(root, sel).find((e) => e.textContent.includes(t));
 async function type(el, value) {
   await lib.act(async () => {
-    const set = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set;
+    const set = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? dom.window.HTMLTextAreaElement.prototype : dom.window.HTMLInputElement.prototype, 'value').set;
     set.call(el, value); el.dispatchEvent(new dom.window.Event('input', { bubbles: true }));
   });
 }
 async function waitFor(fn, ms = 4000) { const t0 = Date.now(); for (;;) { try { const v = fn(); if (v) return v; } catch {} if (Date.now() - t0 > ms) return fn(); await lib.tick(50); } }
+const ready = async (el) => { await waitFor(() => q(el, '[role=tab]') && !/Loading…|Starting…/.test(el.textContent), 8000); await lib.tick(100); };
 const click = (el) => lib.act(async () => { el.click(); await lib.tick(30); });
 
 test('settings page: every setting has an accessible ? and hover, focus, click and Escape behave', async () => {
   const core = startCore(proj); const host = hostFor(core);
   const { el, unmount } = await lib.mount(host, { page: 'settings' });
   try {
-    await lib.tick(400);
+    await ready(el);
     const btn = byText(el, 'button', '?') && qa(el, 'button.help-btn').find((b) => b.getAttribute('aria-label') === 'About Maximum runs without synthesis');
     assert.ok(btn, 'help button with an accessible name');
     assert.equal(btn.getAttribute('aria-expanded'), 'false');
@@ -100,7 +101,7 @@ test('editing a setting: validation, diff review, save, audit, persists after re
   let core = startCore(proj); let host = hostFor(core);
   let { el, unmount } = await lib.mount(host, { page: 'settings' });
   try {
-    await lib.tick(400);
+    await ready(el);
     const input = () => q(qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis'), 'input[type=number]');
     await type(input(), '0'); await lib.tick(300);
     assert.match(q(el, '.field-error').textContent, /at least 1/);
@@ -124,7 +125,7 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     // restart everything: a new core process and a new UI see the saved value with its source
     await unmount(); core.stop();
     core = startCore(proj); host = hostFor(core); ({ el, unmount } = await lib.mount(host, { page: 'settings' }));
-    await lib.tick(400);
+    await ready(el);
     const row = qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     assert.equal(q(row, 'input').value, '8'); assert.ok(q(row, '.src-project'), 'shows it is a project override');
     // reset removes only the override
@@ -139,7 +140,7 @@ test('search finds settings across categories; unknown search says so', async ()
   const core = startCore(proj); const host = hostFor(core);
   const { el, unmount } = await lib.mount(host, { page: 'settings' });
   try {
-    await lib.tick(400);
+    await ready(el);
     await type(q(el, '#setting-search'), 'sandbox'); await lib.tick(50);
     const labels = qa(el, '.setting-label').map((e) => e.textContent);
     assert.ok(labels.includes('Apply the default sandbox profile'), labels.join('|'));
@@ -156,13 +157,13 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   const host = hostFor(core);
   const { el, unmount } = await lib.mount(host);
   try {
-    await lib.tick(400);
+    await ready(el);
     const tabs = qa(el, '[role=tab]');
     assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Settings']);
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
-    assert.match(q(el, 'main').textContent, /Execution profiles/); assert.match(q(el, 'main').textContent, /Single-folder project/);
+    assert.match(q(el, 'main').textContent, /Job isolation/); assert.match(q(el, 'main').textContent, /Optional: try ideas on separate git branches/);
     await click(qa(el, '[role=tab]')[2]); await lib.tick(300);
     await click(byText(el, 'button.link', 'EXP-001')); assert.deepEqual(host.log.entities, ['EXP-001']);
     assert.match(q(el, 'main').textContent, /Step size/);
@@ -220,4 +221,78 @@ PR.prepare(p, ws["id"], commits=[sha], title="Solver")
     assert.equal(execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim(), execFileSync('git', ['rev-parse', 'main'], { cwd: repo }).toString().trim());
     assert.ok(!fs.existsSync(path.join(repo, 'solver.py')), 'main still has no solver.py');
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('first run: two answers create a v2 project; advanced options stay folded away; unavailable choices explain themselves', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-fresh-'));
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await waitFor(() => /Set up Research OS/.test(el.textContent), 8000);
+    assert.equal(q(el, '#su-name').value, path.basename(dir), 'the folder name is the default project name');
+    assert.equal(q(el, '[role=tab]'), null, 'no navigation until a project exists');
+    await type(q(el, '#su-goal'), 'Learn the effect of alpha');
+    await click(byText(el, 'button', 'Next'));
+    assert.match(q(el, 'main, .wizard').textContent, /Try ideas on separate git branches/);
+    const box = byText(el, 'label', 'Use a shared research ledger').querySelector('input');
+    assert.ok(box.disabled, 'the ledger option is disabled without a git repository, and says why');
+    assert.match(el.textContent, /Needs an existing git repository/);
+    await click(byText(el, 'button', 'Skip to review'));
+    await waitFor(() => /Research OS will:/.test(el.textContent));
+    assert.match(el.textContent, /project format 2/);
+    assert.ok(!fs.existsSync(path.join(dir, '.research')), 'nothing is written before Create');
+    await click(byText(el, 'button', 'Create project'));
+    await waitFor(() => q(el, '[role=tab]'), 12000);
+    assert.ok(fs.existsSync(path.join(dir, '.research', 'format.json')) && fs.existsSync(path.join(dir, 'AGENTS.md')));
+    assert.match(fs.readFileSync(path.join(dir, '.research', 'config.yaml'), 'utf8'), /Learn the effect of alpha/);
+    assert.ok(!fs.existsSync(path.join(dir, '.git')), 'no git repository was created behind your back');
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a v1 project is shown a clear explanation and nothing is changed', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-v1-'));
+  fs.mkdirSync(path.join(dir, '.research'));
+  fs.writeFileSync(path.join(dir, '.research', 'config.yaml'), 'project:\n  name: old\n');
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await waitFor(() => /not a Research OS 2 project/.test(el.textContent), 8000);
+    assert.match(q(el, '[role=alert]').textContent, /v1 project/); assert.match(el.textContent, /\.research-v1-archive/);
+    assert.deepEqual(fs.readdirSync(path.join(dir, '.research')), ['config.yaml']);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('new experiment: title is enough, options are folded, nothing runs, and the result says what exists', async () => {
+  const core = startCore(proj); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await ready(el);
+    await click(byText(el, 'button', 'New experiment'));
+    const dlg = () => q(el, '[role=dialog]');
+    assert.ok(dlg()); assert.ok(byText(dlg(), 'button', 'Review').disabled, 'cannot continue without a title');
+    assert.ok(!q(dlg(), 'details[open]'), 'extra options are folded away');
+    await type(q(dlg(), '#ne-title'), 'Learning rate sweep');
+    await click(byText(dlg(), 'button', 'Review'));
+    await waitFor(() => /This will:/.test(dlg().textContent));
+    assert.match(dlg().textContent, /It will not run anything/);
+    await click(byText(dlg(), 'button', 'Create'));
+    await waitFor(() => /created/.test(dlg().textContent), 8000);
+    assert.match(dlg().textContent, /EXP-\d+/); assert.match(dlg().textContent, /Nothing has been run yet/);
+  } finally { await unmount(); core.stop(); }
+});
+
+test('project health lives in Settings; advanced settings are hidden until asked for', async () => {
+  const core = startCore(proj); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host, { page: 'settings', target: 'agents' });
+  try {
+    await ready(el);
+    const labels = () => qa(el, '.setting-label').map((e) => e.textContent);
+    assert.ok(!labels().includes('Fast-model attempts'), 'tuning knobs are not shown by default');
+    await click(byText(el, 'label', 'Show advanced settings').querySelector('input'));
+    assert.ok(labels().includes('Fast-model attempts'));
+    await click(byText(el, 'button', 'Project health'));
+    await waitFor(() => /Healthy|Needs attention|problem/.test(el.textContent), 12000);
+    assert.match(el.textContent, /optional/); assert.match(el.textContent, /passing/);
+  } finally { await unmount(); core.stop(); }
 });

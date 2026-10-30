@@ -119,8 +119,11 @@ def _gates(p, c: Dict[str, Any]) -> Dict[str, Any]:
         head = _head(path)
     head = head or c.get("candidate_head")
     ver = next((v for v in reversed(c["verifications"]) if v.get("head") == head), None)
+    dirty = bool(path and os.path.isdir(path) and W._git(path, "status", "--porcelain"))
     tests = {"state": "unverified", "detail": "No test command has run against the current candidate."}
-    if ver:
+    if dirty:   # the tree differs from the commit the tests would be bound to, so nothing recorded applies
+        tests = {"state": "stale", "detail": "The candidate worktree has uncommitted changes; commit or discard them, then verify again."}
+    elif ver:
         tests = {"state": "passed" if ver["ok"] else "failed", "detail": f"exit {ver.get('exit_code')} in {ver.get('seconds')}s",
                  "output": ver.get("output"), "command": ver.get("command")}
     ev = _evidence(p, c)
@@ -290,6 +293,9 @@ def verify(p, pid: str, command: Optional[str] = None) -> Dict[str, Any]:
     cmd = command or _cfg(p).get("test_command")
     if not cmd:
         raise ResearchError("No test command configured", hint="Set promotion.test_command (Settings → Git & workspaces) or pass --command.")
+    if W._git(c["path"], "status", "--porcelain"):
+        raise ResearchError(f"{pid}'s worktree has uncommitted changes, so a test run would not match any commit",
+                            hint="Commit them in the candidate worktree (or discard them), then verify again.")
     head = _head(c["path"])
     r = shell_check(cmd, cwd=c["path"], env={**os.environ, "RESEARCH_PROMOTION": pid}, timeout=int(_cfg(p).get("test_timeout_seconds") or 1800), output_limit=3000)
     with p.tx():

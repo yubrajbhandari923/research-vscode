@@ -81,3 +81,25 @@ pre.diff .add { color: var(--green); } pre.diff .del { color: var(--red); }
 
 .dialog .row label { margin: 0; white-space: nowrap; }
 .dialog .row select { flex: 1; }
+
+/* setup wizard, health, disclosure, narrow panels */
+.wizard { max-width: 640px; } .wizard section { margin: 14px 0; } .wizard label:not(.check) { display: block; margin: 12px 0 4px; font-weight: 600; }
+.wizard input[type=text], .wizard textarea, .wizard select, .dialog textarea, .dialog select, .dialog input[type=text] { width: 100%; }
+textarea { font: inherit; color: var(--vscode-input-foreground, var(--fg)); background: var(--vscode-input-background, var(--sunken)); border: 1px solid var(--vscode-input-border, var(--line-strong)); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; }
+.steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 14px 0; flex-wrap: wrap; }
+.steps li { font-size: 12px; color: var(--muted); padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); }
+.steps li.on { color: var(--fg); border-color: var(--accent); } .steps li.done { color: var(--green); }
+.wizard-actions { display: flex; align-items: center; gap: 10px; margin-top: 22px; }
+.check { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; font-weight: 400; } .check input { margin-top: 3px; }
+details { margin: 10px 0; } details > summary { cursor: pointer; font-weight: 600; } details[open] > summary { margin-bottom: 6px; }
+details.disclose > summary h2 { display: inline-flex; margin: 18px 0 6px; }
+.doctor { list-style: none; padding: 0; margin: 10px 0; } .doctor li { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.doctor .mark { width: 16px; text-align: center; font-weight: 700; } .doctor li.ok .mark { color: var(--green); } .doctor li.warn .mark { color: var(--orange); } .doctor li.error .mark { color: var(--red); } .doctor li.info .mark { color: var(--muted); }
+.banner.warn { border-left-color: var(--orange); }
+.row.wrap-narrow { flex-wrap: wrap; }
+.page-body table { table-layout: auto; } td, th { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .topbar { padding: 0 8px; } .topbar [role=tab] { padding: 10px 9px 8px; } main { padding: 10px 12px 60px; }
+  .hide-narrow { display: none; } .dialog { padding: 12px; } .savebar { margin: 14px 0 0; flex-wrap: wrap; }
+  .cols { grid-template-columns: 1fr; } .help-pop { width: min(300px, 80vw); }
+}

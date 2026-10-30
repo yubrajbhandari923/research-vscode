@@ -37,18 +37,19 @@ class Option:
                  risk: str = "normal", choices: Optional[List[Any]] = None, min_: Optional[float] = None,
                  max_: Optional[float] = None, nullable: bool = False, affects: Optional[List[str]] = None,
                  scopes: Tuple[str, ...] = ("project", "machine"), restart: bool = False,
-                 depends_on: Optional[str] = None, doc: Optional[str] = None, unit: Optional[str] = None):
+                 depends_on: Optional[str] = None, doc: Optional[str] = None, unit: Optional[str] = None, advanced: bool = False):
         self.key, self.type, self.category, self.label, self.help = key, type_, category, label, help_
         self.why, self.effect, self.risk = why, effect, risk
         self.choices, self.min, self.max, self.nullable = choices, min_, max_, nullable
         self.affects = affects or []
         self.scopes, self.restart, self.depends_on, self.doc, self.unit = scopes, restart, depends_on, doc, unit
+        self.advanced = advanced
 
     def meta(self) -> Dict[str, Any]:
         return {"key": self.key, "type": self.type, "category": self.category, "label": self.label, "help": self.help,
                 "why": self.why, "effect": self.effect, "risk": self.risk, "choices": self.choices, "min": self.min,
                 "max": self.max, "nullable": self.nullable, "affects": self.affects, "scopes": list(self.scopes),
-                "restart": self.restart, "depends_on": self.depends_on, "doc": self.doc, "unit": self.unit,
+                "restart": self.restart, "depends_on": self.depends_on, "doc": self.doc, "unit": self.unit, "advanced": self.advanced,
                 "approval": self.risk != "normal"}
 
 
@@ -111,6 +112,8 @@ OPTIONS: List[Option] = [
     _o("verification.check_timeout_seconds", "int", "verification", "Check timeout", "How long one task check may run before it is stopped and counted as failed.",
        why="A hung check must not block everyone.", effect="Too low fails slow-but-correct checks.", min_=1, max_=86400, unit="seconds"),
 
+    _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (claude, codex, gemini, or one you define) `research dispatch` starts when a role names none.",
+       why="Lets you hand work to your usual agent without choosing each time.", effect="Only affects new dispatches. The CLI must be installed on the machine that runs it."),
     _o("orchestration.enabled", "bool", "agents", "Model routing", "Route work to cheaper or stronger models by level (fast, balanced, deep) instead of one model for everything.",
        why="Spends the expensive model only where it matters.", effect="Off: dispatch uses the default profile. Run `research setup agents --apply` to refresh generated agent files.",
        affects=[".claude/agents/"]),
@@ -178,6 +181,14 @@ OPTIONS: List[Option] = [
 ]
 
 _BY_KEY: Dict[str, Option] = {o.key: o for o in OPTIONS}
+
+# Tuning knobs and infrastructure detail. The editor hides these until asked, so a researcher running a simple experiment
+# is not shown model escalation limits, hook timeouts or mount policy.
+for _k in ("orchestration.limits.haiku_attempts", "orchestration.limits.sonnet_attempts", "orchestration.limits.escalations",
+           "harness.hooks_timeout_seconds", "hpc.bundle.max_total_bytes", "artifacts.hash_max_bytes", "context.max_chars",
+           "resume.stale_checkpoint_days", "coordination.stale_task_hours", "verification.check_timeout_seconds",
+           "sandbox.approved_roots", "sandbox.agent.mode", "skills.link", "backends.slurm.time", "promotion.require_supported_finding"):
+    _BY_KEY[_k].advanced = True
 
 
 def register(option: Option) -> None:
@@ -315,6 +326,8 @@ def describe(p, category: Optional[str] = None, search: Optional[str] = None) ->
 def _dynamic_choices(p, key: str) -> Optional[List[str]]:
     if key == "sandbox.default_profile":
         return sorted((p.config.get("sandbox") or {}).get("profiles") or {})
+    if key == "agents.default_profile":
+        return sorted(((p.config.get("agents") or {}).get("profiles")) or {})
     if key == "orchestration.active_strategy":
         return sorted((p.config.get("orchestration") or {}).get("strategies") or {})
     return None
@@ -391,7 +404,7 @@ def _plan(p, changes: Dict[str, Any], scope: str, remove: bool = False) -> Dict[
                 new = remove_key(new, k)
         elif not configfile.editable(text) and scope == "project":
             raise ResearchError("config.yaml uses legacy flow-style YAML, which cannot be edited line by line.",
-                                hint="Run `research config migrate --apply` once, then retry.")
+                                hint="Rewrite config.yaml in block style (one `key: value` per line), then retry.")
         else:
             new = configfile.set_keys(text, norm) if text else configfile.set_keys("", norm)
     diff = "".join(difflib.unified_diff(text.splitlines(True), new.splitlines(True), "current", "proposed")) if new != text else ""
@@ -449,6 +462,18 @@ def _write_new(path: str, text: str) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as f:
         f.write(text)
+
+
+def set_assignment(p, kind: str, ident: str, profile: str) -> None:
+    """Assign a sandbox profile to one experiment or task (`sandbox.assign.<kind>.<id>`). A policy change: humans only, audited."""
+    if (p.author or {}).get("author_type") == "agent":
+        raise ResearchError("Agents cannot assign sandbox profiles", hint="Ask the human.")
+    from . import sandbox as SB
+    SB.profile(p, profile)
+    p.save_config({f"sandbox.assign.{kind}.{ident}": profile})
+    p.config = p.load_config()
+    p.event("config", f"sandbox.assign.{kind}.{ident}", "changed", f"{kind[:-1]} {ident} → sandbox profile {profile}")
+    write_policy(p)
 
 
 def reset(p, keys: List[str], scope: str = "project", reason: Optional[str] = None) -> Dict[str, Any]:

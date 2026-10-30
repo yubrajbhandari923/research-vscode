@@ -134,7 +134,7 @@ def install(root: str, python: Optional[str] = None, force: bool = False) -> Dic
                 "`.research/bin/research` cannot upgrade itself: it is the copy being replaced.",
                 hint="Run it from an installed Research OS instead — `research bin install --force` with "
                      "the pip-installed CLI, or let the VS Code extension refresh it (it does this on "
-                     "open). `research upgrade --apply` also refreshes it.")
+                     "open). `research bin install --force` from the project's own Research OS also refreshes it.")
     _ = lib
     bdir = bin_dir(root)
     lib = os.path.join(bdir, "lib")

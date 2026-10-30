@@ -9,8 +9,8 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
-const MUTATING_RPC = new Set(['settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
+const CONTROL_RPC = new Set(['ping', 'doctor', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
+const MUTATING_RPC = new Set(['setup_apply', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',

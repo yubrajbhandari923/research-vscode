@@ -555,6 +555,36 @@ def cmd_promote(a, p) -> int:
     return 0
 
 
+def cmd_doctor(a) -> int:
+    from research import doctor as DR
+    from research.store import find_root
+    root = os.path.abspath(a.root or find_root() or os.getcwd())
+    if a.fix:
+        r = DR.apply_fix(root, a.fix)
+        out_json(r) if a.json else print(green("✓ ") + f"{r['fixed']}: wrote " + ", ".join(r["wrote"]))
+        return 0
+    r = DR.run(root)
+    if a.json:
+        out_json(r)
+        return 1 if r["summary"]["errors"] else 0
+    mark = {"ok": green("✓"), "info": dim("·"), "warn": yellow("⚠"), "error": red("✗")}
+    area = None
+    for c in r["checks"]:
+        if c["level"] == "ok" and not a.all:
+            continue
+        if c["area"] != area:
+            area = c["area"]
+            print("\n" + bold(area))
+        print(f"  {mark[c['level']]} {c['title']}")
+        if c["detail"]:
+            print(dim("      " + c["detail"]))
+        if c["fix"]:
+            print("      → " + c["fix"]["text"] + (f"   (apply: research doctor --fix {c['id']})" if c["fix"].get("safe") else ""))
+    s = r["summary"]
+    print(f"\n{s['errors']} error(s), {s['warnings']} warning(s), {s['info']} optional, {s['ok']} ok" + dim("   (--all lists the passing checks)"))
+    return 1 if s["errors"] else 0
+
+
 # ----------------------------------------------------------------------------- command impls
 
 def _proj(a, sync: bool = True) -> Project:
@@ -1160,88 +1190,6 @@ def cmd_agents_md(a, p) -> int:
     _done(a, r, msg=(f"{os.path.relpath(r['path'])} already up to date" if not r["changed"]
                      else f"{os.path.relpath(r['path'])}: managed block {r['action']}d "
                           "(bytes outside the markers untouched)"))
-    return 0
-
-
-def cmd_upgrade(a, p=None) -> int:
-    """Bring an existing project up to the installed Research OS. --dry-run touches nothing."""
-    from research import upgrade as UP
-    root = a.root or None
-    if a.status:
-        r = UP.status(root)
-        if a.json:
-            out_json(r)
-            return 0
-        print(bold("Research OS upgrade status"))
-        kv("project root", r["root"])
-        kv("research version", r["tool_version"])
-        kv("project schema", r["project_schema"])
-        kv("target schema", r["target_schema"])
-        kv("AGENTS.md block", "up to date" if r["agents_md"]["up_to_date"] else r["agents_md"]["action"])
-        if r["downgrade_refused"]:
-            print(red("✗ ") + r["downgrade_refused"])
-            return 1
-        print(green("✓ up to date") if r["up_to_date"] else yellow(f"{r['changes']} change(s) pending — "
-                                                                   "run `research upgrade --dry-run`"))
-        return 0
-    if a.apply:
-        r = UP.apply(root)
-        if a.json:
-            out_json(r)
-        else:
-            _print_upgrade(r, applied=True)
-        return 0 if r.get("ok", True) else 1
-    r = UP.plan(root)
-    if a.json:
-        out_json(r)
-    else:
-        _print_upgrade(r, applied=False)
-    return 1 if r["downgrade_refused"] else 0
-
-
-_UPGRADE_SIGIL = {"create": "+", "add": "+", "build": "+", "migrate": "~", "merge": "~", "replace": "~",
-                  "add_block": "~", "refresh": "~", "refuse": "!"}
-
-
-def _print_upgrade(r, applied: bool) -> None:
-    print(bold("Research OS Upgrade " + ("Result" if applied else "Preview")))
-    print()
-    print(f"  Current project schema: {r['project_schema']}")
-    print(f"  Target project schema:  {r['target_schema']}")
-    print(f"  Research OS version:    {r['tool_version']}")
-    if r["downgrade_refused"]:
-        print()
-        print(red("✗ ") + r["downgrade_refused"])
-        return
-    steps = r.get("applied") if applied else r["steps"]
-    if not steps:
-        print("\n" + green("✓ ") + "already up to date; nothing to do")
-    else:
-        print("\n  " + bold("Applied:" if applied else "Required:"))
-        for s in steps:
-            sig = _UPGRADE_SIGIL.get(s["change"], "~")
-            line = f"  {sig} {s.get('path') or s['kind']}"
-            detail = s.get("detail") or (f"add {len(s['keys'])} key(s)" if s.get("keys") else "")
-            print(f"{line}" + (dim(f"  ({detail})") if detail else ""))
-    for s in (r.get("refused") or [s for s in r["steps"] if s["change"] == "refuse"]):
-        print(red(f"  ! {s.get('path')}: {s.get('detail')}"))
-        print(dim("    Fix the markers by hand; everything else still upgrades."))
-    for s in r.get("failed") or []:
-        print(red(f"  ✗ {s.get('path') or s['kind']} failed: {s.get('error')}"))
-    if r["preserved"]:
-        print("\n  " + bold("Preserved:"))
-        for x in r["preserved"]:
-            print(f"  = {x}")
-        print(f"  = {dim('user-authored AGENTS.md sections, custom config values, unknown config keys')}")
-    gs = r.get("guide") or {}
-    if gs.get("next"):
-        print("\n  " + bold("Scientist Guide v2 (optional):") + " " + gs["next"])
-    print("\n  " + r["note"])
-    if r.get("backup"):
-        print(dim(f"  backup of edited metadata files: {r['backup']}"))
-    if not applied and steps:
-        print("\n" + dim("  Nothing was changed. Run `research upgrade --apply` to apply, or "
-                         "`research agents-md --diff` to review the AGENTS.md block first."))
     return 0
 
 
@@ -1870,7 +1818,7 @@ def cmd_source(a, p) -> int:
 
 @mut
 def cmd_config(a, p) -> int:
-    """`research config show|check|migrate` — inspect and tidy configuration. show/check never write."""
+    """`research config show|check|options|explain|set|reset`. show/check never write."""
     from research import configfile as CF
     from research.store import DEFAULT_CONFIG
     from research import registry as R
@@ -1960,50 +1908,11 @@ def cmd_config(a, p) -> int:
                 print(dim(f"    {u['key']} = {fmt_val(u['value'])}"))
         if r["redundant"]:
             print(dim(f"  {len(r['redundant'])} key(s) repeat an inherited default and could be removed "
-                      f"(`research config migrate`)"))
+                      f"(`research config reset KEY`)"))
         if r["ok"] and not r["unknown"]:
             print(green("✓ ") + "configuration is valid")
         kv("machine config", r["machine_config"] or "none")
         return 0 if r["ok"] else 1
-
-    # migrate
-    from research.store import DEFAULT_CONFIG as D
-    prev = CF.migrate_preview(p.config_path, D)
-    if a.json:
-        out_json({k: v for k, v in prev.items() if k not in ("old", "new")})
-    if not prev["changed"]:
-        if not a.json:
-            print(green("✓ ") + "config.yaml is already sparse and block-style; nothing to do")
-        return 0
-    if not prev["safe"]:
-        print(red("✗ ") + "refusing to migrate: the effective settings would change")
-        for k in prev["dropped_keys"][:10]:
-            print(red(f"    would drop {k}"))
-        for k in prev["changed_values"][:10]:
-            print(red(f"    would change {k}"))
-        print(dim("  Nothing was written. This is a bug — please report the diff above."))
-        return 1
-    if not a.json:
-        sys.stdout.write(prev["diff"])
-        print()
-        kv("lines", f"{prev['lines_before']} → {prev['lines_after']}")
-        kv("effective settings", green("identical") if prev["effective_identical"] else red("CHANGED"))
-        if prev["comments_before"]:
-            print(yellow(f"  ⚠ {prev['comments_before']} comment line(s) in the current file will not survive "
-                         "a full rewrite — this is the one operation that does not preserve them."))
-    if not a.apply:
-        if not a.json:
-            print(dim("\n  Nothing was changed. Re-run with --apply to write it."))
-        return 0
-    import shutil as _sh
-    backup = p.config_path + ".before-migrate"
-    _sh.copy2(p.config_path, backup)
-    from research.store import _atomic_write
-    _atomic_write(p.config_path, prev["new"])
-    p.config = p.load_config()
-    if not a.json:
-        print(green("✓ ") + f"migrated {p.rel(p.config_path)}  "
-                            + dim(f"(previous file kept at {p.rel(backup)})"))
     return 0
 
 
@@ -3008,6 +2917,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--note")
     x.add_argument("--confirm", action="store_true", help="integrate: confirm that main will move")
     x.add_argument("--all", action="store_true", help="list: include promoted and abandoned")
+    x = add(sub, "doctor", cmd_doctor, "inspect the project: records, workspaces, runs, agents, sandbox, context (read-only)")
+    x.add_argument("--all", action="store_true", help="also list the checks that passed")
+    x.add_argument("--fix", metavar="CHECK", help="apply one safe fix for generated files (context.stale, agents_md.stale, bin.stale)")
     x = add(sub, "bin", cmd_bin, "project-local CLI at .research/bin/research (no install needed for agents)")
     x.add_argument("action", nargs="?", choices=["install", "status"], default="install")
     x.add_argument("--force", action="store_true", help="re-copy even if up to date")
@@ -3023,8 +2935,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--reason")
     add(sub, "sync", cmd_sync, "import hand-edited files, ingest job outputs, refresh run status")
     add(sub, "rebuild", cmd_rebuild, "rebuild research.db from the text files (keeps a backup)")
-    x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | migrate | options | explain | set | reset")
-    x.add_argument("action", nargs="?", choices=["show", "check", "migrate", "options", "explain", "set", "reset"], default="show")
+    x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | options | explain | set | reset")
+    x.add_argument("action", nargs="?", choices=["show", "check", "options", "explain", "set", "reset"], default="show")
     x.add_argument("key", nargs="?", help="explain/set/reset: setting key, e.g. agent_policy.max_runs_without_synthesis")
     x.add_argument("value", nargs="?", help="set: the new value")
     x.add_argument("--scope", choices=["project", "machine"], default="project", help="set/reset: which config file")
@@ -3035,7 +2947,6 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--reason", help="set/reset: why (kept in the audit log)")
     x.add_argument("--effective", action="store_true", help="show: every value in force, not just overrides")
     x.add_argument("--sources", action="store_true", help="show: which layer supplies each value")
-    x.add_argument("--apply", action="store_true", help="migrate: write the file (default is a dry run)")
     x = add(sub, "log", cmd_log, "audit log of recent changes")
     x.add_argument("--limit", type=int, default=30)
     x = add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")
@@ -3076,10 +2987,6 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("cmd", nargs="*", help="command to run; put it after `--`")
     x.set_defaults(_hpc_parser=x)
 
-    x = add(sub, "upgrade", cmd_upgrade, "bring an existing project up to this Research OS (preview by default)")
-    x.add_argument("--dry-run", action="store_true", help="preview only (the default); changes nothing")
-    x.add_argument("--apply", action="store_true", help="apply the upgrade")
-    x.add_argument("--status", action="store_true", help="version/compatibility summary only")
 
     x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…] | claim | figure | section | "
                                      "validate | coverage | quarto init|prepare|build|preview|doctor | chapter add | review status|request|record|approve")
@@ -3713,8 +3620,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_init(a)
         if fn is cmd_ledger:
             return cmd_ledger(a)
-        if fn is cmd_upgrade:
-            return cmd_upgrade(a)   # must not open the project: --dry-run would migrate the database
+        if fn is cmd_doctor:
+            return cmd_doctor(a)
         p = _proj(a, sync=not _is_readonly(a))
         try:
             rc = fn(a, p)

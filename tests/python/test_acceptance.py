@@ -1,4 +1,4 @@
-"""Final acceptance scenario: an existing project is upgraded, runs an experiment remotely, retrieves its
+"""Final acceptance scenario: an existing project runs an experiment remotely, retrieves its
 results and produces a deterministic coverage-verified history — losing and inventing nothing.
 
 Runs the 17 steps of the specification end to end, offline, with no SSH credentials, no live Slurm and no LLM.
@@ -18,7 +18,6 @@ from research import fullreport as FR
 from research import plans as P
 from research import runs as R
 from research import services as S
-from research import upgrade as UP
 from research import verification as V
 from research.hpc import config as HC
 from research.hpc import datasets as D
@@ -239,17 +238,11 @@ def test_acceptance_scenario(existing, cluster, tmp_path):
     assert "Edited by hand. α is the *diffusion* term." in text1
     assert "Tried α | 0.1 ünïcode" in text1
 
-    # ---- 3. preview and apply the upgrade ----------------------------------------------------
+    # ---- 3. close and reopen the project -----------------------------------------------------
     user_bytes_before = AM.outside_bytes(p)
     agents_before = open(os.path.join(root, "AGENTS.md"), "rb").read()
     p.close()
     shutil.rmtree(os.path.join(root, ".research", "reports"), ignore_errors=True)
-    tree_before = _tree(root)
-    preview = UP.plan(root)
-    assert _tree(root) == tree_before                     # a dry run changes nothing at all
-    assert preview["steps"] and not preview["downgrade_refused"]
-    applied = UP.apply(root)
-    assert applied["ok"], applied["failed"]
 
     # ---- 4. prove the canonical research state was preserved ---------------------------------
     p = Project(root, sync=False)
@@ -351,14 +344,9 @@ def test_acceptance_scenario(existing, cluster, tmp_path):
     assert "α has no effect" in text2                          # the superseded finding survives
     assert "Use α=0.3" in text2                                # and the superseded decision
 
-    # ---- 16. upgrades and imports again: idempotent -------------------------------------------
+    # ---- 16. imports again: idempotent -------------------------------------------
     counts_now = _counts(p)
     p.close()
-    # The HPC block was written in step 7 without its default sub-keys, so one more merge is due.
-    # What must hold is convergence: after it, another upgrade finds nothing left to do.
-    UP.apply(root)
-    third = UP.apply(root)
-    assert third["up_to_date"], third["steps"]
     p = Project(root, sync=False)
     assert p.config["hpc"]["clusters"]["fake"]["ssh_host"] == cluster.host   # and nothing was lost
     again = RES.import_archive(p, archive)

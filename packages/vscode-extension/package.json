@@ -478,12 +478,6 @@
         "icon": "$(file-code)"
       },
       {
-        "command": "research.upgradePreview",
-        "title": "Preview Project Upgrade\u2026",
-        "category": "Research",
-        "icon": "$(arrow-up)"
-      },
-      {
         "command": "research.agentsMdDiff",
         "title": "Review Managed AGENTS.md Block\u2026",
         "category": "Research",
@@ -927,10 +921,6 @@
           "when": "research.initialized"
         },
         {
-          "command": "research.upgradePreview",
-          "when": "research.initialized"
-        },
-        {
           "command": "research.agentsMdDiff",
           "when": "research.initialized"
         },
@@ -1062,11 +1052,6 @@
           "command": "research.hpcSync",
           "when": "view == research.experiments && research.hpcEnabled",
           "group": "navigation@2"
-        },
-        {
-          "command": "research.upgradePreview",
-          "when": "view == research.agent",
-          "group": "navigation@8"
         }
       ],
       "view/item/context": [

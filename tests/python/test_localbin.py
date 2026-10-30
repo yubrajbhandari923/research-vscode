@@ -96,7 +96,7 @@ def test_the_project_binary_refuses_to_upgrade_itself(proj, repo):
                        capture_output=True, text=True, env=env)
     assert r.returncode != 0
     assert "cannot upgrade itself" in r.stderr
-    assert "research upgrade --apply" in r.stderr          # and it says what does work
+    assert "bin install --force" in r.stderr          # and it says what does work
 
 
 def test_installing_from_a_real_source_still_works(proj, repo):

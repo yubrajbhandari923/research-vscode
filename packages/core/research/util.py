@@ -39,6 +39,11 @@ class NotInitialized(ResearchError):
     exit_code = 2
 
 
+class IncompatibleProject(ResearchError):
+    """A project from another Research OS format. Never upgraded, rewritten or deleted automatically."""
+    exit_code = 2
+
+
 def now_iso() -> str:
     return _dt.datetime.now().astimezone().replace(microsecond=0).isoformat()
 

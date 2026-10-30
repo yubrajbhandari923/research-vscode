@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { Badge, Breadcrumbs, Dialog, Empty, State, useAsync } from './common';
+import { HealthBanner } from './Doctor';
+import { NewExperiment } from './NewExperiment';
 import type { Host } from './host';
 import type { Attention, Page } from './types';
 
@@ -7,14 +9,16 @@ const KIND_LABEL: Record<string, string> = { synthesis: 'Synthesize', review: 'R
 
 export function HomePage({ host, go }: { host: Host; go: (p: Page, target?: string) => void }) {
   const a = useAsync<any>(() => host.call('control', { page: 'home' }), []);
+  const [creating, setCreating] = useState(false);
   const open = (i: Attention) => (i.open.page === 'research' || i.open.page === 'work') && /^[A-Z]+-/.test(i.open.target) ? host.openEntity(i.open.target) : go(i.open.page, i.open.target);
   return (
     <div className="page-body">
       <Breadcrumbs trail={['Project', 'Home']} />
       <State a={a}>{(d) => (
         <>
+          <HealthBanner host={host} open={() => go('settings', 'health')} />
           <header className="lead">
-            <h1>{d.project.name}</h1>
+            <div className="row"><h1 className="grow">{d.project.name}</h1><button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button></div>
             {d.project.goal ? <p className="muted">{d.project.goal}</p> : <p className="muted">No research goal yet. Add one under Settings → Project.</p>}
           </header>
           <section aria-labelledby="att"><h2 id="att">Needs your attention <span className="count">{d.attention.length}</span></h2>
@@ -42,6 +46,7 @@ export function HomePage({ host, go }: { host: Host; go: (p: Page, target?: stri
             {d.learned.length === 0 ? <p className="muted">No findings yet. A finding is an interpreted result backed by evidence.</p> :
               <ul className="plain">{d.learned.map((f: any) => <li key={f.id}><button className="link" onClick={() => host.openEntity(f.id)}>{f.id}</button> {f.title} <Badge kind={f.status === 'supported' ? 'ok' : f.status === 'contradicted' ? 'warn' : ''}>{f.status}</Badge></li>)}</ul>}
           </section>
+          {creating && <NewExperiment host={host} onClose={() => setCreating(false)} onCreated={() => a.reload()} />}
         </>
       )}</State>
     </div>
@@ -68,8 +73,8 @@ export function WorkPage({ host, go }: { host: Host; go: (p: Page, target?: stri
                       <td><Badge kind={t.status === 'blocked' ? 'warn' : t.status === 'done' ? 'ok' : ''}>{t.status}</Badge></td><td className="muted">{t.assigned_role || '—'}</td></tr>)}</tbody></table></div>))}
           </section>
 
-          <section aria-labelledby="ws"><h2 id="ws">Workspaces <span className="count">{d.workspaces.length}</span></h2>
-            {d.layout.mode === 'classic' ? <Empty title="Single-folder project.">Experiment branches and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</Empty> : (
+          <section aria-labelledby="ws"><h2 id="ws">Experiment branches <span className="count">{d.workspaces.length}</span></h2>
+            {d.layout.mode === 'classic' ? <Empty title="Optional: try ideas on separate git branches.">Experiment branches and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</Empty> : (
               <>
                 <div className="row"><button type="button" className="primary" onClick={() => setCreating(true)}>New experiment workspace…</button>
                   <span className="muted small">Ledger: <code>{d.layout.ledger_root}</code></span></div>
@@ -97,13 +102,15 @@ export function WorkPage({ host, go }: { host: Host; go: (p: Page, target?: stri
                     <td><button type="button" onClick={() => setPromo(c)}>Open…</button></td></tr>)}</tbody></table>}
             </section>)}
 
-          <section aria-labelledby="ex"><h2 id="ex">Execution profiles</h2>
+          <details className="disclose" open={d.execution.applies || d.execution.profiles.some((p: any) => p.runtime !== 'native' && false)}>
+          <summary><h2 id="ex">Job isolation <span className="count">optional</span></h2></summary>
+          <section aria-labelledby="ex">
             <p className="muted">Jobs run natively unless a profile applies. A restrictive profile is never silently replaced by native execution.</p>
             <table><caption className="sr">Sandbox profiles</caption><thead><tr><th scope="col">Profile</th><th scope="col">Runtime</th><th scope="col">Network</th><th scope="col">GPU</th><th scope="col">Source access</th></tr></thead><tbody>
               {[...d.execution.profiles].sort((a: any, b: any) => (a.runtime === 'native' ? -1 : 0) - (b.runtime === 'native' ? -1 : 0) || a.name.localeCompare(b.name)).map((p: any) => <tr key={p.name}><td><b>{p.name}</b>{d.execution.applies && d.execution.default === p.name && <Badge kind="ok">default</Badge>}</td><td>{p.runtime}</td><td>{p.network}</td><td>{p.gpu ? 'yes' : 'no'}</td><td>{p.runtime === 'native' ? '—' : p.source.replace('_', ' ')}</td></tr>)}</tbody></table>
             <p className="small muted">{d.execution.agent_boundary.note}</p>
             <button type="button" className="link" onClick={() => go('settings', 'sandbox')}>Configure execution and sandbox settings</button>
-          </section>
+          </section></details>
 
           <section aria-labelledby="rn"><h2 id="rn">Recent runs</h2>
             {d.runs.length === 0 ? <p className="muted">No runs yet.</p> :
@@ -150,9 +157,11 @@ function CreateWorkspace({ host, onClose, onDone }: { host: Host; onClose: () =>
 
 export function ResearchPage({ host }: { host: Host }) {
   const a = useAsync<any>(() => host.call('control', { page: 'research' }), []);
+  const [creating, setCreating] = useState(false);
   return (
     <div className="page-body">
-      <Breadcrumbs trail={['Project', 'Research']} />
+      <div className="row"><Breadcrumbs trail={['Project', 'Research']} /><span className="spacer" /><button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button></div>
+      {creating && <NewExperiment host={host} onClose={() => setCreating(false)} onCreated={() => a.reload()} />}
       <State a={a}>{(d) => (
         <>
           <section aria-labelledby="ex2"><h2 id="ex2">Experiments <span className="count">{d.experiments.length}</span></h2>

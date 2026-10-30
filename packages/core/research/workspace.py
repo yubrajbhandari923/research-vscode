@@ -269,7 +269,7 @@ def plan_enable(root: str, ledger_path: Optional[str] = None) -> Dict[str, Any]:
         problems.append("Shared-ledger mode is already enabled for this repository.")
     src = os.path.join(top, ".research")
     if not _has_ledger(top):
-        problems.append(f"No classic research project at {top} (no .research/config.yaml) to migrate.")
+        problems.append(f"No classic research project at {top} (no .research/config.yaml) to move into a shared ledger.")
     if os.path.exists(os.path.join(src, ".transaction.json")):
         problems.append("An unfinished transaction journal exists in .research/; open the project once so it recovers.")
     tracked = _git(top, "ls-files", "--", ".research") or ""
@@ -426,7 +426,13 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
     base_ref = base or "HEAD"
     if _git(top, "rev-parse", "--verify", "-q", f"refs/heads/{br}"):
         raise ResearchError(f"Branch {br} already exists.", hint="Use `research workspace attach` to adopt an existing branch.")
-    wt = os.path.abspath(path or os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments", exp))
+    base_dir = os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments")
+    wt = os.path.abspath(path or os.path.join(base_dir, exp))
+    if not path:   # a second workspace for the same experiment (a different implementation) gets its own directory
+        n = 2
+        while os.path.exists(wt):
+            wt = os.path.join(base_dir, f"{exp}-{slug or n}" if n == 2 and slug else f"{exp}-{n}")
+            n += 1
     if os.path.exists(wt):
         raise ResearchError(f"{wt} already exists.", hint="Choose another --path.")
     base_rev = _git(top, "rev-parse", "--verify", f"{base_ref}^{{commit}}")

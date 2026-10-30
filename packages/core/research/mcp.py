@@ -46,7 +46,6 @@ def _tools() -> List[Tool]:
     from . import agents as A
     from . import compare as CMP
     from . import fullreport as FR
-    from . import upgrade as UP
     from . import context as C
     from . import plans as P
     from . import runs as R
@@ -226,11 +225,12 @@ def _tools() -> List[Tool]:
         Tool("guide_validate", "Validate the Scientist Guide's claim/figure provenance against the live records (missing, "
              "stale, contradicted, superseded, inconsistent). Read-only; provenance only, not a scientific review.",
              {}, [], guide_validate, False),
+        Tool("doctor", "Project health: records, shared ledger, workspaces, runs, agents, sandbox, context. Read-only; reports errors, "
+             "warnings and optional capabilities that are simply not enabled.", {}, [],
+             lambda p: __import__("research.doctor", fromlist=["x"]).run(p.root), False),
         Tool("workspace_list", "Experiment workspaces (git worktrees) sharing this project's one research ledger: branch, "
              "base revision, dirty state, linked tasks, active runs. Read-only.", {}, [],
              lambda p: __import__("research.workspace", fromlist=["x"]).list_workspaces(p), False),
-        Tool("upgrade_preview", "What `research upgrade` would change in this project. Changes nothing.",
-             {}, [], lambda p: UP.plan(p.root), False),
         Tool("hpc_doctor", "Whether remote execution is available on a configured cluster, and which modes are "
              "usable. Read-only.", {"cluster": S}, [], hpc_doctor, False),
         Tool("hpc_sync", "Reconcile outstanding remote runs: adopt uncertain submissions, update Slurm status, "
