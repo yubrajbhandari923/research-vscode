@@ -107,6 +107,23 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
                 "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300},   # hooks: see hooks.py (human approval required)
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
+    # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
+    # profile other than `native` applies, and a restrictive profile never silently falls back to native.
+    # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
+    "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
+    "sandbox": {
+        "enabled": False,                         # true → `default_profile` applies to jobs that name no profile
+        "default_profile": "native",
+        "approved_roots": [],                     # when set, datasets and extra mounts must live under one of these
+        "agent": {"mode": "none"},                # none | advisory (written boundaries in briefs; NOT enforced)
+        "assign": {"experiments": {}, "tasks": {}},
+        "profiles": {
+            "native": {"runtime": "native"},
+            "restricted": {"runtime": "auto", "network": {"mode": "disabled"}},
+            "gpu-research": {"runtime": "auto", "gpu": True, "network": {"mode": "disabled"}},
+            "custom": {"runtime": "auto"},
+        },
+    },
 }
 
 GITIGNORE = """# research: the SQLite index is rebuilt automatically from the text files
@@ -133,8 +150,11 @@ hpc/incoming/
 
 
 def find_root(start: Optional[str] = None) -> Optional[str]:
+    """The directory to open as a project: where `.research/` lives, or, in shared-ledger mode, the source worktree
+    that reaches the shared ledger through its git repository (see workspace.py)."""
+    from . import workspace
     env = os.environ.get("RESEARCH_ROOT")
-    if env and os.path.isfile(os.path.join(env, RESEARCH_DIR, "config.yaml")):
+    if env and workspace.locate(env):
         return os.path.abspath(env)
     cur = os.path.abspath(start or os.getcwd())
     while True:
@@ -142,8 +162,10 @@ def find_root(start: Optional[str] = None) -> Optional[str]:
             return cur
         parent = os.path.dirname(cur)
         if parent == cur:
-            return None
+            break
         cur = parent
+    loc = workspace.linked_ledger(os.path.abspath(start or os.getcwd()))
+    return loc.source_root if loc else None
 
 
 def _atomic_write(path: str, text: str) -> None:
@@ -198,11 +220,14 @@ class Project:
     """Handle on one research project. Cheap to open; call close() or use as context manager."""
 
     def __init__(self, root: str, *, sync: bool = True, author: Optional[Dict[str, Optional[str]]] = None):
-        self.root = os.path.abspath(root)
-        self.rdir = os.path.join(self.root, RESEARCH_DIR)
-        if not os.path.isfile(os.path.join(self.rdir, "config.yaml")):
+        from . import workspace
+        self.root = os.path.abspath(root)            # the source tree: code, git, run working directories
+        self.location = workspace.locate(self.root)
+        if not self.location:
             raise NotInitialized(f"No research project at {self.root}",
                                  hint="Run `research init` (or 'Research: Initialize Project' in VS Code).")
+        self.ledger_root = self.location.ledger_root  # where .research/ lives; equals root in classic mode
+        self.rdir = os.path.join(self.ledger_root, RESEARCH_DIR)
         self.author = author or detect_author()
         self._tx_depth = 0
         self._suppress_export = False
@@ -391,6 +416,8 @@ class Project:
     def rel(self, path: str) -> str:
         """Project-relative path if inside the project, else absolute (portable storage form)."""
         ap = os.path.abspath(os.path.join(self.root, os.path.expanduser(path)))
+        if self.location.linked and (ap == self.rdir or ap.startswith(self.rdir + os.sep)):
+            return RESEARCH_DIR + ("/" + os.path.relpath(ap, self.rdir).replace(os.sep, "/") if ap != self.rdir else "")
         try:
             r = os.path.relpath(ap, self.root)
         except ValueError:
@@ -402,7 +429,11 @@ class Project:
     def abspath(self, stored: Optional[str]) -> Optional[str]:
         if not stored:
             return None
-        return stored if os.path.isabs(stored) else os.path.normpath(os.path.join(self.root, stored))
+        if os.path.isabs(stored):
+            return stored
+        if self.location.linked and (stored == RESEARCH_DIR or stored.startswith(RESEARCH_DIR + "/")):
+            return os.path.normpath(os.path.join(self.ledger_root, stored))
+        return os.path.normpath(os.path.join(self.root, stored))
 
     # ------------------------------------------------------------------ db helpers
     @contextlib.contextmanager

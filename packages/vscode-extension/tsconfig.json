@@ -2,14 +2,20 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "commonjs",
-    "lib": ["ES2022", "DOM"],
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
     "strict": true,
     "noImplicitAny": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "sourceMap": true,
     "outDir": "out",
-    "rootDir": "src"
+    "rootDir": "src",
+    "jsx": "react-jsx"
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

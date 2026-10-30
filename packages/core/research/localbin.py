@@ -22,8 +22,14 @@ SKIP_DIRS = {"__pycache__"}
 GITIGNORE_LINE = "bin/"
 
 
+def _ledger(root: str) -> str:
+    from . import workspace
+    loc = workspace.locate(root)
+    return loc.ledger_root if loc else root
+
+
 def bin_dir(root: str) -> str:
-    return os.path.join(root, ".research", "bin")
+    return os.path.join(_ledger(root), ".research", "bin")
 
 
 def launcher(root: str) -> str:
@@ -95,7 +101,7 @@ def _windows_launcher(python: str) -> str:
 
 
 def _ensure_gitignored(root: str) -> None:
-    gi = os.path.join(root, ".research", ".gitignore")
+    gi = os.path.join(_ledger(root), ".research", ".gitignore")
     try:
         text = open(gi, encoding="utf-8").read() if os.path.exists(gi) else ""
     except OSError:

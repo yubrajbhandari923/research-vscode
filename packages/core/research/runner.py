@@ -58,6 +58,37 @@ def _pump(src, *dsts) -> None:
                 pass
 
 
+def _sandbox_request(run_dir: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(os.path.join(run_dir, "sandbox.json"), encoding="utf-8") as f:
+            req = json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        raise RuntimeError(f"sandbox.json is unreadable ({e}); refusing to run unrestricted")
+    return req if (req.get("policy") or {}).get("runtime") != "native" else None
+
+
+def _sandboxed(req: Dict[str, Any], run_dir: str, command: str, cwd: Optional[str], run_id: str):
+    from . import isolation
+    pol, ctx = req["policy"], req["context"]
+    pf = isolation.preflight(pol, ctx, run_probe=bool(pol["enforcement"].get("verify_mounts", True)))
+    if not pf["allowed"]:
+        raise RuntimeError(pf["refusal"])
+    rt = isolation.RUNTIMES[pf["runtime"]]
+    mounts = isolation.plan(pol, ctx)
+    inside = "/workspace"
+    if cwd:
+        rel = os.path.relpath(os.path.realpath(cwd), os.path.realpath(ctx["source_root"]))
+        if not rel.startswith(os.pardir):
+            inside = "/workspace" + ("" if rel == "." else "/" + rel)
+    env = isolation.job_env(pol, {"RESEARCH_RUN_ID": run_id, "RESEARCH_RUN_DIR": "/run", "RESEARCH_IN_JOB": "1"})
+    argv, launch_env, cleanup = rt.argv(pol, mounts, command, inside, env)
+    summary = {"profile": req.get("profile"), "runtime": pf["runtime"],
+               "properties": {x["property"]: x["state"] for x in pf["properties"]}}
+    return argv, launch_env, None, cleanup, summary
+
+
 def run(run_dir: str, command: str, cwd: Optional[str] = None, tee: bool = False) -> int:
     run_dir = os.path.abspath(run_dir)
     os.makedirs(run_dir, exist_ok=True)
@@ -74,8 +105,21 @@ def run(run_dir: str, command: str, cwd: Optional[str] = None, tee: bool = False
                        "slurm_partition": env.get("SLURM_JOB_PARTITION")})
     out = open(os.path.join(run_dir, "stdout.log"), "ab")
     err = open(os.path.join(run_dir, "stderr.log"), "ab")
+    argv, cleanup, request = [shell, "-c", command], [], None
     try:
-        proc = subprocess.Popen([shell, "-c", command], cwd=cwd or None, env=env,
+        request = _sandbox_request(run_dir)
+        if request:
+            argv, env, cwd, cleanup, summary = _sandboxed(request, run_dir, command, cwd, run_id)
+            status["sandbox"] = summary
+    except Exception as e:   # fail closed: a restricted job is never run unrestricted
+        err.write(f"[research.runner] sandbox refused to start the job: {e}\n".encode())
+        out.close()
+        err.close()
+        write_status(run_dir, **{**status, "state": "failed", "exit_code": 126, "ended_at": _now(),
+                                 "error": str(e), "sandbox_refused": True})
+        return 126
+    try:
+        proc = subprocess.Popen(argv, cwd=None if request else (cwd or None), env=env,
                                 stdout=subprocess.PIPE if tee else out,
                                 stderr=subprocess.PIPE if tee else err,
                                 start_new_session=True)
@@ -121,6 +165,9 @@ def run(run_dir: str, command: str, cwd: Optional[str] = None, tee: bool = False
         t.join(timeout=5)
     out.close()
     err.close()
+    import shutil as _sh
+    for c in cleanup:
+        _sh.rmtree(c, ignore_errors=True)
     if cancelled["flag"]:
         state = "cancelled"
     else:

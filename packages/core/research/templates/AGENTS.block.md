@@ -30,6 +30,9 @@ the human to open the project in VS Code with the Research Panel extension, or t
 - Never rewrite history; supersede findings/decisions instead
 - Large outputs stay where produced; just register paths
 - Exit code 3 means a policy blocked you: read the hint, don't work around it
+- The effective rules (limits, review requirements, git/workspace mode) are in `.research/context/policy.md`; it is generated, so read it
+  rather than guessing. You cannot change policy settings (`research config set` refuses agents); ask the human.
+- In a git worktree workspace (`research workspace info`) stay on your branch; the research ledger is shared, so record through the CLI only
 
 ### Scientific practice
 - Read context in layers (`research current` → `task context` → `show <ID>`) and stop when you have enough. Search prior

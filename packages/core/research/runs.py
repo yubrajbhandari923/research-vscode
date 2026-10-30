@@ -145,6 +145,13 @@ def create_run(p: Project, experiment: str, command: Union[str, Sequence[str], N
            "user": os.environ.get("USER")}
     from .evidence import lockfiles
     env["lockfiles"] = lockfiles(p.root)  # environment reference at run time (hash prefixes)
+    if p.location.linked:   # shared-ledger mode: which workspace ran this, and the exact source it ran
+        from . import workspace
+        env["workspace"] = workspace.run_info(p)
+        if g["commit"]:
+            snap = workspace.snapshot_tree(p.root, run_id)
+            if snap:
+                env["workspace"]["snapshot"] = snap
     row = {
         "id": run_id, "experiment_id": exp_id, "label": label, "command": command_str(command),
         "working_dir": wd, "parameters": jdump(parameters or {}), "env": jdump({k: v for k, v in env.items() if v}),
@@ -250,11 +257,26 @@ def _new_exec_run(p: Project, experiment: str, command, backend: str, **kw: Any)
     return create_run(p, experiment, command=command, backend=backend, status="queued", **kw)
 
 
+def _sandbox_gate(p: Project, experiment: str, sandbox, task, datasets, reason, probe: bool = True):
+    """Resolve and enforce-check the job's sandbox BEFORE a run record exists, so a refused job leaves nothing behind."""
+    from . import sandbox as SB
+    res = SB.resolve(p, experiment=normalize_id(experiment, "EXP"), task=task, run_profile=sandbox,
+                     datasets=list(datasets or []), override_reason=reason)
+    if not res["chain"]:
+        return None, None      # nothing configured: the pre-existing native path, byte for byte
+    return res, SB.gate(p, res, probe=probe)
+
+
 def exec_run(p: Project, experiment: str, command, *, detach: bool = False, parameters=None, label=None,
-             working_dir=None, notes=None, override=None, tee: bool = True) -> Dict[str, Any]:
+             working_dir=None, notes=None, override=None, tee: bool = True, sandbox=None, task=None,
+             sandbox_datasets=None, sandbox_override_reason=None) -> Dict[str, Any]:
     """Create + execute a local run. Foreground by default (streams output), or detached."""
+    res, pf = _sandbox_gate(p, experiment, sandbox, task, sandbox_datasets, sandbox_override_reason)
     run = _new_exec_run(p, experiment, command, "local", parameters=parameters, label=label,
                         working_dir=working_dir or os.getcwd(), notes=notes, override=override)
+    if res:
+        from . import sandbox as SB
+        SB.attach(p, run["id"], res, pf)
     if detach:
         info = get_backend("local").submit(p, run, {})
         with p.tx():
@@ -270,9 +292,15 @@ def exec_run(p: Project, experiment: str, command, *, detach: bool = False, para
 
 
 def submit_run(p: Project, experiment: str, command, *, parameters=None, label=None, working_dir=None,
-               notes=None, override=None, **slurm_opts: Any) -> Dict[str, Any]:
+               notes=None, override=None, sandbox=None, task=None, sandbox_datasets=None, sandbox_override_reason=None,
+               **slurm_opts: Any) -> Dict[str, Any]:
+    # The login node is not the compute node: only the runner on the compute node can probe, and it refuses there too.
+    res, pf = _sandbox_gate(p, experiment, sandbox, task, sandbox_datasets, sandbox_override_reason, probe=False)
     run = _new_exec_run(p, experiment, command, "slurm", parameters=parameters, label=label,
                         working_dir=working_dir or os.getcwd(), notes=notes, override=override)
+    if res:
+        from . import sandbox as SB
+        SB.attach(p, run["id"], res, pf)
     try:
         info = get_backend("slurm").submit(p, run, slurm_opts)
     except Exception as e:

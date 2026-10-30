@@ -21,6 +21,13 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, supply an execution sandbox, or autonomously
 schedule your research. There is no required cloud service.
 
+## What's new in this branch
+
+Shared research ledger with git worktrees for experiments (`research ledger enable`, `research workspace …`), typed settings with explanations
+(`research config options`, `research config explain agent_policy.max_runs_without_synthesis`), optional job isolation (`research sandbox …`, `run exec --sandbox`), selective promotion of experiment code
+into `main` (`research promote …`), and a Control Center in the extension. All are opt-in; existing projects work unchanged. See
+[SPEC §13A and §14D–§14F](docs/SPEC.md) and the [changelog](CHANGELOG.md).
+
 ## Install
 
 The core requires Python 3.8 or newer. Python runtime dependencies are vendored or in the standard

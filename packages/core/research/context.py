@@ -466,7 +466,7 @@ def create_checkpoint(p: Project, title: Optional[str] = None, goal: Optional[st
     if commit if commit is not None else bool((p.config.get("git") or {}).get("commit_checkpoints")):
         # log first so the event itself is part of the commit (no dirty events.jsonl right after a snapshot)
         p.event("checkpoint", c["id"], "committed", f"{c['id']}: .research/ committed to git")
-        sha = gitinfo.snapshot(p.root, f"research: {c['id']} {vals['title']}")
+        sha = gitinfo.snapshot(p.ledger_root, f"research: {c['id']} {vals['title']}")
     out = checkpoint_detail(p, c["id"])
     out["snapshot_commit"] = sha
     return out
@@ -609,4 +609,9 @@ def write_current_md(p: Project) -> str:
     strip = lambda s: "\n".join(l for l in (s or "").splitlines() if not l.startswith(("> Generated ", "Git: `")))
     if strip(old) != strip(text):
         _atomic_write(path, text)
+    try:   # the effective-policy summary is regenerated whenever the context is
+        from . import registry
+        registry.write_policy(p)
+    except Exception:
+        pass
     return path

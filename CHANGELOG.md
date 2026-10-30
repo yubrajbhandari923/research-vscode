@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — shared ledger and experiment workspaces (Phase 1 of the architecture upgrade)
+
+- `research ledger enable|status|relink`: opt-in shared-ledger mode (dry run by default, backup kept, record counts verified). One ledger on branch `research/ledger`, reachable from every worktree.
+- `research workspace create|attach|list|show|link-task|assign|archive|open`: experiment branches/worktrees with safe archival; RPC `workspaces`/`workspace_*`, MCP `workspace_list`.
+- `Project` separates the source tree (`root`) from the ledger (`ledger_root`); runs record workspace, base revision and a pinned snapshot of the exact working tree. Classic projects are unchanged.
+- Workspace-aware dispatch (tasks linked to a workspace dispatch into it, briefs say so) and HPC manifests pin the exact source snapshot.
+- **Typed settings registry** (`research config options|explain|set|reset`, RPC `settings*`): validation, inheritance display, YAML diff preview, comment-preserving edits, agent refusal for policy keys, audit events, generated `.research/context/policy.md`, `AGENTS.md` pointer.
+- **Optional job isolation** (`research sandbox …`, `run exec|submit --sandbox`): profiles, precedence, `userns` and `apptainer` runtimes, canary verification, fail-closed refusal, mount safety, run provenance. Native is unchanged. Remote bundles refuse rather than run unrestricted.
+- **Selective promotion** (`research promote …`, RPC `promotion*`): candidate branches built from the current main with only the chosen commits or paths; tests bound to the candidate head; independent review; human approval bound to the head; human-confirmed fast-forward-only integration. Never forces, rebases, deletes or pushes.
+- **Control Center** (React, `Research: Open Control Center`): Home / Work / Research / Settings, accessible `?` help on every setting, typed editors, diff-and-reason review, workspace and promotion workflows. `npm run test:webview`; screenshots in `docs/screens/control-center/`.
+- Not yet: promotion hunk selection, sandboxed remote bundles, verification inside real VS Code. See `docs/SPEC.md` §13A, §14D–§14F.
+
 ## 1.1.0 — Scientist Guide v2
 
 - **Quarto Scientist Guide** (`research guide quarto init|prepare|build|preview|doctor`, `guide chapter add`): one set of `.qmd` chapters rendered as a *scientific edition* (no Research OS identifiers) and a *researcher edition* (same prose, exact evidence panels, legacy guide appendix). Opt-in; Quarto is needed only to render. Rendering never executes code.

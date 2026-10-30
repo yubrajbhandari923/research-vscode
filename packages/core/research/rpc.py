@@ -47,7 +47,8 @@ class Server:
         return self.p
 
     def initialized(self) -> bool:
-        return os.path.isfile(os.path.join(self.root, ".research", "config.yaml"))
+        from . import workspace
+        return workspace.locate(self.root) is not None
 
     # ------------------------------------------------------------------ methods
     def m_ping(self) -> Dict[str, Any]:
@@ -58,6 +59,74 @@ class Server:
         self.p = Project.init(self.root, name=name, goal=goal)
         self.p.author = self.author
         return {"root": self.root, "name": self.p.name}
+
+    def m_control(self, page: str) -> Dict[str, Any]:
+        from . import control
+        fn = {"home": control.home, "work": control.work, "research": control.research}.get(page)
+        if not fn:
+            raise ResearchError(f"unknown control page {page!r}")
+        return fn(self.project(sync=False))
+
+    def m_sandbox_preview(self, experiment: Optional[str] = None, task: Optional[str] = None, profile: Optional[str] = None,
+                          datasets: Optional[List[str]] = None) -> Dict[str, Any]:
+        from . import sandbox as SB
+        return SB.preview(self.project(sync=False), experiment=experiment, task=task, profile_name=profile, datasets=datasets)
+
+    def m_promotions(self, closed: bool = False) -> List[Dict[str, Any]]:
+        from . import promotion
+        return promotion.list_candidates(self.project(sync=False), closed)
+
+    def m_promotion_diff(self, id: str) -> Dict[str, Any]:
+        from . import promotion
+        return promotion.diff(self.project(sync=False), id)
+
+    def m_promotion_action(self, id: str, action: str, note: Optional[str] = None, confirm: bool = False,
+                           verdict: Optional[str] = None) -> Dict[str, Any]:
+        """verify | review | approve | integrate | abandon. The core refuses agents and unconfirmed integration."""
+        from . import promotion as PR
+        p = self.project()
+        if action == "verify":
+            return PR.verify(p, id)
+        if action == "review":
+            return PR.review(p, id, verdict or "comment", note)
+        if action == "approve":
+            return PR.approve(p, id, note)
+        if action == "integrate":
+            return PR.integrate(p, id, confirm)
+        if action == "abandon":
+            return PR.abandon(p, id, note)
+        raise ResearchError(f"unknown promotion action {action!r}")
+
+    def m_settings(self, category: Optional[str] = None, search: Optional[str] = None) -> Dict[str, Any]:
+        from . import registry
+        return registry.describe(self.project(sync=False), category, search)
+
+    def m_settings_preview(self, changes: Dict[str, Any], scope: str = "project", remove: bool = False) -> Dict[str, Any]:
+        from . import registry
+        return registry.preview(self.project(sync=False), changes, scope, remove)
+
+    def m_settings_apply(self, changes: Dict[str, Any], scope: str = "project", reason: Optional[str] = None,
+                         confirm: bool = False, remove: bool = False) -> Dict[str, Any]:
+        from . import registry
+        return registry.apply(self.project(), changes, scope, reason, confirm, remove)
+
+    def m_workspace_info(self) -> Dict[str, Any]:
+        from . import workspace as W
+        return W.info(self.project(sync=False))
+
+    def m_workspaces(self, archived: bool = False) -> List[Dict[str, Any]]:
+        from . import workspace as W
+        return W.list_workspaces(self.project(sync=False), include_archived=archived)
+
+    def m_workspace_create(self, experiment: str, name: Optional[str] = None, base: Optional[str] = None) -> Dict[str, Any]:
+        from . import workspace as W
+        return W.create(self.project(), experiment, name=name, base=base)
+
+    def m_workspace_archive(self, id: str, dry_run: bool = True, reason: Optional[str] = None) -> Dict[str, Any]:
+        """Archival removes a directory, so the impact preview is the default."""
+        from . import workspace as W
+        p = self.project()
+        return W.archive_impact(p, id) if dry_run else W.archive(p, id, reason=reason)
 
     def m_resume(self) -> Dict[str, Any]:
         return C.resume_context(self.project())

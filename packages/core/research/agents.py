@@ -188,7 +188,8 @@ def task_brief_md(c: Dict[str, Any]) -> str:
 
 
 def build_brief(p: Project, role: str, target: Optional[str] = None, objective: Optional[str] = None,
-                instructions: Optional[str] = None, required_skills_md: str = "") -> str:
+                instructions: Optional[str] = None, required_skills_md: str = "",
+                workspace: Optional[Dict[str, Any]] = None) -> str:
     from . import context as C
     from . import plans as P
     from .views import show
@@ -202,6 +203,21 @@ def build_brief(p: Project, role: str, target: Optional[str] = None, objective: 
     L += ["## Your role", "", guide.replace("{id}", tid or "<ID>"), ""]
     if required_skills_md:
         L += [required_skills_md, ""]
+    if workspace:
+        L += ["## Workspace", "",
+              f"Work only in `{workspace['path']}` (branch `{workspace['branch']}`, base `{str(workspace.get('base_rev'))[:8]}`, "
+              f"workspace {workspace['id']}). The research ledger is shared: record everything through the `research` CLI, "
+              "never by editing `.research/` files. Do not switch branches, merge into `main`, or push.", ""]
+    from . import registry
+    L += ["## Effective policy", "",
+          f"Rules in force are in `.research/context/policy.md` (settings fingerprint `{registry.fingerprint(p)}`). Key limits: "
+          f"{p.policy.get('max_runs_without_synthesis')} runs before synthesis, {p.policy.get('max_failed_runs_without_review')} "
+          "failed runs before review. You cannot change settings.", ""]
+    from . import sandbox as _sb
+    if _sb.agent_boundary(p)["mode"] == "advisory":
+        L += ["## Filesystem boundaries (advisory)", "",
+              "Write only inside the workspace shown above and this run's `outputs/` directory; do not read or modify other projects, "
+              "datasets or credentials. Research OS does **not** enforce this for your shell: it is an instruction, not a sandbox.", ""]
     if objective:
         L += ["## Objective", "", objective.strip(), ""]
     if instructions:
@@ -280,7 +296,12 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     hb = H.brief_md(p)
     if hb:
         instructions = (instructions + "\n\n" if instructions else "") + hb
-    brief = build_brief(p, role, target, objective, instructions, required_md)
+    ws = None
+    if target and type_of(target) == "task":
+        from . import workspace as W
+        ws = W.for_task(p, normalize_id(target, "T"))
+    src_root = ws["path"] if ws else p.root
+    brief = build_brief(p, role, target, objective, instructions, required_md, ws)
     stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + __import__("uuid").uuid4().hex[:12]
     label = normalize_id(target) if target else role
     path = p.path("cache", "dispatch", f"{label.replace('/', '-')}-{role}-{stamp}.md")
@@ -302,7 +323,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     if prof.get("prompt_flag"):
         argv.append(prof["prompt_flag"])
     argv.append(prompt)
-    env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": p.root, "RESEARCH_BRIEF": rel}
+    env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": src_root, "RESEARCH_BRIEF": rel}
     if mdl:
         env["RESEARCH_AGENT_MODEL"] = str(mdl)
     if sk["required"]:
@@ -314,10 +335,11 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
         hr = H.resolve(p)
         snap = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "project": p.name, "project_root": p.root, "task": label if target else None,
                 "role": role, "strategy": policy["strategy"], "strategy_origin": policy["origin"],
-                "fingerprint": policy["fingerprint"], "class": policy["class"], "level": policy["level"], "profile": name,
+                "fingerprint": policy["fingerprint"], "settings_fingerprint": __import__("research.registry", fromlist=["x"]).fingerprint(p), "class": policy["class"], "level": policy["level"], "profile": name,
                 "provider": cmd, "model": mdl, "why": policy["why"], "overrides": policy["overrides"],
                 "independent": policy["independent"], "harness": {"name": hr["name"], "fingerprint": hr["fingerprint"]},
-                "revision": gitinfo.info(p.root).get("commit"), "brief": rel, "status": "prepared",
+                "revision": gitinfo.info(src_root).get("commit"), "brief": rel,
+                "workspace": ({k: ws.get(k) for k in ("id", "branch", "base_rev", "path")} if ws else None), "status": "prepared",
                 "skills": [{k: r[k] for k in ("name", "level", "sha256")} for r in sk["required"]],
                 "usage": {"status": "unavailable", "note": "not exposed by the agent CLI; never recorded as zero"}}
         _atomic_write(path[:-3] + ".policy.json", json.dumps(snap, indent=1, sort_keys=True, default=str) + "\n")
@@ -336,7 +358,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
         execution_id, argv = prepare(p, normalize_id(target, "T"), argv, env)
     return {"state": "prepared", "execution_id": execution_id,
             "skills": {"required": [{k: r[k] for k in ("name", "level", "sha256")} for r in sk["required"]],
-                       "recommended": sk["recommended"]}, "provider_argv": provider_argv, "role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "brief": rel, "policy": snap,
+                       "recommended": sk["recommended"]}, "provider_argv": provider_argv, "role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "cwd": src_root, "workspace": ws and ws["id"], "brief": rel, "policy": snap,
             "preflight": preflight,
             "target": label if target else None, "headless": headless, "usage_parser": prof.get("usage_parser"),
             "available": bool(shutil.which(cmd)),
@@ -354,7 +376,7 @@ def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None)
         raise ResearchError("run_headless needs a dispatch prepared with headless=True")
     t0 = time.time()
     try:
-        proc = subprocess.Popen(d["argv"], cwd=p.root, env={**os.environ, **d["env"]},
+        proc = subprocess.Popen(d["argv"], cwd=d.get("cwd") or p.root, env={**os.environ, **d["env"]},
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                                 start_new_session=os.name == "posix")
     except OSError as e:

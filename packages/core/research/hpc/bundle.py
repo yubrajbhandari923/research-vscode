@@ -139,6 +139,13 @@ def manifest(p: Project, exp_id: str, run_ids: List[str], *, cluster: Optional[D
     exp = p.get("experiment", exp_id)
     g = gitinfo.info(p.root)
     runs = [get_run(p, r) for r in run_ids]
+    wsinfo = None
+    if p.location.linked:
+        from .. import workspace
+        wsinfo = workspace.run_info(p)
+        snap = workspace.snapshot_tree(p.root, f"bundle-{exp_id}-{now_iso().replace(':', '')}")
+        if snap:
+            wsinfo["snapshot"] = snap
     return {
         "bundle_schema": BUNDLE_SCHEMA,
         "research_version": __version__,
@@ -163,6 +170,7 @@ def manifest(p: Project, exp_id: str, run_ids: List[str], *, cluster: Optional[D
             "source": "working tree, including uncommitted and untracked files (a commit alone is not a "
                       "snapshot of what ran)",
             "created_at": now_iso(), "created_by": p.author.get("author_name") or p.author.get("author_type"),
+            "workspace": wsinfo,
         },
         "datasets": _dataset_refs(exp),
         "resources": resources or {},

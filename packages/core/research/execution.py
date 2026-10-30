@@ -40,7 +40,9 @@ def launch(root, identity):
             record = json.load(f)
         task = record['task']
     # Lock ordering: task ownership before any short project transaction.
-    with durability.lock(os.path.join(root, '.research', 'locks', task + '.execution'), blocking=False) as fd:
+    with Project(root, sync=False) as _p:
+        lock_path = os.path.join(_p.rdir, 'locks', task + '.execution')
+    with durability.lock(lock_path, blocking=False) as fd:
         with Project(root) as p:
             with open(filename, encoding='utf8') as f:
                 record = json.load(f)

@@ -74,6 +74,8 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     await model.refresh();
   });
   reg('research.resume', () => panels.openResume());
+  reg('research.openControlCenter', (page?: string, target?: string) => panels.openControlCenter(page, target));
+  reg('research.openSettings', () => panels.openControlCenter('settings'));
   reg('research.open', async (a: any, side?: boolean) => {
     let id = idArg(a);
     if (!id) {

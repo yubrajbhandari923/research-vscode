@@ -2257,6 +2257,163 @@ experiment and the bundle carries them in `manifest.json` for your own script to
 
 ---
 
+## 14D. Shared ledger and experiment workspaces (opt-in)
+
+Classic projects keep `.research/` beside the code and are unchanged. `research ledger enable` moves a git project to
+**shared-ledger mode**: one ledger lives in its own worktree on branch `research/ledger`, and every source worktree of the
+repository reaches it. Implemented in `workspace.py`.
+
+| Concept | Where it lives | Portable? |
+|---|---|---|
+| Project identity | `<ledger>/.research/project.json` (`project_id`) | yes |
+| Ledger root | `<git common dir>/research/ledger.json` | no (machine-local, never tracked) |
+| Workspace records (`WS-001` …) | `<ledger>/.research/workspaces.jsonl`, append-only, folded on read; no paths | yes |
+| Workspace → directory | `<git common dir>/research/workspaces.json` | no |
+| A worktree's workspace id | `<worktree git dir>/research-workspace` (survives moving the directory) | no |
+| Source repository identity | root commit hash of the repository | yes |
+
+`Project` now separates **`root`** (the source tree: git, run working directories, `AGENTS.md`, guide) from
+**`ledger_root`** / **`rdir`** (where `.research/` lives). They are equal in classic mode. Paths inside the ledger are stored as
+`.research/...`; all other stored paths stay relative to the source root. Discovery is automatic from the CLI, RPC and MCP:
+`find_root` walks up for `.research/config.yaml` (classic wins), otherwise asks git (`--git-common-dir`, which also covers `.git`
+being a file in a linked worktree) for the link.
+
+Invariants: one ledger, one SQLite index, one counter per prefix, so ids cannot collide; all worktrees use the existing write
+lock, journal and index; history survives deleting any experiment branch (the ledger is not on it); `research rebuild` is unchanged.
+
+**Enabling** (`research ledger enable`, dry run by default; `--apply` performs it): refuses when `.research/` files are tracked by
+git, when a transaction journal is unfinished, or when the target exists. It creates the ledger branch and worktree, copies
+canonical records (not the index, locks or `bin/`), rebuilds the index there and compares per-table record counts with the
+original, then links and renames the original to `.research.pre-ledger`. Any failure before the link removes what was created.
+Nothing is committed. To undo: remove the ledger worktree, delete `ledger.json`, rename the backup back.
+
+**Workspaces** (`research workspace create|attach|list|show|link-task|assign|archive|open`; RPC `workspaces`, `workspace_create`,
+`workspace_archive`; MCP `workspace_list`). `create EXP-041` makes branch `exp/EXP-041-<title>` and a worktree
+(`<repo>-experiments/EXP-041`) from `HEAD` or `--base`; it never touches an existing branch. `archive` removes only the
+directory: it refuses while runs are queued/running or while tracked changes or untracked files exist, pins the head as
+`refs/research/archive/WS-n`, never uses `--force`, never deletes the branch. `--dry-run` shows the impact.
+
+**Run provenance.** In shared mode each run records `env.workspace`: workspace id, branch, head, base revision, experiment, and a
+`snapshot` of the exact working tree (tracked + untracked, not ignored) as a commit pinned by `refs/research/snapshots/<RUN>`.
+It is built with a temporary index; the real index, HEAD and files are untouched.
+
+**Not implemented yet:** the selective-promotion workflow, a workspace view in the extension, workspace data in dispatch
+briefs, snapshot export into HPC bundles, and concurrent-process tests beyond the id-uniqueness test. Windows is unverified.
+
+---
+
+## 14E. Typed settings and optional job isolation
+
+### Settings registry (`registry.py`)
+The YAML layers (defaults < machine file < project file) remain canonical. `registry.OPTIONS` adds, for each user-facing key: type,
+allowed values, range, category, `help`, `why`, `effect`, risk (`normal` | `policy` | `risky`), scopes, files affected, and a
+dependency. Defaults are read from `DEFAULT_CONFIG`, never repeated; a test checks that every option exists there with the right type and
+has real help. `describe` returns effective value, default, source layer and inheritance; `preview` returns the exact YAML diff and
+writes nothing; `apply` validates, refuses `policy`/`risky` keys for agents, requires `confirm` for `risky`, edits only the affected lines
+(comments and unrelated keys survive), writes the machine file for `--scope machine`, records a `config` event with old value, new value
+and reason, then regenerates `.research/context/policy.md`. `reset` removes the override (and an emptied parent block).
+CLI: `research config options|explain|set|reset [--dry-run] [--scope machine] [--confirm] [--reason]`; RPC `settings`,
+`settings_preview`, `settings_apply`. Keys without an option still work in YAML; they just have no form.
+
+Agent context: `policy.md` (generated, regenerated with `current.md` and on every change) lists effective settings by category with their
+help text and a "Verified now" section of observed facts. `AGENTS.md`'s managed block tells agents to read it and that they cannot change
+policy. Dispatch briefs point at it and record `settings_fingerprint` in the dispatch policy snapshot, so a later change does not alter a
+running session's recorded policy.
+
+### Job isolation (`isolation.py`, `sandbox.py`) — optional; native stays the default
+A **profile** (`sandbox.profiles.<name>`) chooses a runtime, image, filesystem access (source `read_only|read_write|hidden`, read-only
+datasets, extra read-only/read-write mounts, temporary scratch; home and ledger are always hidden), network `enabled|disabled`, GPU, an
+environment allowlist, and `enforcement`. Built-ins: `native`, `restricted`, `gpu-research`, `custom`. Precedence, highest first:
+run (`--sandbox`) > task > experiment > cluster > project default (only while `sandbox.enabled`) > native. A restrictive profile is
+mandatory: an agent cannot choose `native` over it, a human needs `--sandbox-override-reason`, and the override is logged and stored
+in the run.
+
+Each requested restriction has a state: `verified` (a canary under the same runtime and mount layout observed it holding),
+`enforceable` (runtime present, not probed), or `unavailable`. If any requested restriction is unavailable, or the self-test fails, the
+job is **refused before a run record exists** (`PolicyBlocked`, exit 3). The runner repeats the check at job start (compute nodes
+included) and exits 126 with `sandbox_refused`; there is no fallback to native.
+
+Runtimes: `native`; `userns` (unprivileged user+mount+pid(+net) namespaces and `pivot_root`; kernel-dependent, **not** a defence
+against a hostile program that also exploits the kernel; the job sees itself as uid 0 and `/usr`, `/bin`, `/lib*` and a few `/etc` files
+read-only); `apptainer` (`--containall --cleanenv --no-home --no-mount bind-paths`, explicit `--bind`, `--network none`, `--nv`).
+Docker and Podman are not implemented; `register_runtime` is the extension point.
+
+Mounts: host paths must be absolute, free of `..`, existing, and are resolved with `realpath` before binding. Refused: `/`, the home
+directory, credential directories (`.ssh`, `.aws`, `.gnupg`, `.config/gcloud`, `.kube`, …, even through symlinks), the research ledger or
+any parent of it, and anything outside `sandbox.approved_roots` when set. Job layout: `/workspace` (source), `/data/<name>` (datasets,
+read-only), `/outputs` (`<run>/outputs`), `/run` (the run directory: logs, `metrics.jsonl`, `status.json`), `/tmp` (tmpfs). The job writes
+results through run-directory files; it has no access to the ledger or index.
+
+Provenance: `run.env.sandbox` stores the profile, scope chain, override, runtime and version, image identity (size, mtime, sha256 up to
+1 GiB), resolved mounts, per-property state, and the full policy. `sandbox.json` in the run directory is what the runner reads.
+
+CLI: `research sandbox list|show|doctor|verify|preview`; `research run exec|submit --sandbox P --sandbox-dataset PATH`.
+
+**Agents are not sandboxed.** Job isolation does not restrict an agent's shell or SSH session. `sandbox.agent.mode: advisory` only writes
+boundaries into the brief; `enforced` is unsupported and not accepted.
+
+**Verified here:** `userns` on WSL2 (kernel 6.18, util-linux 2.39) with disposable fixtures: read-only source, read-only dataset, writes
+only to outputs, protected files and fake credentials invisible, ledger invisible, clean environment, no network interfaces, isolated pid
+namespace. **Not verified:** Apptainer or any site SLURM container plugin (not installed here; its argv construction and refusal
+paths are tested with a fake executable only), GPU passthrough, behaviour on other kernels, and root/administrator-configured mounts.
+**Not implemented:** sandboxing of remote bundle execution. `hpc submit` refuses (exit 3) when a profile applies to the cluster, rather
+than run unrestricted.
+
+---
+
+## 14F. Selective promotion into main
+
+`promotion.py`; records in `.research/promotions.jsonl` (append-only, folded on read, no machine paths). Requires shared-ledger mode.
+Scientific success, technical correctness, reusability, integration-readiness and promotion are reported as **separate** values
+(`classification`; `null` means not known); an unsuccessful experiment stays fully documented and simply never becomes integration-ready.
+
+1. `research promote changes WS-n` lists the workspace's commits and files (uncommitted work is flagged: it cannot be promoted).
+2. `prepare WS-n --commit SHA… | --path P…` creates `promote/PROMO-n-…` in its own worktree (`<repo>-promotions/PROMO-n`) from the **current**
+   main and applies only the selection (`cherry-pick -x`, or `checkout <workspace head> -- paths` committed once). Paths must be relative,
+   free of `..`, outside `.research`, and committed. The workspace and main are untouched. A failed preparation removes only the branch and
+   worktree it just created.
+3. `diff` is exactly `main...candidate`. `verify` runs `promotion.test_command` in the candidate and binds the result to its head commit.
+4. Gates: tests passed for the **current** head; scientific evidence (the experiment has a supported finding; `promotion.require_supported_finding`);
+   implementation `review` by someone other than the preparer (agents may review) and only after passing tests; `approve` by a **human** only,
+   bound to the head commit: any later commit makes the approval `stale`.
+5. `integrate --confirm` (human only) runs `git merge --ff-only` in main's worktree. It is refused when a gate is open, main's worktree has
+   uncommitted changes, or main moved since preparation (prepare again from the new main). It never forces, rebases, deletes branches or pushes;
+   it records the integration commit, main's previous tip and the evidence. Nothing in this system merges into main otherwise.
+
+Surfaces: CLI `research promote …`; RPC `promotions`, `promotion_diff`, `promotion_action`; the Work page's Promotion candidates dialog
+(gates, patch, actions; Merge stays disabled until approved and the patch is acknowledged). Settings: `promotion.main_branch`,
+`promotion.test_command`, `promotion.test_timeout_seconds`, `promotion.require_supported_finding`.
+Not implemented: hunk-level selection, running the candidate's tests inside a sandbox profile, non-fast-forward integration strategies,
+automatic cleanup of promotion worktrees (they are kept), push or pull-request creation.
+
+---
+
+## 13A. Control Center (React)
+
+A reusable React/TypeScript frontend (`packages/vscode-extension/src/webview/`, bundle `media/app.js`, styles `media/app.css` on top of the
+VS Code theme variables). It talks only to a `Host` interface (`call`, `openEntity`, `openDoc`, `getState`, `setState`); `vscodeHost` implements it
+with webview messages, and a browser host could implement it over HTTP without touching the pages. The extension relays an allow-listed set of RPC
+methods (`control`, `settings*`, `workspace*`, `sandbox_preview`, `promotion*`); everything else is refused. Command: **Research: Open Control Center**
+(`research.openControlCenter`); the older Home, detail and Agent-setup panels are unchanged.
+
+Four areas. **Home**: attention items (synthesis due, unreviewed failures, findings awaiting review, blocked tasks, unapproved hooks, missing workspaces,
+promotions in flight), each opening its workflow; next task; runs in progress; recent findings. **Work**: plans/tasks, workspaces (create, archive with
+an impact preview), promotion candidates, execution profiles with the agent-boundary statement, recent runs. **Research**: experiments with run and
+unsynthesized counts, findings, questions, decisions. **Settings**: every registry option by category or search, with a `?` explaining what it does,
+why, what changes, default, current value and source, files affected and whether a human is required; typed controls; inherited/default/project/machine
+badges; per-setting reset; a diff-and-reason review dialog before any write.
+
+Help (`?`): opens on hover or keyboard focus, stays open when clicked (also touch), closes on Escape or outside click, and opens below the icon so the control
+stays visible. Accessibility: tablist with roving tabindex and arrow keys, labelled controls, `role=switch`, live regions for loading and errors, focus-trapped
+dialogs that restore focus, VS Code theme variables (light, dark, high contrast).
+
+Aggregations are produced by the core (`control.py`, RPC `control`), not by the UI. **Verified:** six interaction tests in jsdom against the real Python core
+(`npm run test:webview`: help behaviour, validation, diff review, save, restart persistence, reset, search, tab navigation, promotion gates) and screenshots in
+light and dark themes (`docs/screens/control-center/`, produced by `scripts/preview-control.mjs` with headless Chrome). **Not verified:** inside a running
+VS Code window (`npm run test:ext` needs a VS Code download that is unavailable here), Remote SSH, high-contrast themes, and screen-reader output.
+
+---
+
 ## 15. Safety guarantees
 
 1. **Never deletes or moves user data.** Artifacts are references. `rebuild` backs up the DB before replacing it.
@@ -2665,7 +2822,7 @@ The [release review](RELEASE_1_0_0_REVIEW.md) is the current issue and verificat
 
 #### Core
 
-- **ID collisions across git branches.** Counters are local. Two branches can create the same ID. Sync/rebuild now refuses duplicates. Resolve each front-matter ID and its references; renaming a file alone is insufficient. A future option is branch-safe ids (e.g. a short hash suffix).
+- **ID collisions across git branches (classic mode).** Counters are local to each `.research/`. Two branches can create the same ID; shared-ledger mode (§14D) removes this. Sync/rebuild now refuses duplicates. Resolve each front-matter ID and its references; renaming a file alone is insufficient. A future option is branch-safe ids (e.g. a short hash suffix).
 - **Hand edits to `run.json` and the JSONL files are not re-imported** (they are append-only records). Edit runs through
   `research run update`. A hand-edited `run.json` is only read when the run directory is unknown to the index
   (fresh clone or rebuild).

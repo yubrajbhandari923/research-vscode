@@ -12,3 +12,4 @@ build/
 examples/alpha-sweep/demo-project/
 dist/*
 !dist/.gitkeep
+packages/vscode-extension/media/app.js

@@ -164,3 +164,12 @@ These are intentional correctness changes; existing records are not rewritten to
 For an unreadable SQLite index, stop clients and back up the project before moving the index aside.
 Do not delete canonical records, logs or journals as an automatic repair step. See the README and
 review for remaining crash-consistency and concurrency limitations.
+
+
+## Enabling the shared ledger (optional)
+
+Nothing about existing projects changes unless you opt in. `research ledger enable` is a dry run that lists every step and blocker (tracked
+`.research/` files, an unfinished journal, an existing target). `--apply` creates branch `research/ledger` and its worktree, copies the canonical
+records, rebuilds the index there and compares per-table counts with the original, links the repository, and renames the original `.research/` to
+`.research.pre-ledger` (kept; nothing is deleted). Any failure before linking removes only what was created. To undo: `git worktree remove <ledger>`,
+delete `<git common dir>/research/ledger.json`, rename `.research.pre-ledger` back to `.research`. Nothing is committed for you.

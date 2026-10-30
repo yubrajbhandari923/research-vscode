@@ -248,6 +248,15 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
     cluster = C.get(p, cluster_name)
     exp_id = str(normalize_id(experiment, "EXP"))
     exp = p.get("experiment", exp_id)
+    from .. import sandbox as SB
+    from ..util import PolicyBlocked
+    sb = SB.resolve(p, experiment=exp_id, cluster=cluster["name"])
+    if sb["policy"]["runtime"] != "native":   # fail closed: remote bundles have no host-path mapping for mounts yet
+        raise PolicyBlocked(f"Sandbox profile {sb['profile']!r} applies to this job ({sb['scope']} policy), but remote bundle "
+                            "execution cannot enforce it yet: bundle runs would use cluster paths that the profile does not map.",
+                            hint="Nothing was submitted and the job will not run unrestricted. Use `research run submit` on the "
+                                 "cluster's own login node, or clear the assignment (research config reset …) after deciding "
+                                 "that native execution is acceptable.")
     paths = C.paths(p, cluster)
     merged = C.check_resources(cluster, resources or {})
     ssh = connect(cluster)

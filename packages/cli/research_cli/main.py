@@ -362,6 +362,199 @@ def print_task(task: Dict[str, Any]) -> None:
     kv("author", author(task))
 
 
+# ----------------------------------------------------------------------------- shared ledger and workspaces
+
+def cmd_ledger(a) -> int:
+    from research import workspace as W
+    root = os.path.abspath(a.root or os.getcwd())
+    act = a.action
+    if act == "status":
+        loc = W.locate(root)
+        if not loc:
+            print(dim("not a research project"))
+            return 1
+        ident = W.project_identity(os.path.join(loc.ledger_root, ".research"))
+        r = {"mode": "shared-ledger" if loc.linked else "classic", "ledger_root": loc.ledger_root,
+             "project_id": (ident or {}).get("project_id"), "source_root": loc.source_root}
+        if a.json:
+            out_json(r)
+        else:
+            kv("mode", r["mode"])
+            kv("ledger", r["ledger_root"])
+            kv("project id", r["project_id"] or "—")
+        return 0
+    if act == "relink":
+        if not a.path:
+            raise ResearchError("relink needs the new ledger path")
+        r = W.relink(root, a.path)
+        out_json(r) if a.json else print(green("✓ ") + f"ledger now {r['ledger_root']}")
+        return 0
+    plan = W.plan_enable(root, a.path)
+    if not a.apply:
+        if a.json:
+            out_json(plan)
+            return 0 if plan["ok"] else 1
+        print(bold("Enable shared ledger (dry run — nothing changed)"))
+        for c in plan["changes"]:
+            print("  • " + c)
+        for n in plan["notes"]:
+            print(dim("  " + n))
+        for pr in plan.get("problems", []):
+            print(yellow("  ✗ " + pr))
+        print(dim("\nRe-run with --apply to perform exactly these steps.") if plan["ok"] else "")
+        return 0 if plan["ok"] else 1
+    r = W.enable(root, a.path)
+    if a.json:
+        out_json(r)
+    else:
+        print(green("✓ ") + f"shared ledger at {r['ledger_root']}  ({sum(r['records'].values())} records verified)")
+        print(dim(f"  original .research kept at {r['backup']}"))
+    return 0
+
+
+def _ws_row(w) -> str:
+    flags = ("dirty " if w.get("dirty") else "") + (f"{len(w['active_runs'])} running " if w["active_runs"] else "") \
+        + ("" if w["present"] or w["status"] == "archived" else "MISSING ")
+    return f"{w['id']}  {w['status']:<8} {w.get('branch') or '—':<36} {w.get('experiment') or '—':<8} {flags.strip()}"
+
+
+def cmd_workspace(a, p) -> int:
+    from research import workspace as W
+    act = a.action
+    if act == "info":
+        r = W.info(p)
+    elif act == "create":
+        r = W.create(p, a.target, name=a.name, base=a.base, path=a.path_)
+    elif act == "attach":
+        r = W.attach(p, a.target, experiment=a.experiment)
+    elif act == "list":
+        r = W.list_workspaces(p, include_archived=a.all)
+        if not a.json:
+            for w in r:
+                print(_ws_row(w))
+            if not r:
+                print(dim("no workspaces — `research workspace create EXP-001` makes one"))
+            return 0
+    elif act == "show":
+        r = W.show(p, a.target)
+    elif act == "link-task":
+        r = W.link_task(p, a.target, a.task)
+    elif act == "assign":
+        r = W.assign(p, a.target, a.agent_name)
+    elif act == "archive":
+        r = W.archive_impact(p, a.target) if a.dry_run else W.archive(p, a.target, reason=a.reason)
+    else:  # open
+        s = W.show(p, a.target)
+        if not s["present"]:
+            raise ResearchError(f"{a.target} has no directory on this machine")
+        print(s["path"])
+        return 0
+    out_json(r) if a.json else print(json.dumps(r, indent=2, default=str))
+    return 0
+
+
+def cmd_sandbox(a, p) -> int:
+    from research import sandbox as SB
+    act = a.action
+    if act == "list":
+        r = [SB.summary(p, n) for n in SB.profile_names(p)]
+        if not a.json:
+            for x in r:
+                print(f"  {x['name'].ljust(14)} {x['runtime'].ljust(10)} network {x['network'].ljust(9)} gpu {str(x['gpu']).ljust(5)} source {x['source']}")
+            print(dim(f"\n  default: {p.config['sandbox'].get('default_profile')} ({'applies' if p.config['sandbox'].get('enabled') else 'not enabled'})"))
+            return 0
+    elif act == "show":
+        r = {"name": a.target, "policy": SB.profile(p, a.target), "summary": SB.summary(p, a.target)}
+    elif act == "doctor":
+        r = SB.doctor(p)
+        if not a.json:
+            for x in r["runtimes"]:
+                print(f"  {x['runtime'].ljust(10)} " + (green("available") if x["available"] else yellow("unavailable")) + f"  {x.get('version') or ''}")
+                for n in x["notes"]:
+                    print(dim("      " + n))
+            print(dim("\n  " + r["note"]))
+            return 0
+    elif act == "verify":
+        r = SB.verify(p, a.target or p.config["sandbox"].get("default_profile") or "restricted")
+        if not a.json:
+            print(bold(f"{r['profile']} on {r.get('runtime') or 'no runtime'}"))
+            for x in r["properties"]:
+                col = green if x["state"] == "verified" else (yellow if x["state"] == "enforceable" else red)
+                print(f"  {col(x['state'].ljust(11))} {x['property']}")
+            for n in r.get("notes", []):
+                print(dim("  " + n))
+            print((green("✓ jobs would run") if r["allowed"] else red("✗ jobs would be refused: ") + (r.get("refusal") or "")))
+            return 0 if r["allowed"] else 1
+    elif act == "preview":
+        r = SB.preview(p, experiment=a.target, task=a.task, cluster=a.cluster, profile_name=a.profile, datasets=a.dataset)
+        if not a.json:
+            kv("profile", f"{r['profile']} (from {r['scope']})")
+            kv("runtime", r["preflight"].get("runtime") or r["policy"]["runtime"])
+            for m in r["preflight"]["mounts"]:
+                print(f"    {m['mode']}  {m['target'].ljust(18)} <- {m['host']}   {dim(m['why'])}")
+            if r["would_be_refused"]:
+                print(red("✗ would be refused: ") + (r["preflight"]["refusal"] or ""))
+            print(dim("  " + r["agent_sandbox"]["note"]))
+            return 1 if r["would_be_refused"] else 0
+    else:
+        raise ResearchError(f"unknown sandbox action {act}")
+    out_json(r)
+    return 0
+
+
+def cmd_promote(a, p) -> int:
+    from research import promotion as PR
+    act = a.action
+    if act == "list":
+        r = PR.list_candidates(p, include_closed=a.all)
+        if not a.json:
+            for c in r:
+                g = c["gates"]
+                print(f"  {c['id']}  {c['state']:<9} tests {g['tests']['state']:<10} review {g['review']['state']:<9} {c.get('title') or ''}")
+            if not r:
+                print(dim("no promotion candidates — `research promote changes WS-001` shows what could be promoted"))
+            return 0
+    elif act == "changes":
+        r = PR.changes(p, a.target)
+    elif act == "prepare":
+        r = PR.prepare(p, a.target, commits=a.commit, paths=a.path, title=a.title, reason=a.reason)
+    elif act == "show":
+        r = PR.show(p, a.target)
+    elif act == "diff":
+        r = PR.diff(p, a.target)
+        if not a.json:
+            print(r["stat"] + "\n" + r["patch"])
+            return 0
+    elif act == "verify":
+        r = PR.verify(p, a.target, a.command)
+    elif act == "review":
+        r = PR.review(p, a.target, a.verdict, a.note)
+    elif act == "approve":
+        r = PR.approve(p, a.target, a.note)
+    elif act == "integrate":
+        r = PR.integrate(p, a.target, a.confirm)
+    elif act == "abandon":
+        r = PR.abandon(p, a.target, a.reason)
+    else:
+        raise ResearchError(f"unknown promote action {act}")
+    if a.json:
+        out_json(r)
+    elif isinstance(r, dict) and "gates" in r:
+        print(green("✓ ") + f"{r['id']} is {r['state']}")
+        g = r["gates"]
+        kv("tests", f"{g['tests']['state']} — {g['tests']['detail']}")
+        kv("evidence", f"{g['evidence']['state']} — {g['evidence']['detail']}")
+        kv("review", g["review"]["state"])
+        kv("approval", g["approval"]["state"])
+        kv("candidate", f"{r['branch']} @ {str(g['head'])[:8]}")
+        kv("classification", ", ".join(f"{k}={v}" for k, v in r["classification"].items()))
+        if r.get("path"):
+            kv("worktree", r["path"])
+    else:
+        print(json.dumps(r, indent=2, default=str))
+    return 0
+
+
 # ----------------------------------------------------------------------------- command impls
 
 def _proj(a, sync: bool = True) -> Project:
@@ -580,7 +773,9 @@ def _cmd_list(a) -> List[str]:
 @mut
 def cmd_run_exec(a, p) -> int:
     cmd = _cmd_list(a)
-    kw = dict(parameters=parse_kv(a.param), label=a.label, working_dir=a.cwd, notes=a.notes, override=a.override)
+    kw = dict(parameters=parse_kv(a.param), label=a.label, working_dir=a.cwd, notes=a.notes, override=a.override,
+              sandbox=a.sandbox, sandbox_datasets=a.sandbox_dataset, sandbox_override_reason=a.sandbox_override_reason,
+              task=a.sandbox_task)
     if not a.json and not a.detach:
         print(dim(f"▶ {R.command_str(cmd)}"), file=sys.stderr)
     r = R.exec_run(p, a.experiment, cmd, detach=a.detach, tee=not a.json, **kw)
@@ -623,7 +818,9 @@ def cmd_run_submit(a, p) -> int:
         print(yellow("  Confirm these resources with whoever owns the allocation, then re-run without --dry-run."))
         return 0
     r = R.submit_run(p, a.experiment, _cmd_list(a), parameters=parse_kv(a.param), label=a.label,
-                     working_dir=a.cwd, notes=a.notes, override=a.override, **opts)
+                     working_dir=a.cwd, notes=a.notes, override=a.override, sandbox=a.sandbox,
+                     sandbox_datasets=a.sandbox_dataset, sandbox_override_reason=a.sandbox_override_reason,
+                     task=a.sandbox_task, **opts)
     if not a.json:
         print(green("✓ ") + f"{r['id']} submitted as SLURM job {r['slurm_job_id']}")
         kv("reserved", res["summary"])
@@ -1676,7 +1873,50 @@ def cmd_config(a, p) -> int:
     """`research config show|check|migrate` — inspect and tidy configuration. show/check never write."""
     from research import configfile as CF
     from research.store import DEFAULT_CONFIG
+    from research import registry as R
     raw = p.raw_config
+
+    if a.action in ("options", "explain", "set", "reset"):
+        if a.action == "options":
+            d = R.describe(p, a.category, a.search)
+            if a.json:
+                out_json(d)
+                return 0
+            for x in d["options"]:
+                tag = "" if x["source"] == "default" else f" [{x['source']}]"
+                print(f"  {x['key'].ljust(48)} {fmt_val(x['value']).ljust(10)}{tag}  {dim(x['label'])}")
+            return 0
+        if not a.key:
+            raise ResearchError(f"config {a.action} needs a setting key")
+        if a.action == "explain":
+            x = R.explain(p, a.key)
+            if a.json:
+                out_json(x)
+                return 0
+            print(bold(x["label"]) + dim(f"   {x['key']}"))
+            print("\n" + x["help"])
+            print("\nWhy: " + x["why"] + "\nEffect: " + x["effect"])
+            kv("value", f"{fmt_val(x['value'])} ({x['source']}{', inherited' if x['inherited'] else ''})")
+            kv("default", fmt_val(x["default"]))
+            kv("allowed", x["choices"] or (f"{x['min']}..{x['max']}" if x["min"] is not None or x["max"] is not None else x["type"]))
+            kv("needs a human", "yes" if x["approval"] else "no")
+            return 0
+        remove = a.action == "reset"
+        if a.action == "set" and a.value is None:
+            raise ResearchError("config set needs KEY and VALUE")
+        change = {a.key: None if remove else a.value}
+        if a.cfg_dry:
+            r = R.preview(p, change, a.scope, remove)
+            if a.json:
+                out_json(r)
+            else:
+                print(r["diff"] or dim("(no change)"))
+                for k, e in r["errors"].items():
+                    print(red("✗ ") + f"{k}: {e}")
+            return 0 if r["ok"] else 1
+        r = R.apply(p, change, a.scope, a.reason, a.confirm, remove)
+        out_json(r) if a.json else print(green("✓ ") + (f"{a.key} " + ("reset" if remove else f"= {fmt_val(r['values'][a.key])}") + f" ({a.scope})" if r["changed"] else "no change"))
+        return 0
 
     if a.action == "show":
         if a.sources:
@@ -2534,7 +2774,7 @@ def cmd_dispatch(a, p) -> int:
         print(d["shell"])
         return 0
     import subprocess
-    root = p.root
+    root = d.get("cwd") or p.root
     p.close()
     return subprocess.call(d["argv"], cwd=root, env={**os.environ, **d["env"]})
 
@@ -2730,6 +2970,44 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("target", nargs="?", help="T-, F-, EXP-, PLAN- … id")
     _dispatch_args(x)
     add(sub, "agents", cmd_agents, "agent profiles and roles (config.yaml → agents)")
+    x = add(sub, "ledger", cmd_ledger, "shared research ledger for git worktrees: status | enable [--apply] | relink")
+    x.add_argument("action", choices=["status", "enable", "relink"])
+    x.add_argument("path", nargs="?", help="enable: where to create the ledger worktree; relink: its new location")
+    x.add_argument("--apply", action="store_true", help="enable: perform the migration (default is a dry run)")
+    x.add_argument("--dry-run", action="store_true", help="enable: preview only (the default)")
+    x = add(sub, "workspace", cmd_workspace, "experiment worktrees: info | create | attach | list | show | link-task | assign | archive",
+            aliases=["ws"])
+    x.add_argument("action", choices=["info", "create", "attach", "list", "show", "link-task", "assign", "archive", "open"])
+    x.add_argument("target", nargs="?", help="EXP- id (create), path (attach) or WS- id")
+    x.add_argument("--name", help="create: short branch suffix")
+    x.add_argument("--base", help="create: base revision (default HEAD)")
+    x.add_argument("--path", dest="path_", help="create: worktree directory")
+    x.add_argument("--experiment", help="attach: experiment to associate")
+    x.add_argument("--task", help="link-task: task id")
+    x.add_argument("--agent-name", dest="agent_name", help="assign: agent name (omit to clear)")
+    x.add_argument("--dry-run", action="store_true", help="archive: show impact only")
+    x.add_argument("--reason", help="archive: why")
+    x.add_argument("--all", action="store_true", help="list: include archived")
+    x = add(sub, "sandbox", cmd_sandbox, "optional job isolation: list | show NAME | doctor | verify NAME | preview EXP")
+    x.add_argument("action", choices=["list", "show", "doctor", "verify", "preview"])
+    x.add_argument("target", nargs="?", help="profile name (show/verify) or EXP- id (preview)")
+    x.add_argument("--task", help="preview: task id")
+    x.add_argument("--cluster", help="preview: cluster name")
+    x.add_argument("--profile", help="preview: profile for this run")
+    x.add_argument("--dataset", action="append", help="preview: extra read-only dataset path")
+    x = add(sub, "promote", cmd_promote, "select experiment code for main: list | changes | prepare | show | diff | verify | review | approve | integrate | abandon",
+            aliases=["promotion"])
+    x.add_argument("action", choices=["list", "changes", "prepare", "show", "diff", "verify", "review", "approve", "integrate", "abandon"])
+    x.add_argument("target", nargs="?", help="WS- id (changes, prepare) or PROMO- id")
+    x.add_argument("--commit", action="append", help="prepare: a commit of the workspace to promote (repeatable)")
+    x.add_argument("--path", action="append", help="prepare: a committed path to take from the workspace head (repeatable)")
+    x.add_argument("--title")
+    x.add_argument("--reason")
+    x.add_argument("--command", help="verify: test command (default promotion.test_command)")
+    x.add_argument("--verdict", default="comment", choices=["approve", "changes", "comment"], help="review: your verdict")
+    x.add_argument("--note")
+    x.add_argument("--confirm", action="store_true", help="integrate: confirm that main will move")
+    x.add_argument("--all", action="store_true", help="list: include promoted and abandoned")
     x = add(sub, "bin", cmd_bin, "project-local CLI at .research/bin/research (no install needed for agents)")
     x.add_argument("action", nargs="?", choices=["install", "status"], default="install")
     x.add_argument("--force", action="store_true", help="re-copy even if up to date")
@@ -2745,8 +3023,16 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--reason")
     add(sub, "sync", cmd_sync, "import hand-edited files, ingest job outputs, refresh run status")
     add(sub, "rebuild", cmd_rebuild, "rebuild research.db from the text files (keeps a backup)")
-    x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | migrate")
-    x.add_argument("action", nargs="?", choices=["show", "check", "migrate"], default="show")
+    x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | migrate | options | explain | set | reset")
+    x.add_argument("action", nargs="?", choices=["show", "check", "migrate", "options", "explain", "set", "reset"], default="show")
+    x.add_argument("key", nargs="?", help="explain/set/reset: setting key, e.g. agent_policy.max_runs_without_synthesis")
+    x.add_argument("value", nargs="?", help="set: the new value")
+    x.add_argument("--scope", choices=["project", "machine"], default="project", help="set/reset: which config file")
+    x.add_argument("--category", help="options: only this category")
+    x.add_argument("--search", help="options: words to look for")
+    x.add_argument("--dry-run", dest="cfg_dry", action="store_true", help="set/reset: show the YAML diff, write nothing")
+    x.add_argument("--confirm", action="store_true", help="set: confirm a risky change")
+    x.add_argument("--reason", help="set/reset: why (kept in the audit log)")
     x.add_argument("--effective", action="store_true", help="show: every value in force, not just overrides")
     x.add_argument("--sources", action="store_true", help="show: which layer supplies each value")
     x.add_argument("--apply", action="store_true", help="migrate: write the file (default is a dry run)")
@@ -3344,6 +3630,10 @@ def _run_args(x) -> None:
     x.add_argument("--cwd", help="working directory (default: current)")
     x.add_argument("--notes")
     x.add_argument("--override", metavar="REASON", help="bypass run budget (logged)")
+    x.add_argument("--sandbox", metavar="PROFILE", help="isolation profile for this job (research sandbox list); never falls back to native")
+    x.add_argument("--sandbox-dataset", action="append", metavar="PATH", help="extra read-only dataset to mount (repeatable)")
+    x.add_argument("--sandbox-override-reason", metavar="WHY", help="required to run natively where a policy requires a sandbox (logged)")
+    x.add_argument("--task", dest="sandbox_task", metavar="T-ID", help="task this run belongs to (selects a task-level sandbox assignment)")
     x.add_argument("cmd", nargs="*", help="command to run; put it after `--` if it has its own flags")
 
 
@@ -3421,6 +3711,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if fn is cmd_init:
             return cmd_init(a)
+        if fn is cmd_ledger:
+            return cmd_ledger(a)
         if fn is cmd_upgrade:
             return cmd_upgrade(a)   # must not open the project: --dry-run would migrate the database
         p = _proj(a, sync=not _is_readonly(a))

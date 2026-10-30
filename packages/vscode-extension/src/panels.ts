@@ -9,6 +9,9 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
+const CONTROL_RPC = new Set(['control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
+const MUTATING_RPC = new Set(['settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
+
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
   plan: 'list-ordered', task: 'list-ordered',
@@ -39,7 +42,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'resume' | 'form' | 'compare' | 'setup';
+  kind: 'entity' | 'resume' | 'form' | 'compare' | 'setup' | 'control';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -94,6 +97,47 @@ export class Panels implements vscode.Disposable {
     ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Research Home' });
     if (!this.model.resume) await this.model.refresh();
     this.renderResume(ep);
+  }
+
+  /** The React Control Center (Home / Work / Research / Settings). The core owns all logic; this only relays allow-listed RPC calls. */
+  async openControlCenter(page?: string, target?: string) {
+    const existing = this.panels.get('control');
+    const ep = this.create('control', 'Research Control Center', 'dashboard', 'control');
+    if (existing) {
+      if (page) ep.panel.webview.postMessage({ type: 'navigate', page, target });
+      return;
+    }
+    const w = ep.panel.webview;
+    const n = nonce();
+    const media = (f: string) => w.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, 'media', f)).toString();
+    const csp = [`default-src 'none'`, `style-src ${w.cspSource} 'unsafe-inline'`, `font-src ${w.cspSource}`, `script-src 'nonce-${n}'`].join('; ');
+    const initial = JSON.stringify({ page, target }).replace(/</g, '\\u003c');
+    w.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><link href="${media('codicons/codicon.css')}" rel="stylesheet">
+<link href="${media('ui.css')}" rel="stylesheet"><link href="${media('app.css')}" rel="stylesheet"><title>Research Control Center</title></head>
+<body><div id="root"></div><script nonce="${n}">window.__RESEARCH_INITIAL__=${initial};</script><script nonce="${n}" src="${media('app.js')}"></script></body></html>`;
+    w.onDidReceiveMessage(async (m) => {
+      if (m.type === 'open-entity') return this.openEntity(String(m.id));
+      if (m.type === 'open-doc') return this.openDoc(String(m.path));
+      if (m.type !== 'rpc') return;
+      try {
+        if (!CONTROL_RPC.has(m.method)) throw new Error(`Not available from the Control Center: ${m.method}`);
+        const result = await this.model.client.request(m.method, m.params || {});
+        if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
+        w.postMessage({ type: 'rpc-result', id: m.id, result });
+      } catch (e: any) {
+        w.postMessage({ type: 'rpc-result', id: m.id, error: String(e?.message || e) });
+      }
+    });
+  }
+
+  private async openDoc(rel: string) {
+    const [file] = rel.split('#');
+    if (/^[\w./-]+$/.test(file) && !file.includes('..')) {
+      const uri = vscode.Uri.file(path.join(this.model.root, file));
+      try { await vscode.workspace.fs.stat(uri); return void (await vscode.commands.executeCommand('markdown.showPreview', uri)); } catch { /* not in this workspace */ }
+    }
+    vscode.window.showInformationMessage(`Documentation: ${rel} in the Research OS repository (docs/SPEC.md).`);
   }
 
   async openSetup() {

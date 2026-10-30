@@ -1,7 +1,7 @@
 {
   "name": "research-panel",
   "displayName": "Research Panel",
-  "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
+  "description": "Research memory for computational projects: questions \u2192 experiments \u2192 runs \u2192 findings \u2192 decisions \u2192 checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
   "version": "1.1.0",
   "publisher": "research-local",
   "license": "MIT",
@@ -40,15 +40,19 @@
     "typecheck": "tsc --noEmit",
     "package": "node esbuild.mjs --production && node scripts/bundle-python.mjs && vsce package --no-dependencies --out ../../dist/",
     "test:ext": "node test/run.mjs",
-    "test:client": "node --test test/client.test.cjs"
+    "test:client": "node --test test/client.test.cjs",
+    "test:webview": "node --test --test-force-exit --test-timeout=60000 test/webview.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/vscode": "^1.85.0",
     "@vscode/codicons": "^0.0.36",
     "@vscode/test-electron": "^2.5.2",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.24.2",
+    "jsdom": "^30.1.3",
     "typescript": "^5.9.3"
   },
   "contributes": {
@@ -144,7 +148,7 @@
       },
       {
         "view": "research.overview",
-        "contents": "Starting research core…",
+        "contents": "Starting research core\u2026",
         "when": "!research.ready"
       }
     ],
@@ -160,6 +164,18 @@
         "title": "Open Research Home",
         "category": "Research",
         "icon": "$(home)"
+      },
+      {
+        "command": "research.openControlCenter",
+        "title": "Open Control Center",
+        "category": "Research",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "research.openSettings",
+        "title": "Open Settings",
+        "category": "Research",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "research.refresh",
@@ -193,7 +209,7 @@
       },
       {
         "command": "research.experiment.run",
-        "title": "Run…",
+        "title": "Run\u2026",
         "category": "Research",
         "icon": "$(play)"
       },
@@ -271,7 +287,7 @@
       },
       {
         "command": "research.note.link",
-        "title": "Link Note to…",
+        "title": "Link Note to\u2026",
         "category": "Research",
         "icon": "$(link)"
       },
@@ -289,7 +305,7 @@
       },
       {
         "command": "research.setStatus",
-        "title": "Change Status…",
+        "title": "Change Status\u2026",
         "category": "Research",
         "icon": "$(tag)"
       },
@@ -301,13 +317,13 @@
       },
       {
         "command": "research.edit",
-        "title": "Edit…",
+        "title": "Edit\u2026",
         "category": "Research",
         "icon": "$(edit)"
       },
       {
         "command": "research.open",
-        "title": "Open Item…",
+        "title": "Open Item\u2026",
         "category": "Research",
         "icon": "$(go-to-file)"
       },
@@ -433,49 +449,49 @@
       },
       {
         "command": "research.dispatch",
-        "title": "Dispatch to Agent…",
+        "title": "Dispatch to Agent\u2026",
         "category": "Research",
         "icon": "$(hubot)"
       },
       {
         "command": "research.plan.withAgent",
-        "title": "Plan Objective with Agent…",
+        "title": "Plan Objective with Agent\u2026",
         "category": "Research",
         "icon": "$(hubot)"
       },
       {
         "command": "research.search",
-        "title": "Search Research…",
+        "title": "Search Research\u2026",
         "category": "Research",
         "icon": "$(search)"
       },
       {
         "command": "research.report",
-        "title": "Export Research Report…",
+        "title": "Export Research Report\u2026",
         "category": "Research",
         "icon": "$(output)"
       },
       {
         "command": "research.reportFull",
-        "title": "Export Full Research Context (deterministic)…",
+        "title": "Export Full Research Context (deterministic)\u2026",
         "category": "Research",
         "icon": "$(file-code)"
       },
       {
         "command": "research.upgradePreview",
-        "title": "Preview Project Upgrade…",
+        "title": "Preview Project Upgrade\u2026",
         "category": "Research",
         "icon": "$(arrow-up)"
       },
       {
         "command": "research.agentsMdDiff",
-        "title": "Review Managed AGENTS.md Block…",
+        "title": "Review Managed AGENTS.md Block\u2026",
         "category": "Research",
         "icon": "$(diff)"
       },
       {
         "command": "research.hpcSync",
-        "title": "Reconcile HPC Runs…",
+        "title": "Reconcile HPC Runs\u2026",
         "category": "Research",
         "icon": "$(cloud-download)"
       },
@@ -493,7 +509,7 @@
       },
       {
         "command": "research.task.note",
-        "title": "Add Progress Note…",
+        "title": "Add Progress Note\u2026",
         "category": "Research",
         "icon": "$(comment)"
       },
@@ -505,13 +521,13 @@
       },
       {
         "command": "research.finding.review",
-        "title": "Review Finding…",
+        "title": "Review Finding\u2026",
         "category": "Research",
         "icon": "$(comment-discussion)"
       },
       {
         "command": "research.run.compare",
-        "title": "Compare Runs…",
+        "title": "Compare Runs\u2026",
         "category": "Research",
         "icon": "$(diff)"
       },
@@ -523,18 +539,18 @@
       },
       {
         "command": "research.strategy.use",
-        "title": "Choose Model Strategy…",
+        "title": "Choose Model Strategy\u2026",
         "category": "Research",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "research.setup.agents",
-        "title": "Set Up Claude Code Agents…",
+        "title": "Set Up Claude Code Agents\u2026",
         "category": "Research"
       },
       {
         "command": "research.task.pin",
-        "title": "Pin Model for Task…",
+        "title": "Pin Model for Task\u2026",
         "category": "Research"
       },
       {
@@ -544,7 +560,7 @@
       },
       {
         "command": "research.hook.approve",
-        "title": "Review and Approve Harness Hooks…",
+        "title": "Review and Approve Harness Hooks\u2026",
         "category": "Research"
       },
       {
@@ -569,7 +585,7 @@
       },
       {
         "command": "research.skill.import",
-        "title": "Import Skills…",
+        "title": "Import Skills\u2026",
         "category": "Research",
         "icon": "$(cloud-download)"
       },
@@ -599,7 +615,7 @@
       },
       {
         "command": "research.mcp.install",
-        "title": "Register MCP Server for Agents…",
+        "title": "Register MCP Server for Agents\u2026",
         "category": "Research",
         "icon": "$(plug)"
       },
@@ -611,7 +627,7 @@
       },
       {
         "command": "research.config.effective",
-        "title": "Show Effective Configuration…",
+        "title": "Show Effective Configuration\u2026",
         "category": "Research",
         "icon": "$(list-tree)"
       }
@@ -1361,7 +1377,7 @@
         "research.pythonPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Python ≥ 3.8 used to run the bundled research core **on the machine where the workspace lives** (the remote host under Remote SSH). Empty = auto-detect `python3`."
+          "markdownDescription": "Python \u2265 3.8 used to run the bundled research core **on the machine where the workspace lives** (the remote host under Remote SSH). Empty = auto-detect `python3`."
         },
         "research.terminalCommand": {
           "type": "boolean",
@@ -1371,7 +1387,7 @@
         "research.projectCli": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Keep a project-local CLI at `.research/bin/research` (gitignored, refreshed automatically). Agents whose shells don't get VS Code's terminal `PATH` — e.g. the Claude Code extension's Bash tool — can run it without installing anything."
+          "markdownDescription": "Keep a project-local CLI at `.research/bin/research` (gitignored, refreshed automatically). Agents whose shells don't get VS Code's terminal `PATH` \u2014 e.g. the Claude Code extension's Bash tool \u2014 can run it without installing anything."
         },
         "research.pollIntervalSeconds": {
           "type": "number",
@@ -1392,7 +1408,7 @@
             "Detached background process",
             "Submit to SLURM"
           ],
-          "description": "Default execution mode for 'Run…'."
+          "description": "Default execution mode for 'Run\u2026'."
         },
         "research.projectRoot": {
           "type": "string",
@@ -1409,5 +1425,9 @@
         "when": "research.initialized"
       }
     ]
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }
