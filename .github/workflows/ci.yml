@@ -17,6 +17,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run test:client
+      - run: npm run test:webview
       - run: npm run package
       - run: bash scripts/clean_install_test.sh
       - uses: actions/upload-artifact@v4
