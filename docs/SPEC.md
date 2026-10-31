@@ -1,16 +1,13 @@
 # Research Panel — Features, Design and Technical Specification
 
-**Version:** 1.0.0 · **Schema version:** 3
-
-**Release evidence:** [Independent engineering review](RELEASE_1_0_0_REVIEW.md), based on `b715c63` and the working-tree hardening changes. This specification is not a release-readiness certificate.
+**Version:** 2.0.0 · **Project format:** 2 · **Schema version:** 3
 
 This is the single reference for **what Research Panel does, why it is designed that way, and exactly how it works**.
 A competent engineer should be able to re-implement it from this document alone. It also answers behaviour questions
 such as "when does an experiment become `needs_review`?", "when is a task *ready*?" or "what happens if I delete `research.db`?".
 
 > To learn to *use* the system, start with the [README](../README.md). This document replaces the former `DESIGN.md`,
-> whose rationale is now [§21](#21-design-rationale). The proposal documents in `docs/` (ARCHITECTURE_AUDIT,
-> TRANSFORMATION_SUMMARY, PHASE_0_SPEC, MCP_INTEGRATION) describe planned work. Where they disagree with this file, this file describes what is actually built.
+> whose rationale is now [§21](#21-design-rationale). Where another document disagrees with this file, this file describes what is actually built.
 
 ---
 
@@ -20,7 +17,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 - **Execution ownership.** `execution.py`: dispatch for a task writes a single-use execution record and returns a wrapper command. The wrapper takes `.research/locks/<task>.execution` non-blocking and passes the descriptor to the provider, so the lock outlives a killed wrapper while the provider runs. States: prepared, launched, running, completed, failed, unknown.
 - **Effective task specification.** `task_spec.py` projects task fields and the contract with sources and conflicts; storage is unchanged.
 - **Completion policy.** `orchestrate.verify_work` is the single verifier used by `verify_task`, `gate_task_completion`, `task done`, status updates and create-as-done. `verification_state` is `passed`, `blocked` or `unverified`; humans may complete administratively with an audit event.
-- **Not implemented.** Coordinator continuation (see `DESIGN_UX_REVIEW_1_0_0.md`), a UI view of execution records, and Windows lock/process-tree verification.
+- **Not implemented.** Coordinator continuation, a UI view of execution records, and Windows lock/process-tree verification.
 
 ## Stabilization behavior changes
 
@@ -50,7 +47,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 13. [VS Code extension specification](#13-vs-code-extension-specification)
 14. [Remote SSH and HPC behaviour](#14-remote-ssh-and-hpc-behaviour)
 14A. [Full deterministic context export](#14a-full-deterministic-context-export-research-report---full)
-14B. [Safe project upgrades](#14b-safe-project-upgrades-research-upgrade)
+14B. [The managed AGENTS.md block](#14b-the-managed-agentsmd-block)
 14C. [HPC execution](#14c-hpc-execution)
 15. [Safety guarantees](#15-safety-guarantees)
 16. [Configuration reference](#16-configuration-reference)
@@ -101,7 +98,7 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | Portability | Project-relative paths; projects can be moved, cloned or opened over SSH | 4.7 |
 | Schema migrations | Versioned and forward-only; an older tool refuses a newer project | 4.6 |
 | Layered configuration | Built-in defaults ← optional machine file (`~/.config/research-os/config.yaml`, `$RESEARCH_CONFIG`) ← sparse project file; comment-preserving surgical edits; `config show\|check\|migrate` | 16 |
-| Safe upgrades | `research upgrade --dry-run` / `--apply`; managed AGENTS.md block; full deterministic export (`report --full`) | 14A, 14B |
+| Managed AGENTS.md block, full export | managed AGENTS.md block; full deterministic export (`report --full`) | 14A, 14B |
 | HPC-safe SQLite | Rollback journal (no WAL), busy timeout; compute nodes never open the DB | 2.3, 14 |
 
 ### Execution
@@ -245,7 +242,7 @@ Research Panel is deliberately **not** any of the following:
 │    orchestrate.py  routing, frozen tests, attempts, contracts, verify, pins, tuning        │
 │    harness.py · hooks.py  project references and approved executable hooks                │
 │    usage.py     usage ledger        expcheck.py  experiment check                          │
-│    guide.py · evidence.py · setup_agents.py · upgrade.py · fullreport.py · agentsmd.py     │
+│    guide.py · evidence.py · setup_agents.py · fullreport.py · agentsmd.py     │
 │    configfile.py layered sparse config   localbin.py  .research/bin    yamlio.py           │
 │    search.py · compare.py · report.py                 gitinfo.py (incl. opt-in snapshot)  │
 │    context.py   resume context, Research Home aggregation, checkpoints, current.md        │
@@ -762,7 +759,7 @@ Error is U-shaped in alpha …
 - **Connection pragmas:** `journal_mode=DELETE` (WAL is unsafe on NFS and Lustre), `busy_timeout=15000`, `foreign_keys=OFF`
   (integrity is enforced in the services layer). Autocommit, with explicit `BEGIN IMMEDIATE` transactions that nest by depth counting.
 - **Migrations:** `schema.MIGRATIONS = {version: [DDL…]}`, applied in order inside a transaction. `meta.schema_version` records
-  the current version. A project whose version is **newer** than the tool is refused with an "upgrade" error, never modified.
+  the current version. A project whose version is **newer** than the tool is refused with an error asking for a newer release, never modified.
 - `meta.built_at` marks a fully built index. If it is missing, a rebuild runs.
 
 ### 4.7 Path portability rules
@@ -967,7 +964,7 @@ environment, so an agent running in a VS Code terminal is detected as an agent.
 
 `research init` (and `research agents-md`) creates `AGENTS.md`, or updates **only** the text between
 `<!-- research:begin` and `<!-- research:end -->`. User content outside the markers is preserved byte for byte.
-The block's source is `packages/core/research/templates/AGENTS.block.md`. The current ("Research OS") version covers (sections `Running the CLI`, `Quick start`, `Core rules`, `Scientific practice`, `Remote execution`, `Context hand-off and upgrades`, `Tiered agents`, `Recording work`, `Task workflow`):
+The block's source is `packages/core/research/templates/AGENTS.block.md`. The current ("Research OS") version covers (sections `Running the CLI`, `Quick start`, `Core rules`, `Scientific practice`, `Remote execution`, `Context hand-off`, `Tiered agents`, `Recording work`, `Task workflow`):
 
 - **Quick start (the context tiers):** `research current` → `research task next` / `research task context T-…` →
   `research search` / `research show` → `research --help`. Notes that every tool is also an MCP tool.
@@ -1137,7 +1134,7 @@ agents:
   `task_note`, `task_done`, `task_block`, `task_release`, `task_verify`, `task_create`, `plan_create`;
   `question_create`, `experiment_create`, `run_start` (always detached; poll `run_status`), `run_status`, `run_logs`,
   `runs_compare`, `metric_log`, `artifact_register`, `experiment_synthesize`; `finding_create` (always preliminary),
-  `finding_review`; `checkpoint_create`; `skills_list`, `skill_show`; `dispatch_prepare` (follows the active strategy); `report_full`; `upgrade_preview`; `hpc_doctor`, `hpc_sync`, `hpc_bundle`. There are no MCP tools yet for strategies, hooks, contracts, usage or experiment check (CLI/RPC only). Read-only tools carry
+  `finding_review`; `checkpoint_create`; `skills_list`, `skill_show`; `dispatch_prepare` (follows the active strategy); `report_full`; `doctor`; `hpc_doctor`, `hpc_sync`, `hpc_bundle`. There are no MCP tools yet for strategies, hooks, contracts, usage or experiment check (CLI/RPC only). Read-only tools carry
   `annotations.readOnlyHint`.
 - **Install:** `research mcp install [--client claude|vscode|cursor|gemini|codex]…` (default claude + vscode) merges a
   `research` entry (`command: research, args: [mcp]`) into `.mcp.json` (`mcpServers`), `.vscode/mcp.json` (`servers`),
@@ -1680,7 +1677,6 @@ State: `.research/hooks/results.jsonl`, `.research/usage.jsonl`, `.research/guid
 | `experiment_check` | `{id, request_synthesis?}` → deterministic result, `needs_human[]`, `synthesis` |
 | `config_show` · `config_check` | `{effective?, sources?}` · — (read-only; no sync) |
 | `agents_md_state` · `agents_md_apply` | managed-block preview / apply |
-| `upgrade` | `{apply?}` → the `research upgrade` report (dry run unless `apply`) |
 | `hpc_status` · `hpc_sync` | `{}` · `{cluster?}` |
 | `report_full` | `{scope?, check?}` → full deterministic export |
 | `skills_add` · `skills_remove` · `skills_update` · `skills_set` · `skills_link` | `{source, only?, force?, always?, applies_to?, list_only?}` · `{name}` · `{names?}` · `{name, always?, applies_to?}` · — |
@@ -2080,49 +2076,11 @@ artifact contents, logs, external datasets and unwritten reasoning are inherentl
 
 ---
 
-## 14B. Safe project upgrades (`research upgrade`)
+## 14B. The managed AGENTS.md block
 
-**Modules:** `research/upgrade.py`, `research/agentsmd.py`.
+**Module:** `research/agentsmd.py`. Version 2 has no project upgrade or migration command: a v1 project is rejected (see `docs/GUIDE_V2_START_FRESH.md`)
+and nothing about an existing `.research/` is converted automatically. Only the Research OS-owned region of `AGENTS.md` is managed.
 
-### 14B.1 Four kinds of change
-
-| Kind | What | Guarantee |
-|---|---|---|
-| schema | the existing versioned migrations (`schema.migrate`) | the index is rebuildable from text anyway |
-| filesystem | create missing managed directories | creates only |
-| template | copy missing default skills/prompts/templates | an existing file is never overwritten, even if it differs — that difference is your customization |
-| config | deep-merge missing defaults | existing values and unknown keys preserved; nothing removed |
-| agents-md | the Research OS-owned block only | all other bytes unchanged |
-| gitignore | append missing `reports/`, `hpc/bundles/`, `hpc/incoming/` lines | appends only; your own lines are never rewritten or reordered |
-| bin | refresh `.research/bin/` for this machine | per-machine, gitignored |
-
-Deliberately **not** a migration framework: versioned schema migrations already existed, and the rest is a
-handful of idempotent functions.
-
-### 14B.2 Dry run
-
-`research upgrade --dry-run` (the default) calls `upgrade.plan()`, which reads the schema version through a
-**read-only** SQLite connection and never constructs a `Project`. No migration, no index rebuild, no context
-refresh, no cache file, no event. A test asserts the whole working tree is byte-identical afterwards, and
-that a dry run on a project with no `research.db` does not create one.
-
-### 14B.3 Apply
-
-Validates preconditions first (a newer project schema is refused outright), backs up the small metadata
-files it will edit into `.research/cache/upgrade-<timestamp>/`, then applies each step independently: one
-failing step is reported in `failed` without aborting the others, and re-running finishes the job. Research
-histories and large artifacts are never copied into a backup. One `upgraded` event is logged — upgrades are
-auditable, so the audit log grows while research records stay identical.
-
-### 14B.4 Data-integrity contract
-
-Preserved unchanged across an upgrade: ids and relationships; experiment hypotheses, methods, parameters and
-notes; run histories, commands, statuses, metrics and outputs; findings, confidence, evidence links and
-reviews; decisions and supersession history; checkpoints and human notes; audit events and authorship;
-project-specific configuration and unknown config keys; skills and customized instructions. The project
-stays readable and its history stays rebuildable from the canonical files.
-
-### 14B.5 The managed AGENTS.md block
 
 One owned region between `<!-- research:begin … -->` and `<!-- research:end -->`. `locate()` matches whole
 marker **lines**, not bare substrings, so prose that mentions a marker — in the block itself or in your own
@@ -2137,7 +2095,7 @@ notes — cannot be mistaken for one.
 Bytes outside the region are preserved exactly, including CRLF line endings and a missing trailing newline
 (the file is read and written with `newline=""`). Markers absent → propose adding a block, leaving existing
 content alone. Markers duplicated, reversed or malformed → **refuse** with the manual fix, change nothing,
-and let the rest of the upgrade proceed. No three-way merge, no inference about which instructions to
+and change nothing else. No three-way merge, no inference about which instructions to
 remove: a deliberately human-reviewed workflow.
 
 ---
@@ -2579,8 +2537,8 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 | ↳ `test_strategy.py` (19) | | the four strategies and custom ones: resolution, layering and precedence, cycles, project isolation, one resolver for direct/orchestrated/delegated/guide dispatch, frozen tests and independence under strategies, harness independence, managed-file boundaries, the `agent_setup` RPC, list-block config edits |
 | ↳ `test_agent_features.py` (15) | | hooks (human-only approval, edit revokes, timeout, advisory, preflight/pre-experiment gates), contracts and `orchestrate verify`, usage parsing and summaries (missing ≠ zero), headless runs with a mock agent, task pins, strategy-aware agent files, `experiment check`, CLI and RPC |
 | ↳ `test_config.py` (74) · `test_localbin.py` (8) | | layered sparse configuration, surgical comment-preserving edits, check/migrate; the project-local launcher |
-| ↳ `test_upgrade.py` (41) · `test_fullreport.py` (37) | | dry run changes nothing, upgrades preserve every record, managed AGENTS.md block; deterministic, side-effect-free, coverage-verified full export |
-| ↳ `test_hpc.py` (89) · `test_acceptance.py` (2) | | bundles, SSH/Slurm against a fake cluster, datasets, result import, reconciliation; the 17-step upgrade → remote run → import → export acceptance scenario |
+| ↳ `test_fullreport.py` (37) | | managed AGENTS.md block; deterministic, side-effect-free, coverage-verified full export |
+| ↳ `test_hpc.py` (89) · `test_acceptance.py` (2) | | bundles, SSH/Slurm against a fake cluster, datasets, result import, reconciliation; the 17-step remote run → import → export acceptance scenario |
 | TypeScript | `npm run typecheck` | the extension compiles under `strict` |
 | Clean install | `bash scripts/clean_install_test.sh` | fresh venv + wheel → full protocol (question, experiment, 2 runs, artifact, synthesis, finding, decision, checkpoint) → copy to a new path, delete the index → resume reconstructs exact counts → artifact paths relative and resolving → no build-machine paths in the project, installed package or VSIX |
 | UI end-to-end (Playwright + code-server) | `python scripts/e2e_code_server.py <project> <dir>` | VSIX installed into a real VS Code server; sidebar trees and overview render; New Question form writes `Q-003`; question panel opens; Run form → terminal → `RUN-0004` completes; experiment panel shows the new run (live refresh). 8/8 checks. |
@@ -2633,11 +2591,8 @@ research-vscode/
 ├── CHANGELOG.md
 ├── docs/
 │   ├── SPEC.md                     # this document (features + design + spec)
-│   ├── ARCHITECTURE_AUDIT.md       # proposal: "Research OS" redesign
-│   ├── TRANSFORMATION_SUMMARY.md   # proposal: executive summary of the redesign
-│   ├── PHASE_0_SPEC.md             # proposal: plans/tasks (implemented; this SPEC is authoritative)
-│   ├── MCP_INTEGRATION.md          # proposal: MCP server (built differently; see §7.8)
-│   ├── UPGRADING.md                # copy-paste upgrade sequence for existing projects
+│   ├── GUIDE_V2_START_FRESH.md     # what to do with a v1 project
+│   ├── CONFIGURATION.md            # layers, files, precedence, editing
 │   └── screens/                    # UI screenshots
 ├── packages/
 │   ├── core/research/
@@ -2658,7 +2613,7 @@ research-vscode/
 │   │   ├── guide.py  evidence.py   # Scientist Guide; numerical evidence and provenance
 │   │   ├── setup_agents.py         # `research setup agents` (managed .claude/agents, first-party skills)
 │   │   ├── configfile.py           # layered sparse comment-preserving configuration
-│   │   ├── upgrade.py  agentsmd.py  fullreport.py  localbin.py  # safe upgrades, managed block, full export, project CLI
+│   │   ├── agentsmd.py  fullreport.py  localbin.py  # managed block, full export, project CLI
 │   │   ├── mcp.py                  # MCP server + install + status
 │   │   ├── search.py  compare.py  report.py
 │   │   ├── context.py              # resume, Research Home, checkpoint draft/create, current.md
@@ -2777,7 +2732,7 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 
 ### 22.1 Known issues
 
-The [release review](RELEASE_1_0_0_REVIEW.md) is the current issue and verification record. The independent baseline passed 432 Python tests; that did not establish production readiness. The following table is historical repair context, not a claim that all defects are resolved:
+The following table is historical repair context from the 1.0.0 hardening, not a claim that all defects are resolved:
 
 | # | Was | Fix |
 |---|---|---|
@@ -2848,7 +2803,7 @@ The [release review](RELEASE_1_0_0_REVIEW.md) is the current issue and verificat
 ## 23. Roadmap
 
 Built from the earlier list: tiered context, verification gates, roles/profiles with dispatch, the MCP server, project skills,
-run comparison, sweeps, reports, git snapshots, the Scientist Guide, numerical evidence, HPC, layered configuration, safe upgrades,
+run comparison, sweeps, reports, git snapshots, the Scientist Guide, numerical evidence, HPC, layered configuration,
 allocation strategies, hooks, task contracts, usage accounting, per-task pins, strategy-aware agent files and `experiment check`.
 Remaining ideas, only once real use shows a need:
 

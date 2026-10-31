@@ -15,7 +15,7 @@ Research OS records what happened. The Scientist Guide explains the science that
 | Writing rules | `scientist-guide` skill, advisory | `scientific-briefing` skill, **required** at dispatch, injected and hashed |
 
 Quarto is needed only to render or preview. Every other Research OS operation, and `guide validate`, works without it.
-Adopting the v2 guide is opt-in; an upgrade never creates it.
+Adopting the v2 guide is opt-in; nothing creates it automatically.
 
 ## Layers
 
@@ -36,7 +36,7 @@ Files in `docs/scientist-guide/` (the directory is `guide.dir` in `.research/con
 ## Tutorial
 
 ```bash
-research upgrade --dry-run && research upgrade --apply     # existing project: adds the scientific-briefing skill only
+research skills list                                        # the scientific-briefing skill ships with every v2 project
 research guide quarto doctor                                # is Quarto available? PDF (Typst)?
 research guide quarto init                                  # create the book next to any existing guide; never overwrites
 research guide coverage                                     # experiments and findings the guide does not cover yet

@@ -5,9 +5,10 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Release status:** 1.0.0 release candidate (built locally; not published, tagged or pushed). See the
-[verification record](docs/TEST_VERIFICATION_1_0_0.md) for what was and was not tested and the
-[engineering review](docs/RELEASE_1_0_0_REVIEW.md) for trust assumptions. The storage schema remains version 3.
+**Version 2.0.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
+(see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
+
+![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
 
 Two related lifecycles keep scientific conclusions separate from completed work:
 
@@ -18,29 +19,46 @@ Plan → Tasks → Agent delegation → Implementation → Verification → Comp
 
 Research OS is local and provider-independent. Canonical records are text files; SQLite provides
 an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It does not replace
-scientific notebooks, validate scientific truth, supply an execution sandbox, or autonomously
-schedule your research. There is no required cloud service.
+scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
+restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-## What's new in this branch
+## Control Center
 
-Shared research ledger with git worktrees for experiments (`research ledger enable`, `research workspace …`), typed settings with explanations
-(`research config options`, `research config explain agent_policy.max_runs_without_synthesis`), optional job isolation (`research sandbox …`, `run exec --sandbox`), selective promotion of experiment code
-into `main` (`research promote …`), and a Control Center in the extension. All are opt-in; existing projects work unchanged. See
-[SPEC §13A and §14D–§14F](docs/SPEC.md) and the [changelog](CHANGELOG.md).
+`Research: Open Control Center` opens one panel with four areas:
+
+| Area | What it is for |
+|---|---|
+| **Home** | Project goal, current focus, items that need you (syntheses, reviews, blocked tasks, promotions), active experiments, running jobs, recent findings and activity |
+| **Work** | Plans and tasks, experiment branches (git worktrees), jobs, promotion candidates with their gates, optional job isolation |
+| **Research** | Experiments with run progress and latest result, findings, questions, decisions |
+| **Settings** | Every configurable setting with `?` help, its origin (default, machine or project file), file and key; project health |
+
+| Work | Settings |
+|---|---|
+| ![Work](docs/screens/control-center-v2/work-dark.png) | ![Settings](docs/screens/control-center-v2/settings-dark.png) |
+
+Light-theme, empty-project and narrow-window screenshots are in [`docs/screens/control-center-v2/`](docs/screens/control-center-v2/).
+First run in an empty folder opens a short setup wizard; **New experiment** is a guided form that never runs anything.
+
+**Files are authoritative.** The Control Center edits the same YAML the CLI and agents read, keeps your comments, refuses to
+overwrite a file that changed underneath it, and shows a reviewable diff before every save. See [Configuration](docs/CONFIGURATION.md).
 
 ## Install
 
-The core requires Python 3.8 or newer. Python runtime dependencies are vendored or in the standard
-library. Node is needed to build the extension, not to use the Python CLI.
+Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
+
+- `research-panel-2.0.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
+- `research_panel-2.0.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
+- `SHA256SUMS` — checksums for the files above
 
 ```bash
-# From artifacts built from this checkout:
-python3 -m pip install dist/research_panel-1.0.0-py3-none-any.whl
-code --install-extension dist/research-panel-1.0.0.vsix
+code --install-extension research-panel-2.0.0.vsix
+# optional, CLI outside VS Code:
+python3 -m pip install research_panel-2.0.0-py3-none-any.whl
 ```
 
-The VSIX bundles its Python core, so the panel does not require a separate pip installation.
-Install the extension on the workspace host when using VS Code Remote SSH. Each initialized
+Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.
+The core needs Python 3.8 or newer; Node is only needed to build from source. Each initialized
 project also gets `.research/bin/research`, a generated machine-local CLI; regenerate it with
 `research bin install` after changing machines or moving the project. VS Code terminals receive
 a `research` shim on PATH.
@@ -53,12 +71,10 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]' build
 npm install
 npm test
-npm run package
-bash scripts/clean_install_test.sh
+npm run package        # VSIX, wheel and sdist in dist/
 ```
 
-Activate the environment before `npm test`: it invokes `python3` from PATH. Builds go into `dist/`;
-nothing is published automatically. [Build and release details](docs/SPEC.md#19-build-packaging-and-release).
+Activate the environment before `npm test`: it invokes `python3` from PATH.
 
 ## Start a research project
 
@@ -281,16 +297,15 @@ separate execution and result import; remote sync reconciles outcomes. Offline t
 clusters and execute portable bundles locally; they do not establish compatibility with every
 site's SLURM accounting, filesystem or scheduler policy. [HPC specification](docs/SPEC.md#14c-hpc-execution).
 
-## Recovery and upgrades
+## Recovery
 
 Back up the complete `.research/` directory and referenced artifacts. Run logs are gitignored by
 default, so committing metadata alone does not back up logs or external datasets.
 
 ```bash
-research upgrade --dry-run
-research upgrade --apply
-research config check
-research rebuild
+research doctor          # project health; --fix ID applies the few safe generated-file repairs
+research config check    # diagnose the configuration files
+research rebuild         # rebuild the index from canonical records
 ```
 
 Every mutation runs under a project write lock (`.research/.write.lock`) with an undo journal
@@ -307,35 +322,35 @@ front-matter ID. Incomplete JSONL tails are not ingested and block further appen
 
 For an unreadable/corrupt index, stop clients and back up `.research/` first. Move `research.db` to a
 safe backup location, then reopen the project to reconstruct it. Do not discard canonical files or
-SQLite journal files blindly. The current `rebuild` CLI still requires an index it can open.
+SQLite journal files blindly.
 
 | Symptom | Next action |
 |---|---|
+| "Not a Research OS 2 project" | It is a v1 project; see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md). Nothing was changed |
 | CLI missing | Use `.research/bin/research`, activate the installed environment, or `research bin install` |
 | Python fails to start in VS Code | Check Output → Research and `research.pythonPath` |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
 | Required hook blocks work | Inspect its exact command, then have a human approve or deliberately disable it |
-| Malformed Markdown or JSONL | Preserve the file, repair the reported record, then retry |
+| Malformed Markdown, JSONL or YAML | Preserve the file, repair the reported record, then retry |
 | Task ledger is corrupt | Restore/repair it; do not reset frozen tests or attempt history |
 | Index locked | Stop competing clients and retry; do not delete an active database |
-| Newer schema refused | Upgrade the tool; do not lower the stored schema version |
+| Newer schema refused | Install a newer release; do not lower the stored schema version |
 
-[Upgrade details](docs/UPGRADING.md) · [Technical specification](docs/SPEC.md) ·
-[Release review and verification](docs/RELEASE_1_0_0_REVIEW.md) · [Changelog](CHANGELOG.md).
+## Documentation
 
-## Development and verification
+[Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Technical specification](docs/SPEC.md) · [Scientist Guide](docs/SCIENTIST_GUIDE_V2.md) ·
+[Changelog](CHANGELOG.md).
 
-`npm test` runs Python tests, TypeScript checking and Node RPC-client tests. `npm run build` bundles
-the extension. `npm run package` produces the VSIX, wheel and (when a build frontend is available)
-source distribution. `bash scripts/clean_install_test.sh` installs the wheel offline in a fresh
-environment and verifies relocation/rebuild without the developer's PYTHONPATH or machine config.
+## Development
 
-`RESEARCH_TEST_WORKSPACE=<demo> npm run test:ext` installs the VSIX into an isolated VS Code profile
-and tests a copied workspace. Set `RESEARCH_TEST_VSCODE_EXECUTABLE` to a compatible installed VS Code
-executable to avoid downloading it. `scripts/e2e_code_server.py` requires code-server, Playwright and
-a running browser-accessible workspace; it is separate from the extension-host harness.
+`npm test` runs Python tests, TypeScript checking and Node RPC-client tests; `npm run test:webview` runs the Control Center
+interaction tests against the real core in jsdom. `npm run build` bundles the extension; `npm run package` produces the VSIX,
+wheel and (when a build frontend is available) source distribution. `bash scripts/clean_install_test.sh` installs the wheel
+offline in a fresh environment and verifies relocation/rebuild.
 
 Authoritative source lives under `packages/core`, `packages/cli` and `packages/vscode-extension/src`
-(with webview assets in `media`). Bundled Python, extension `dist`, codicons, test downloads and root
-`dist/` are generated. Historical design proposals in `docs/` are labelled as such; they are not
-implemented-capability specifications.
+(webview assets in `media`). Bundled Python, extension `dist`, codicons and root `dist/` are generated.
+
+Not verified in this release: the extension inside every VS Code configuration (Remote SSH, high-contrast themes, screen readers),
+Windows, and real Apptainer/GPU isolation.

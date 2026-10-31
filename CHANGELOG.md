@@ -1,16 +1,19 @@
 # Changelog
 
-## Unreleased — shared ledger and experiment workspaces (Phase 1 of the architecture upgrade)
+## 2.0.0
 
-- `research ledger enable|status|relink`: opt-in shared-ledger mode (dry run by default, backup kept, record counts verified). One ledger on branch `research/ledger`, reachable from every worktree.
-- `research workspace create|attach|list|show|link-task|assign|archive|open`: experiment branches/worktrees with safe archival; RPC `workspaces`/`workspace_*`, MCP `workspace_list`.
-- `Project` separates the source tree (`root`) from the ledger (`ledger_root`); runs record workspace, base revision and a pinned snapshot of the exact working tree. Classic projects are unchanged.
-- Workspace-aware dispatch (tasks linked to a workspace dispatch into it, briefs say so) and HPC manifests pin the exact source snapshot.
-- **Typed settings registry** (`research config options|explain|set|reset`, RPC `settings*`): validation, inheritance display, YAML diff preview, comment-preserving edits, agent refusal for policy keys, audit events, generated `.research/context/policy.md`, `AGENTS.md` pointer.
-- **Optional job isolation** (`research sandbox …`, `run exec|submit --sandbox`): profiles, precedence, `userns` and `apptainer` runtimes, canary verification, fail-closed refusal, mount safety, run provenance. Native is unchanged. Remote bundles refuse rather than run unrestricted.
-- **Selective promotion** (`research promote …`, RPC `promotion*`): candidate branches built from the current main with only the chosen commits or paths; tests bound to the candidate head; independent review; human approval bound to the head; human-confirmed fast-forward-only integration. Never forces, rebases, deletes or pushes.
-- **Control Center** (React, `Research: Open Control Center`): Home / Work / Research / Settings, accessible `?` help on every setting, typed editors, diff-and-reason review, workspace and promotion workflows. `npm run test:webview`; screenshots in `docs/screens/control-center/`.
-- Not yet: promotion hunk selection, sandboxed remote bundles, verification inside real VS Code. See `docs/SPEC.md` §13A, §14D–§14F.
+**Breaking release.** Project format 2; v1 projects are not upgraded or migrated (see `docs/GUIDE_V2_START_FRESH.md`). Storage schema stays at 3.
+
+- **Format 2:** `.research/format.json` identifies the project format. v1 projects are rejected with clear instructions and left byte-identical; nothing is converted, moved or deleted automatically. `research upgrade`, `config migrate` and the matching RPC/MCP/extension entry points are removed.
+- **Control Center** (`Research: Open Control Center`): redesigned Home / Work / Research / Settings on a shared design system (tokens, components, light/dark/high-contrast via VS Code theme variables), populated and empty states, narrow-window layout, guided first-run setup and New experiment, project health.
+- **Configuration is files:** Settings shows each setting's effective value, origin layer, exact file and key; Open configuration file; saves are refused when the file changed on disk; unreadable YAML is reported without being rewritten; the UI reloads on window focus. Layers are default → machine → project; `AGENTS.md` documents where configuration lives. See `docs/CONFIGURATION.md`.
+- **Project doctor:** `research doctor [--fix ID]`, RPC, read-only MCP tool, and Settings → Project health. Optional capabilities are reported as optional, not as failures.
+- **Shared research ledger and experiment worktrees** (`research ledger enable|status|relink`, `research workspace …`), with run provenance pinned to the exact source snapshot.
+- **Typed settings registry** (`research config options|explain|set|reset`): validation, inheritance display, YAML diff preview, comment-preserving edits, agent refusal for policy keys, audit events, generated `.research/context/policy.md`.
+- **Optional job isolation** (`research sandbox …`, `run exec|submit --sandbox`): profiles, `userns` and `apptainer` runtimes, fail-closed refusal. Remote HPC bundles refuse when a profile applies. Agent sandboxing is not implemented (advisory only); mocked-Apptainer tests are not proof of real isolation.
+- **Selective promotion** (`research promote …`): candidate branches with only the chosen commits or paths; tests bound to the candidate head (a dirty candidate worktree cannot be verified); independent review; human approval; fast-forward-only integration. Never forces, rebases, deletes or pushes.
+- Fix: a machine-level override no longer makes the generated reference block look hand-edited in `config check`.
+- Not included: promotion hunk selection, sandboxed remote bundles, forms for cluster/strategy/hook/profile settings, verification inside Remote SSH, high-contrast and screen-reader testing, Windows.
 
 ## 1.1.0 — Scientist Guide v2
 
