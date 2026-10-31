@@ -14,7 +14,7 @@ const PYPATH = [path.join(ROOT, 'packages/core'), path.join(ROOT, 'packages/cli'
 let proj, lib, dom;
 
 function startCore(root) {
-  const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, PYTHONPATH: PYPATH, XDG_CONFIG_HOME: path.join(os.tmpdir(), 'rp-xdg-empty'), RESEARCH_CONFIG: '' } });
+  const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, XDG_CONFIG_HOME: path.join(os.tmpdir(), 'rp-xdg-empty'), PYTHONPATH: PYPATH, XDG_CONFIG_HOME: path.join(os.tmpdir(), 'rp-xdg-empty'), RESEARCH_CONFIG: '' } });
   let buf = '', seq = 0; const waiting = new Map(); let ready;
   const up = new Promise((r) => (ready = r));
   proc.stdout.on('data', (d) => {
@@ -32,7 +32,7 @@ function startCore(root) {
 }
 function hostFor(core) {
   const log = { entities: [], docs: [] }; let state = {};
-  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), openDoc: (p) => log.docs.push(p), getState: () => state, setState: (s) => (state = s) };
+  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
 }
 
 before(async () => {
@@ -119,7 +119,7 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     await click(byText(el, 'button', 'Review changes'));
     await click(byText(q(el, '[role=dialog]'), 'button', 'Save changes'));
     await lib.tick(500);
-    assert.match(q(el, '.banner').textContent, /Saved/);
+    assert.match(q(el, '.banner.ok').textContent, /Saved/);
     assert.match(fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8'), /max_runs_without_synthesis: 8/);
     assert.match(fs.readFileSync(path.join(proj, '.research/context/policy.md'), 'utf8'), /Maximum runs without synthesis.*8/);
     // restart everything: a new core process and a new UI see the saved value with its source
@@ -295,4 +295,40 @@ test('project health lives in Settings; advanced settings are hidden until asked
     await waitFor(() => /Healthy|Needs attention|problem/.test(el.textContent), 12000);
     assert.match(el.textContent, /optional/); assert.match(el.textContent, /passing/);
   } finally { await unmount(); core.stop(); }
+});
+
+test('files are authoritative: origin file and key are shown, manual edits appear, conflicts and bad YAML never overwrite', async () => {
+  const cfg = path.join(proj, '.research/config.yaml');
+  const original = fs.readFileSync(cfg, 'utf8');
+  const label = 'Maximum failed runs without review';
+  const rowOf = (el) => qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === label);
+  let core = startCore(proj); let host = hostFor(core);
+  let m = await lib.mount(host, { page: 'settings' });
+  try {
+    await ready(m.el);
+    // transparency: exact key + "not written" for a default; a manual edit while closed shows up with its file
+    assert.match(rowOf(m.el).textContent, /agent_policy\.max_failed_runs_without_review/); assert.match(rowOf(m.el).textContent, /not written to any file/);
+    await click(byText(m.el, 'button', 'Open configuration file')); assert.deepEqual(host.log.files, ['.research/config.yaml']);
+    await m.unmount(); core.stop();
+    fs.writeFileSync(cfg, original + '\n# kept comment\nagent_policy:\n  max_failed_runs_without_review: 6\n');
+    core = startCore(proj); host = hostFor(core); m = await lib.mount(host, { page: 'settings' });
+    await ready(m.el);
+    assert.equal(q(rowOf(m.el), 'input').value, '6'); assert.ok(q(rowOf(m.el), '.src-project')); assert.match(rowOf(m.el).textContent, /config\.yaml/);
+    // concurrent edit: change in the UI, edit the file elsewhere, save -> refused, file untouched
+    await type(q(rowOf(m.el), 'input'), '9'); await lib.tick(300);
+    const other = fs.readFileSync(cfg, 'utf8') + '\n# edited in another editor\n';
+    fs.writeFileSync(cfg, other);
+    await click(byText(m.el, 'button', 'Review changes'));
+    await waitFor(() => /changed on disk/.test(m.el.textContent));
+    assert.match(q(m.el, '.banner.bad').textContent, /changed on disk/); assert.ok(byText(m.el, 'button', 'Reload from disk'));
+    assert.equal(fs.readFileSync(cfg, 'utf8'), other, 'the other editor\'s file is never overwritten');
+    // invalid YAML: a clear screen with a way to open the file, nothing rewritten
+    await m.unmount(); core.stop();
+    const broken = 'project: [unclosed\n  name: x: y\n';
+    fs.writeFileSync(cfg, broken);
+    core = startCore(proj); host = hostFor(core); m = await lib.mount(host, { page: 'settings' });
+    await waitFor(() => /could not be read/.test(m.el.textContent), 8000);
+    assert.match(m.el.textContent, /could not be read/); assert.ok(byText(m.el, 'button', 'Open configuration file'));
+    assert.equal(fs.readFileSync(cfg, 'utf8'), broken);
+  } finally { await m.unmount(); core.stop(); fs.writeFileSync(cfg, original); }
 });

@@ -64,8 +64,9 @@ class Server:
         return None
 
     def m_ping(self) -> Dict[str, Any]:
+        ok = self.initialized() and not self._compat()
         return {"version": __version__, "root": self.root, "initialized": self.initialized(), "incompatible": self._compat(),
-                "python": sys.executable, "pid": os.getpid()}
+                "name": self.project(sync=False).name if ok else os.path.basename(self.root), "python": sys.executable, "pid": os.getpid()}
 
     def m_init(self, name: Optional[str] = None, goal: Optional[str] = None) -> Dict[str, Any]:
         self.p = Project.init(self.root, name=name, goal=goal)
@@ -141,14 +142,15 @@ class Server:
         from . import registry
         return registry.describe(self.project(sync=False), category, search)
 
-    def m_settings_preview(self, changes: Dict[str, Any], scope: str = "project", remove: bool = False) -> Dict[str, Any]:
+    def m_settings_preview(self, changes: Dict[str, Any], scope: str = "project", remove: bool = False,
+                           expected: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
-        return registry.preview(self.project(sync=False), changes, scope, remove)
+        return registry.preview(self.project(sync=False), changes, scope, remove, expected)
 
     def m_settings_apply(self, changes: Dict[str, Any], scope: str = "project", reason: Optional[str] = None,
-                         confirm: bool = False, remove: bool = False) -> Dict[str, Any]:
+                         confirm: bool = False, remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
-        return registry.apply(self.project(), changes, scope, reason, confirm, remove)
+        return registry.apply(self.project(), changes, scope, reason, confirm, remove, expected)
 
     def m_workspace_info(self) -> Dict[str, Any]:
         from . import workspace as W

@@ -7,11 +7,12 @@ export interface SettingOption {
   nullable: boolean; affects: string[]; scopes: string[]; restart: boolean; depends_on: string | null;
   doc: string | null; unit: string | null; approval: boolean; advanced: boolean;
   value: any; default: any; source: 'default' | 'machine' | 'project'; inherited: boolean;
-  overridden_in: string[]; errors: string[];
+  overridden_in: string[]; errors: string[]; file: string | null;
 }
 export interface SettingsPayload {
   categories: { id: string; label: string }[]; options: SettingOption[];
-  machine_config: string | null; project_config: string; fingerprint: string;
+  machine_config: string | null; project_config: string; project_config_rel: string; fingerprint: string;
+  digests: { project: string; machine: string }; layers: string[];
 }
 export interface Preview {
   ok: boolean; errors: Record<string, string>; values: Record<string, any>; scope: string; path: string; diff: string;

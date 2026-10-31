@@ -32,6 +32,9 @@ the human to open the project in VS Code with the Research Panel extension, or t
 - Exit code 3 means a policy blocked you: read the hint, don't work around it
 - The effective rules (limits, review requirements, git/workspace mode) are in `.research/context/policy.md`; it is generated, so read it
   rather than guessing. You cannot change policy settings (`research config set` refuses agents); ask the human.
+- Configuration lives in YAML, never in a hidden store: defaults < machine file (`~/.config/research-os/config.yaml`) < project
+  `.research/config.yaml`. Inspect it with `research config show --effective`, `research config explain KEY` and
+  `research config check`; the Control Center edits the same files. Runtime state (jobs, locks) is not configuration.
 - In a git worktree workspace (`research workspace info`) stay on your branch; the research ledger is shared, so record through the CLI only
 
 ### Scientific practice

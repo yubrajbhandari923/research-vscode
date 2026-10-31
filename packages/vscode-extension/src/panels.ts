@@ -9,7 +9,7 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['ping', 'doctor', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
+const CONTROL_RPC = new Set(['ping', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
 const MUTATING_RPC = new Set(['setup_apply', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
 
 const TITLES: Record<string, string> = {
@@ -50,6 +50,7 @@ interface EntityPanel {
 
 export class Panels implements vscode.Disposable {
   private panels = new Map<string, EntityPanel>();
+  private configFiles = new Set<string>();  // exact paths the core reported (the project file may live in a shared ledger outside the folder)
   private disposables: vscode.Disposable[] = [];
 
   constructor(private ctx: vscode.ExtensionContext, private model: Model, private out: vscode.OutputChannel) {
@@ -100,6 +101,16 @@ export class Panels implements vscode.Disposable {
   }
 
   /** The React Control Center (Home / Work / Research / Settings). The core owns all logic; this only relays allow-listed RPC calls. */
+  /** Only configuration files (those the core reported, or .research/*.yaml in the folder) can be opened from the webview. */
+  private async openConfigFile(p: string) {
+    const root = path.resolve(this.model.root);
+    const abs = path.isAbsolute(p) ? path.resolve(p) : path.resolve(root, p);
+    const ok = this.configFiles.has(abs) || (abs.startsWith(root + path.sep) && /(^|[\\/])\.research[\\/][^\\/]+\.ya?ml$/.test(abs));
+    if (!ok) return vscode.window.showWarningMessage('Research: that file is not a Research OS configuration file.');
+    if (!fs.existsSync(abs)) { fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, '# Research OS machine configuration. Keys here apply to every project on this computer.\n'); }
+    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: false });
+  }
+
   async openControlCenter(page?: string, target?: string) {
     const existing = this.panels.get('control');
     const ep = this.create('control', 'Research Control Center', 'dashboard', 'control');
@@ -114,15 +125,17 @@ export class Panels implements vscode.Disposable {
     const initial = JSON.stringify({ page, target }).replace(/</g, '\\u003c');
     w.html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link href="${media('codicons/codicon.css')}" rel="stylesheet">
-<link href="${media('ui.css')}" rel="stylesheet"><link href="${media('app.css')}" rel="stylesheet"><title>Research Control Center</title></head>
+<link href="${media('app.css')}" rel="stylesheet"><title>Research Control Center</title></head>
 <body><div id="root"></div><script nonce="${n}">window.__RESEARCH_INITIAL__=${initial};</script><script nonce="${n}" src="${media('app.js')}"></script></body></html>`;
     w.onDidReceiveMessage(async (m) => {
       if (m.type === 'open-entity') return this.openEntity(String(m.id));
       if (m.type === 'open-doc') return this.openDoc(String(m.path));
+      if (m.type === 'open-file') return this.openConfigFile(String(m.path));
       if (m.type !== 'rpc') return;
       try {
         if (!CONTROL_RPC.has(m.method)) throw new Error(`Not available from the Control Center: ${m.method}`);
         const result = await this.model.client.request(m.method, m.params || {});
+        if (m.method === 'settings') for (const f of [result?.machine_config, result?.project_config]) if (f) this.configFiles.add(path.resolve(String(f)));
         if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
         w.postMessage({ type: 'rpc-result', id: m.id, result });
       } catch (e: any) {

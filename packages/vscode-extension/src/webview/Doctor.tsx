@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Breadcrumbs, State, useAsync } from './common';
+import { Badge, Banner, Breadcrumbs, State, useAsync } from './common';
 import type { Host } from './host';
 
 const ICON: Record<string, string> = { ok: '✓', info: '·', warn: '!', error: '✗' };
@@ -45,5 +45,5 @@ export function HealthBanner({ host, open }: { host: Host; open: () => void }) {
   const a = useAsync<any>(() => host.call('doctor'), []);
   const s = a.data?.summary;
   if (!s || (!s.errors && !s.warnings)) return null;
-  return <div className={'banner ' + (s.errors ? 'bad' : 'warn')} role="status">Project health: {s.errors ? `${s.errors} problem(s)` : ''}{s.errors && s.warnings ? ', ' : ''}{s.warnings ? `${s.warnings} warning(s)` : ''}. <button className="link" onClick={open}>Review</button></div>;
+  return <Banner kind={s.errors ? 'bad' : 'warn'}>Project health: {s.errors ? `${s.errors} problem(s)` : ''}{s.errors && s.warnings ? ', ' : ''}{s.warnings ? `${s.warnings} warning(s)` : ''}. <button className="link" onClick={open}>Review</button></Banner>;
 }

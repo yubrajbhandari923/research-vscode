@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SettingRow } from './Controls';
-import { Breadcrumbs, Dialog, Diff, State, useAsync } from './common';
+import { Banner, Dialog, Diff, EmptyState, Icon, PageHeader, Section, State, useAsync } from './common';
 import { Doctor } from './Doctor';
 import type { Host } from './host';
 import type { Preview, SettingOption, SettingsPayload } from './types';
+
+const PROJECT_FILE = '.research/config.yaml';
+const CONFLICT = /changed on disk/;
 
 export function SettingsPage({ host, initialCategory }: { host: Host; initialCategory?: string }) {
   const saved = host.getState();
@@ -14,96 +17,131 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
   const [review, setReview] = useState<{ preview: Preview; scope: string } | null>(null);
   const [advanced, setAdvanced] = useState<boolean>(!!saved.advanced);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const [notice, setNotice] = useState<{ ok: boolean; text: string; conflict?: boolean } | null>(null);
+  const [removing, setRemoving] = useState(false);
   const a = useAsync<SettingsPayload>(() => host.call('settings'), []);
+  const diag = useAsync<any>(() => host.call('config_check'), []);
 
   const remember = (c: string, q: string) => host.setState({ ...host.getState(), cat: c, query: q });
   const pendingKeys = Object.keys(draft);
+  const reloadAll = () => { setDraft({}); setErrors({}); setReview(null); setRemoving(false); setNotice(null); a.reload(); diag.reload(); };
+
+  // An edit made in a text editor while this view is open shows up when the window regains focus (unsaved changes are never discarded silently).
+  useEffect(() => {
+    const on = () => { if (!Object.keys(draft).length && !review) { a.reload(); diag.reload(); } };
+    window.addEventListener('focus', on);
+    return () => window.removeEventListener('focus', on);
+  }, [draft, review]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const options = (d: SettingsPayload) => {
     const q = query.trim().toLowerCase();
     return d.options.filter((o) => q ? [o.key, o.label, o.help, o.why].join(' ').toLowerCase().includes(q) : o.category === cat && (advanced || !o.advanced));
   };
+  const expected = (scope: string) => (scope === 'machine' ? a.data?.digests.machine : a.data?.digests.project) || undefined;
+  const fail = (e: any) => { const text = String(e?.message || e); setNotice({ ok: false, text, conflict: CONFLICT.test(text) }); };
 
   const change = async (o: SettingOption, v: any) => {
     setDraft((d) => ({ ...d, [o.key]: v }));
     try {
-      const p: Preview = await host.call('settings_preview', { changes: { [o.key]: v }, scope: 'project' });
+      const p: Preview = await host.call('settings_preview', { changes: { [o.key]: v }, scope: 'project', expected: expected('project') });
       setErrors((e) => { const n = { ...e }; if (p.errors[o.key]) n[o.key] = p.errors[o.key]; else delete n[o.key]; return n; });
-    } catch (e: any) { setErrors((x) => ({ ...x, [o.key]: String(e.message) })); }
+    } catch (e: any) { if (CONFLICT.test(String(e.message))) fail(e); else setErrors((x) => ({ ...x, [o.key]: String(e.message) })); }
   };
-  const discard = (k: string) => { setDraft((d) => { const n = { ...d }; delete n[k]; return n; }); setErrors((e) => { const n = { ...e }; delete n[k]; return n; }); };
 
   const openReview = async (scope: string, changes = draft, remove = false) => {
     setBusy(true);
-    try { setReview({ preview: await host.call('settings_preview', { changes, scope, remove }), scope }); }
-    catch (e: any) { setNotice({ ok: false, text: String(e.message) }); }
+    try { setReview({ preview: await host.call('settings_preview', { changes, scope, remove, expected: expected(scope) }), scope }); }
+    catch (e: any) { fail(e); }
     finally { setBusy(false); }
   };
-
   const resetOne = (o: SettingOption) => openReview('project', { [o.key]: null }, true).then(() => setRemoving(true));
-  const [removing, setRemoving] = useState(false);
 
   const apply = async (reason: string, confirm: boolean) => {
     if (!review) return;
     setBusy(true);
     try {
       const changes = removing ? Object.fromEntries(Object.keys(review.preview.values).map((k) => [k, null])) : draft;
-      const r = await host.call('settings_apply', { changes, scope: review.scope, reason: reason || undefined, confirm, remove: removing });
-      setNotice({ ok: true, text: r.changed ? `Saved to ${review.scope === 'machine' ? 'the machine' : 'this project'} configuration. Agent policy file regenerated.` : 'Nothing changed.' });
-      setDraft({}); setReview(null); setRemoving(false); a.reload();
-    } catch (e: any) { setNotice({ ok: false, text: String(e.message) }); setReview(null); setRemoving(false); }
+      const r = await host.call('settings_apply', { changes, scope: review.scope, reason: reason || undefined, confirm, remove: removing, expected: expected(review.scope) });
+      setNotice({ ok: true, text: r.changed ? `Saved to ${review.scope === 'machine' ? 'the machine' : 'this project'} configuration (${r.path ? r.path.split(/[\\/]/).slice(-2).join('/') : 'config.yaml'}). Agent policy file regenerated.` : 'Nothing changed.' });
+      setDraft({}); setReview(null); setRemoving(false); a.reload(); diag.reload();
+    } catch (e: any) { fail(e); setReview(null); setRemoving(false); }
     finally { setBusy(false); }
   };
 
+  if (a.error && !a.data) return (
+    <div className="settings">
+      <PageHeader title="Settings" crumbs={['Settings']} />
+      <Banner kind="bad"><b>The configuration could not be read.</b> <span className="dim">{a.error}</span>
+        <div className="row" style={{ marginTop: 8 }}><button type="button" onClick={() => host.openFile(PROJECT_FILE)}><Icon name="file" /> Open configuration file</button><button type="button" onClick={reloadAll}>Try again</button></div>
+        <p className="meta" style={{ marginTop: 6 }}>Nothing was changed. Fix the file in the editor; this view reloads when you come back.</p></Banner>
+    </div>);
+
   return (
     <div className="settings">
-      <Breadcrumbs trail={['Project', 'Settings', query ? 'Search' : (a.data?.categories.find((c) => c.id === cat)?.label || '')]} />
-      <State a={a}>{(d) => (
-        <>
-          <div className="settings-bar">
-            <label className="sr" htmlFor="setting-search">Search settings</label>
-            <input id="setting-search" type="search" placeholder="Search settings (e.g. budget, review, sandbox)" value={query}
-              onChange={(e) => { setQuery(e.target.value); remember(cat, e.target.value); }} />
-            <span className="muted small">Settings fingerprint <code>{d.fingerprint}</code></span>
-          </div>
-          <div className="settings-grid">
-            <nav aria-label="Settings categories" className="cats">
-              <button type="button" aria-current={!query && cat === 'health' ? 'true' : undefined} className={!query && cat === 'health' ? 'on' : ''}
-                onClick={() => { setQuery(''); setCat('health'); remember('health', ''); }}>Project health</button>
-              {d.categories.map((c) => {
-                const n = d.options.filter((o) => o.category === c.id && (advanced || !o.advanced)).length;
-                return n ? <button key={c.id} type="button" aria-current={!query && cat === c.id ? 'true' : undefined} className={!query && cat === c.id ? 'on' : ''}
-                  onClick={() => { setQuery(''); setCat(c.id); remember(c.id, ''); }}>{c.label}<span className="muted">{n}</span></button> : null;
-              })}
-              <label className="check cats-note"><input type="checkbox" checked={advanced} onChange={(e) => { setAdvanced(e.target.checked); host.setState({ ...host.getState(), advanced: e.target.checked }); }} /> Show advanced settings</label>
-              <p className="muted small cats-note">Other keys remain editable in <code>.research/config.yaml</code>.</p>
-            </nav>
-            <section aria-label="Settings" className="list">
-              {notice && <div className={'banner ' + (notice.ok ? 'ok' : 'bad')} role={notice.ok ? 'status' : 'alert'}>{notice.text} <button className="link" onClick={() => setNotice(null)}>Dismiss</button></div>}
-              {!query && cat === 'health' && <Doctor host={host} embedded />}
-              {!(cat === 'health' && !query) && options(d).length === 0 && <p className="muted">No settings match “{query}”.</p>}
-              {options(d).map((o) => {
-                const dep = o.depends_on ? d.options.find((x) => x.key === o.depends_on) : null;
-                const depOff = dep && dep.type === 'bool' && !(draft[dep.key] ?? dep.value);
-                return <SettingRow key={o.key} option={o} draft={draft[o.key]} error={errors[o.key]} onChange={(v) => change(o, v)}
-                  onReset={() => resetOne(o)} onDoc={(p) => host.openDoc(p)} disabledReason={depOff ? `Applies only while “${dep!.label}” is on.` : undefined} />;
-              })}
-            </section>
-          </div>
-          {pendingKeys.length > 0 && (
-            <div className="savebar" role="region" aria-label="Unsaved changes">
-              <span>{pendingKeys.length} unsaved change{pendingKeys.length > 1 ? 's' : ''}</span>
-              <span className="spacer" />
-              <button type="button" onClick={() => { setDraft({}); setErrors({}); }}>Discard</button>
-              <button type="button" className="primary" disabled={busy || Object.keys(errors).length > 0} onClick={() => { setRemoving(false); openReview('project'); }}>Review changes…</button>
+      <State a={a}>{(d) => {
+        const catLabel = query ? 'Search results' : d.categories.find((c) => c.id === cat)?.label || '';
+        const dg = diag.data;
+        const issues = dg ? [...dg.errors.map((e: any) => ({ k: 'bad', t: `${e.key}: ${e.problem}` })), ...dg.unknown.map((u: any) => ({ k: 'warn', t: `${u.key} is not a known setting (kept as written)` })), ...dg.warnings.map((w: string) => ({ k: 'warn', t: w }))] : [];
+        return (
+          <>
+            <PageHeader crumbs={['Settings', catLabel]} title="Settings"
+              sub={<>Files are the source of truth: this view edits <code>{d.project_config_rel}</code> in place and keeps your comments. Edit the YAML directly any time.</>}
+              actions={<><button type="button" onClick={() => host.openFile(d.project_config_rel)}><Icon name="file" /> Open configuration file</button>
+                {d.machine_config && <button type="button" onClick={() => host.openFile(d.machine_config!)} title={d.machine_config}>Machine file</button>}
+                <button type="button" className="ghost icon-btn" aria-label="Reload settings from disk" title="Reload from disk" onClick={reloadAll}><Icon name="refresh" /></button></>} />
+            <div className="cfgbar">
+              <label className="search"><span className="sr">Search settings</span><Icon name="search" />
+                <input id="setting-search" type="search" placeholder="Search settings (e.g. budget, review, sandbox)" value={query}
+                  onChange={(e) => { setQuery(e.target.value); remember(cat, e.target.value); }} /></label>
+              <div className="precedence" title="Later layers override earlier ones">Precedence <b>default</b><span className="arrow">→</span><b>machine</b><span className="arrow">→</span><b>project</b></div>
+              <span className="spacer" /><span className="meta">Effective-settings fingerprint <code>{d.fingerprint}</code></span>
             </div>
-          )}
-          {review && <ReviewDialog preview={review.preview} initialScope={review.scope} removing={removing} busy={busy}
-            onScope={(s) => openReview(s, removing ? Object.fromEntries(Object.keys(review.preview.values).map((k) => [k, null])) : draft, removing)}
-            onClose={() => { setReview(null); setRemoving(false); }} onApply={apply} />}
-        </>
-      )}</State>
+            {issues.length > 0 && <Banner kind={issues.some((i) => i.k === 'bad') ? 'bad' : 'warn'}><b>{issues.length} issue{issues.length === 1 ? '' : 's'} in the configuration file.</b> Nothing was rewritten.
+              <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>{issues.slice(0, 5).map((i, n) => <li key={n}>{i.t}</li>)}</ul>{issues.length > 5 && <span className="meta">and {issues.length - 5} more (run <code>research config check</code>)</span>}</Banner>}
+            {notice && <Banner kind={notice.ok ? 'ok' : 'bad'} onDismiss={() => setNotice(null)}>{notice.text}{notice.conflict && <> <button type="button" className="link" onClick={reloadAll}>Reload from disk</button> (unsaved changes here will be discarded)</>}</Banner>}
+            <div className="settings-layout">
+              <nav aria-label="Settings categories" className="cats">
+                <div className="grp">Project</div>
+                <button type="button" aria-current={!query && cat === 'health' ? 'true' : undefined} className={!query && cat === 'health' ? 'on' : ''}
+                  onClick={() => { setQuery(''); setCat('health'); remember('health', ''); }}>Project health</button>
+                <div className="grp">Configuration</div>
+                {d.categories.map((c) => {
+                  const n = d.options.filter((o) => o.category === c.id && (advanced || !o.advanced)).length;
+                  return n ? <button key={c.id} type="button" aria-current={!query && cat === c.id ? 'true' : undefined} className={!query && cat === c.id ? 'on' : ''}
+                    onClick={() => { setQuery(''); setCat(c.id); remember(c.id, ''); }}>{c.label}<span className="n">{n}</span></button> : null;
+                })}
+                <label className="check cats-note"><input type="checkbox" checked={advanced} onChange={(e) => { setAdvanced(e.target.checked); host.setState({ ...host.getState(), advanced: e.target.checked }); }} /> Show advanced settings</label>
+                <p className="meta cats-note">Keys without a form stay editable in the YAML file.</p>
+              </nav>
+              <section aria-label="Settings" className="list">
+                {!query && cat === 'health' && <Section id="health" title="Project health"><Doctor host={host} embedded /></Section>}
+                {!(cat === 'health' && !query) && (
+                  <Section id="opts" title={catLabel} count={options(d).length} boxed>
+                    {options(d).length === 0
+                      ? <EmptyState inline icon="search" title={query ? `No settings match “${query}”.` : 'No settings in this group.'}>{query ? 'Try a shorter word, or edit the YAML file directly for keys that have no form.' : 'Tick “Show advanced settings” to see more.'}</EmptyState>
+                      : options(d).map((o) => {
+                        const dep = o.depends_on ? d.options.find((x) => x.key === o.depends_on) : null;
+                        const depOff = dep && dep.type === 'bool' && !(draft[dep.key] ?? dep.value);
+                        return <SettingRow key={o.key} option={o} draft={draft[o.key]} error={errors[o.key]} onChange={(v) => change(o, v)} onOpenFile={(f) => host.openFile(f)}
+                          onReset={() => resetOne(o)} onDoc={(p) => host.openDoc(p)} disabledReason={depOff ? `Applies only while “${dep!.label}” is on.` : undefined} />;
+                      })}
+                  </Section>)}
+                {pendingKeys.length > 0 && (
+                  <div className="savebar" role="region" aria-label="Unsaved changes">
+                    <Icon name="edit" /><span>{pendingKeys.length} unsaved change{pendingKeys.length > 1 ? 's' : ''}</span>
+                    <span className="spacer" />
+                    <button type="button" onClick={() => { setDraft({}); setErrors({}); }}>Discard</button>
+                    <button type="button" className="primary" disabled={busy || Object.keys(errors).length > 0} onClick={() => { setRemoving(false); openReview('project'); }}>Review changes…</button>
+                  </div>
+                )}
+              </section>
+            </div>
+            {review && <ReviewDialog preview={review.preview} initialScope={review.scope} removing={removing} busy={busy}
+              onScope={(s) => openReview(s, removing ? Object.fromEntries(Object.keys(review.preview.values).map((k) => [k, null])) : draft, removing)}
+              onClose={() => { setReview(null); setRemoving(false); }} onApply={apply} />}
+          </>
+        );
+      }}</State>
     </div>
   );
 }

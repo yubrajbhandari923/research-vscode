@@ -3,7 +3,7 @@ import type { Host } from './host';
 import { HomePage, ResearchPage, WorkPage } from './pages';
 import { Incompatible, Setup } from './Setup';
 import { NewExperiment } from './NewExperiment';
-import { useAsync } from './common';
+import { Banner, Icon, useAsync } from './common';
 import { SettingsPage } from './SettingsPage';
 import type { Page } from './types';
 
@@ -18,13 +18,20 @@ export function App({ host, initial }: { host: Host; initial?: { page?: Page; ta
   const ping = useAsync<any>(() => host.call('ping'), []);
   const [ready, setReady] = useState(0);
   if (ping.loading && !ping.data) return <div className="state" role="status"><span className="spinner" aria-hidden /> Starting…</div>;
+  if (ping.error && /config\.ya?ml/.test(ping.error)) return (
+    <main><Banner kind="bad"><b>The project configuration could not be read.</b>
+      <pre className="diff" style={{ whiteSpace: 'pre-wrap' }}>{ping.error}</pre>
+      <div className="row"><button type="button" className="primary" onClick={() => host.openFile('.research/config.yaml')}><Icon name="file" /> Open configuration file</button><button type="button" onClick={ping.reload}>Try again</button></div>
+      <p className="meta" style={{ marginTop: 6 }}>Nothing was changed or rewritten. Fix the file, then try again; no migration or other step is needed.</p></Banner></main>);
   if (ping.error) return <div className="state error" role="alert"><b>Could not load.</b> {ping.error} <button className="link" onClick={ping.reload}>Try again</button></div>;
   if (ping.data?.incompatible) return <Incompatible host={host} message={ping.data.incompatible} />;
   if (ping.data && !ping.data.initialized && !ready) return <Setup host={host} onDone={() => { setReady(1); ping.reload(); }} />;
-  return <Shell host={host} initial={initial} />;
+  return <Shell host={host} initial={initial} name={ping.data?.name || 'Research'} />;
 }
 
-function Shell({ host, initial }: { host: Host; initial?: { page?: Page; target?: string } }) {
+function Shell({ host, initial, name }: { host: Host; initial?: { page?: Page; target?: string }; name: string }) {
+  const [attention, setAttention] = useState(0);
+  const [rev, setRev] = useState(0);
   const [page, setPage] = useState<Page>(initial?.page || (host.getState().page as Page) || 'home');
   const [target, setTarget] = useState<string | undefined>(initial?.target);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -41,17 +48,19 @@ function Shell({ host, initial }: { host: Host; initial?: { page?: Page; target?
   return (
     <div className="shell">
       <header className="topbar">
+        <div className="brand" title="Research OS project"><span className="mark" aria-hidden /><span className="proj">{name}</span></div>
         <div role="tablist" aria-label="Research areas">
           {TABS.map((t, i) => (
             <button key={t.id} ref={(el) => { tabs.current[i] = el; }} role="tab" id={`tab-${t.id}`} aria-selected={page === t.id} aria-controls={`panel-${t.id}`}
-              tabIndex={page === t.id ? 0 : -1} title={t.hint} onClick={() => go(t.id)} onKeyDown={(e) => onKey(e, i)}>{t.label}</button>))}
+              tabIndex={page === t.id ? 0 : -1} title={t.hint} data-count={t.id === 'home' ? attention : undefined} onClick={() => go(t.id)} onKeyDown={(e) => onKey(e, i)}>{t.label}</button>))}
         </div>
+        <div className="tools"><button type="button" className="ghost icon-btn" aria-label="Refresh" title="Reload from disk" onClick={() => setRev((r) => r + 1)}><Icon name="refresh" /></button></div>
       </header>
       <main role="tabpanel" id={`panel-${page}`} aria-labelledby={`tab-${page}`} tabIndex={-1}>
-        {page === 'home' && <HomePage host={host} go={go} />}
-        {page === 'work' && <WorkPage host={host} go={go} />}
-        {page === 'research' && <ResearchPage host={host} />}
-        {page === 'settings' && <SettingsPage host={host} initialCategory={target} />}
+        {page === 'home' && <HomePage key={rev} host={host} go={go} onAttention={setAttention} />}
+        {page === 'work' && <WorkPage key={rev} host={host} go={go} />}
+        {page === 'research' && <ResearchPage key={rev} host={host} />}
+        {page === 'settings' && <SettingsPage key={rev} host={host} initialCategory={target} />}
       </main>
     </div>
   );

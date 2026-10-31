@@ -55,12 +55,56 @@ def _attention(p) -> List[Dict[str, Any]]:
     return sorted(items, key=lambda i: order.get(i["severity"], 2))
 
 
+def _count(p, sql: str, args=()) -> int:
+    return (p.q1(sql, args) or {"n": 0})["n"]
+
+
+def _stats(p) -> Dict[str, int]:
+    return {"experiments": _count(p, "SELECT COUNT(*) AS n FROM experiments"),
+            "runs": _count(p, "SELECT COUNT(*) AS n FROM runs"),
+            "failed_runs": _count(p, "SELECT COUNT(*) AS n FROM runs WHERE status='failed'"),
+            "findings": _count(p, "SELECT COUNT(*) AS n FROM findings"),
+            "supported": _count(p, "SELECT COUNT(*) AS n FROM findings WHERE status='supported'"),
+            "tasks": _count(p, "SELECT COUNT(*) AS n FROM tasks"),
+            "tasks_done": _count(p, "SELECT COUNT(*) AS n FROM tasks WHERE status='done'")}
+
+
+def _activity(p, limit: int = 8) -> List[Dict[str, Any]]:
+    return [{"ts": r["ts"], "id": r["entity_id"], "type": r["entity_type"], "action": r["action"], "summary": r["summary"], "who": r["author_type"]}
+            for r in p.q("SELECT ts, entity_type, entity_id, action, summary, author_type FROM events WHERE entity_type != 'config' ORDER BY id DESC LIMIT ?", (limit,))]
+
+
+def _active_experiments(p, limit: int = 6) -> List[Dict[str, Any]]:
+    out = []
+    for e in p.list("experiment", order="id DESC"):
+        if e["status"] in ("completed", "failed", "abandoned", "cancelled"):
+            continue
+        st = services.experiment_state(p, e["id"])
+        out.append({"id": e["id"], "title": e["title"], "status": e["status"], "runs": st["runs"], "planned": e.get("planned_runs"),
+                    "active": st["active"], "failed": st["failed"], "unsynthesized": st["unsynthesized"]})
+    return out[:limit]
+
+
+def _metric(p, exp: Dict[str, Any]):
+    names = exp.get("metrics_requested") or []
+    row = None
+    if names:
+        row = p.q1("SELECT name FROM metrics WHERE experiment_id=? AND name=? LIMIT 1", (exp["id"], names[0]))
+    row = row or p.q1("SELECT name, COUNT(*) AS n FROM metrics WHERE experiment_id=? AND value IS NOT NULL GROUP BY name ORDER BY n DESC LIMIT 1", (exp["id"],))
+    if not row:
+        return None
+    m = p.q1("SELECT MIN(value) AS lo, MAX(value) AS hi, COUNT(*) AS n FROM metrics WHERE experiment_id=? AND name=? AND value IS NOT NULL", (exp["id"], row["name"]))
+    last = p.q1("SELECT value FROM metrics WHERE experiment_id=? AND name=? AND value IS NOT NULL ORDER BY id DESC LIMIT 1", (exp["id"], row["name"]))
+    return {"name": row["name"], "min": m["lo"], "max": m["hi"], "last": (last or {}).get("value"), "n": m["n"]}
+
+
 def home(p) -> Dict[str, Any]:
     from . import context as C
     h = C.research_home(p)
     running = [dict(r) for r in p.q("SELECT id, experiment_id, label, status, started_at, backend FROM runs WHERE status IN ('queued','running') ORDER BY id DESC LIMIT 20")]
     findings = [f for f in p.list("finding", order="created_at DESC, id DESC")][:6]
     return {"project": {"name": p.name, "goal": p.config["project"].get("goal"), "layout": W.info(p)["mode"]},
+            "stats": _stats(p), "activity": _activity(p), "active_experiments": _active_experiments(p),
             "focus": h.get("current_focus"), "next_task": h.get("next_task"), "attention": _attention(p), "running": running,
             "learned": [{"id": f["id"], "title": f["title"], "status": f["status"], "confidence": f.get("confidence")} for f in findings],
             "settings_fingerprint": __import__("research.registry", fromlist=["x"]).fingerprint(p)}
@@ -90,7 +134,8 @@ def research(p) -> Dict[str, Any]:
         st = services.experiment_state(p, e["id"])
         exps.append({"id": e["id"], "title": e["title"], "status": e["status"], "question_id": e.get("question_id"),
                      "hypothesis": e.get("hypothesis"), "runs": st["runs"], "active": st["active"], "failed": st["failed"],
-                     "unsynthesized": st["unsynthesized"], "needs_synthesis": st["needs_synthesis"]})
+                     "unsynthesized": st["unsynthesized"], "needs_synthesis": st["needs_synthesis"],
+                     "planned": e.get("planned_runs"), "metric": _metric(p, e), "updated_at": e.get("updated_at") or e.get("created_at")})
     return {"questions": [{"id": q["id"], "title": q["title"], "status": q["status"]} for q in p.list("question")],
             "experiments": exps,
             "findings": [{"id": f["id"], "title": f["title"], "status": f["status"], "kind": f.get("kind"), "confidence": f.get("confidence")}

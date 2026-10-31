@@ -1,9 +1,13 @@
 import { useId } from 'react';
 import { Help, fmt } from './Help';
+import { Icon } from './common';
 import type { SettingOption } from './types';
 
-export function SettingRow({ option, draft, error, onChange, onReset, onDoc, disabledReason }: {
-  option: SettingOption; draft: any; error?: string; onChange: (v: any) => void; onReset: () => void; onDoc: (p: string) => void; disabledReason?: string;
+const firstSentence = (s: string) => { const m = s.match(/^.*?[.!?](\s|$)/); return (m ? m[0] : s).trim(); };
+const tail = (p: string) => (p.length > 38 ? '…' + p.slice(-37) : p);
+
+export function SettingRow({ option, draft, error, onChange, onReset, onDoc, onOpenFile, disabledReason }: {
+  option: SettingOption; draft: any; error?: string; onChange: (v: any) => void; onReset: () => void; onDoc: (p: string) => void; onOpenFile?: (path: string) => void; disabledReason?: string;
 }) {
   const id = useId();
   const o = option;
@@ -11,23 +15,34 @@ export function SettingRow({ option, draft, error, onChange, onReset, onDoc, dis
   const shown = changed ? draft : o.value;
   const dis = !!disabledReason;
   const hint = `${id}-hint`;
+  const layer = o.source === 'default' ? 'built-in default' : o.source === 'machine' ? 'machine file' : 'project file';
   return (
     <div className={'setting' + (changed ? ' changed' : '')} role="group" aria-labelledby={`${id}-l`}>
-      <div className="setting-head">
-        <label id={`${id}-l`} htmlFor={id} className="setting-label">{o.label}</label>
-        <Help option={o} onDoc={onDoc} />
-        {o.risk !== 'normal' && <span className="badge warn" title="Only a human can change this">policy</span>}
-        <span className={'badge src-' + o.source}>{o.source}{o.inherited && o.source !== 'default' ? ' · inherited' : ''}</span>
-        {(o.source !== 'default') && !changed && <button type="button" className="link" onClick={onReset} aria-label={`Reset ${o.label} to ${fmt(o.default)}`}>Reset</button>}
-        {changed && <span className="badge pending">unsaved</span>}
+      <div>
+        <div className="setting-head">
+          <label id={`${id}-l`} htmlFor={id} className="setting-label">{o.label}</label>
+          <Help option={o} onDoc={onDoc} />
+          {o.risk !== 'normal' && <span className="badge warn" title="Only a human can change this">policy</span>}
+          {changed && <span className="badge pending">unsaved</span>}
+        </div>
+        <p className="setting-desc">{firstSentence(o.help)}</p>
+        <div className="setting-origin">
+          <span className={'badge src-' + o.source} title={`Effective value comes from the ${layer}`}>{o.source}</span>
+          {o.file
+            ? <button type="button" className="link" title={`Open ${o.file}`} onClick={() => onOpenFile?.(o.file!)}>{tail(o.file)}</button>
+            : <span>not written to any file</span>}
+          <code title="Key in the YAML file">{o.key}</code>
+          {o.source !== 'default' && o.overridden_in.length > 1 && <span title={o.overridden_in.join(' → ')}>overrides {o.overridden_in.filter((x) => x !== o.source).join(', ') || 'default'}</span>}
+        </div>
       </div>
-      <div className="setting-body">
+      <div className="setting-ctl">
         <Control id={id} option={o} value={shown} onChange={onChange} describedBy={hint} disabled={dis} />
-        <span className="muted small" id={hint}>
-          {dis ? disabledReason : <>Default {fmt(o.default)}{o.unit ? ` ${o.unit}` : ''}{o.source !== 'default' ? ` · was ${fmt(o.value)}` : ''}</>}
+        <span className="hint" id={hint}>
+          {dis ? disabledReason : <>Default {fmt(o.default)}{o.unit ? ` ${o.unit}` : ''}</>}
+          {o.source !== 'default' && !changed && !dis && <> · <button type="button" className="link" onClick={onReset} aria-label={`Reset ${o.label} to ${fmt(o.default)}`}>Reset</button></>}
         </span>
       </div>
-      {(error || o.errors.length > 0) && <div className="field-error" role="alert">{error || o.errors[0]}</div>}
+      {(error || o.errors.length > 0) && <div className="field-error" role="alert"><Icon name="alert" /> {error || o.errors[0]}</div>}
     </div>
   );
 }

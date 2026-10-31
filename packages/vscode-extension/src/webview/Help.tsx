@@ -49,7 +49,8 @@ export function Help({ option, onDoc }: { option: SettingOption; onDoc?: (path: 
             {o.choices && <><dt>Allowed</dt><dd>{o.choices.join(', ')}</dd></>}
             {(o.min != null || o.max != null) && <><dt>Range</dt><dd>{o.min ?? '…'} to {o.max ?? '…'}</dd></>}
             {o.affects.length > 0 && <><dt>Changes</dt><dd>{o.affects.join(', ')}</dd></>}
-            <dt>Stored in</dt><dd><code>{o.key.split('.').flatMap((k, i) => (i ? [<wbr key={'w' + i} />, '.' + k] : [k]))}</code></dd>
+            <dt>Key</dt><dd><code>{o.key.split('.').flatMap((k, i) => (i ? [<wbr key={'w' + i} />, '.' + k] : [k]))}</code></dd>
+            <dt>File</dt><dd>{o.file ? <code>{o.file}</code> : <span className="muted">built-in default; written to the project file when you change it</span>}</dd>
           </dl>
           {o.risk !== 'normal' && <p className="help-warn">Policy setting: only a human can change it{o.risk === 'risky' ? ', with confirmation' : ''}. Agents are refused.</p>}
           {onDoc && <a href="#" onClick={(e) => { e.preventDefault(); onDoc(o.doc || 'docs/SPEC.md'); }}>Read more</a>}

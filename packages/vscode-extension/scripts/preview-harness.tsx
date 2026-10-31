@@ -9,6 +9,9 @@ const F = __FIXTURE__;
 let state: any = {};
 const host = {
   call: async (method: string, p: any = {}) => {
+    if (method === 'ping') return { initialized: true, name: F.home.project.name };
+    if (method === 'doctor') return F.doctor;
+    if (method === 'config_check') return F.check;
     if (method === 'control') return F[p.page];
     if (method === 'settings') return F.settings.all;
     if (method === 'settings_preview') return { ...F.preview, errors: {} };
@@ -16,7 +19,7 @@ const host = {
     if (method === 'promotion_diff') return F.promotion_diff;
     return {};
   },
-  openEntity() {}, openDoc() {}, getState: () => state, setState: (s: any) => (state = s),
+  openEntity() {}, openDoc() {}, openFile() {}, getState: () => state, setState: (s: any) => (state = s),
 };
 createRoot(document.getElementById('root')!).render(<App host={host as any} initial={__SCENARIO__.initial} />);
 

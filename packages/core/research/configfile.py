@@ -245,7 +245,10 @@ def check(project_raw: Dict[str, Any], defaults: Dict[str, Any], text: Optional[
                               "problem": f"{d!r} is not a configured cluster ({', '.join(sorted(known)) or 'none'})"})
 
     if text is not None:
-        out["edited_comments"] = edited_reference_lines(text, inherited)
+        # A reference line is "edited" only if it matches neither the built-in default nor the inherited (machine) value;
+        # the block is generated from the former, and a machine file legitimately differs from it.
+        against_defaults = {e["line"] for e in edited_reference_lines(text, defaults)}
+        out["edited_comments"] = [e for e in edited_reference_lines(text, inherited) if e["line"] in against_defaults]
         for ec in out["edited_comments"]:
             out["warnings"].append(
                 f"line {ec['line']}: `{ec['key']}: {ec['value']}` is commented out, so it has no effect "

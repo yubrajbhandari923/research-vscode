@@ -283,6 +283,21 @@ def _layer_text(p, scope: str) -> Tuple[str, str]:
     return (open(path, encoding="utf-8", newline="").read() if os.path.isfile(path) else ""), path
 
 
+def _digest(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def file_digests(p) -> Dict[str, str]:
+    """Content digests of the editable layers, so a save can detect an edit made behind the editor's back."""
+    out = {}
+    for scope in ("project", "machine"):
+        try:
+            out[scope] = _digest(_layer_text(p, scope)[0])
+        except (ResearchError, OSError):
+            out[scope] = ""
+    return out
+
+
 def _defaults() -> Dict[str, Any]:
     from .store import DEFAULT_CONFIG
     return DEFAULT_CONFIG
@@ -317,10 +332,13 @@ def describe(p, category: Optional[str] = None, search: Optional[str] = None) ->
         if dyn is not None:   # names that exist in this project (profiles, strategies) are offered as a dropdown
             meta.update(type="enum", choices=dyn)
         out.append({**meta, "value": value if present else d, "default": d, "source": origin,
-                    "inherited": origin != "project", "overridden_in": (s or {}).get("defined_in", []), "errors": errs})
+                    "inherited": origin != "project",
+                    "file": {"project": p.rel(p.config_path), "machine": configfile.machine_path()}.get(origin) if origin != "default" else None,
+                    "overridden_in": (s or {}).get("defined_in", []), "errors": errs})
     return {"categories": [{"id": c, "label": l} for c, l in CATEGORIES], "options": out,
             "machine_config": configfile.machine_path(), "project_config": p.config_path,
-            "fingerprint": fingerprint(p)}
+            "project_config_rel": p.rel(p.config_path), "digests": file_digests(p),
+            "layers": ["default", "machine", "project"], "fingerprint": fingerprint(p)}
 
 
 def _dynamic_choices(p, key: str) -> Optional[List[str]]:
@@ -376,7 +394,7 @@ def remove_key(text: str, dotted: str) -> str:
     return newline.join(lines)
 
 
-def _plan(p, changes: Dict[str, Any], scope: str, remove: bool = False) -> Dict[str, Any]:
+def _plan(p, changes: Dict[str, Any], scope: str, remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
     if scope not in ("project", "machine"):
         raise ResearchError("scope must be 'project' or 'machine'")
     errors: Dict[str, str] = {}
@@ -397,6 +415,9 @@ def _plan(p, changes: Dict[str, Any], scope: str, remove: bool = False) -> Dict[
         else:
             errors[k] = err or "Invalid value."
     text, path = _layer_text(p, scope)
+    if expected and _digest(text) != expected:
+        raise ResearchError(f"{os.path.basename(path)} changed on disk since the editor loaded it.",
+                            hint="Reload the settings to see the current file, then repeat the change. Nothing was written.")
     new = text
     if not errors:
         if remove:
@@ -423,8 +444,8 @@ def describe_value(p, key: str) -> Any:
     return v if present else _default_of(key)
 
 
-def preview(p, changes: Dict[str, Any], scope: str = "project", remove: bool = False) -> Dict[str, Any]:
-    r = _plan(p, changes, scope, remove)
+def preview(p, changes: Dict[str, Any], scope: str = "project", remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
+    r = _plan(p, changes, scope, remove, expected)
     r.pop("_old"), r.pop("_new")
     if _is_agent(p) and r["policy_keys"]:
         r["blocked_for_agents"] = r["policy_keys"]
@@ -432,8 +453,8 @@ def preview(p, changes: Dict[str, Any], scope: str = "project", remove: bool = F
 
 
 def apply(p, changes: Dict[str, Any], scope: str = "project", reason: Optional[str] = None, confirm: bool = False,
-          remove: bool = False) -> Dict[str, Any]:
-    plan = _plan(p, changes, scope, remove)
+          remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
+    plan = _plan(p, changes, scope, remove, expected)
     if not plan["ok"]:
         raise ResearchError("; ".join(f"{k}: {e}" for k, e in plan["errors"].items()))
     if plan["policy_keys"] and _is_agent(p):
@@ -455,7 +476,7 @@ def apply(p, changes: Dict[str, Any], scope: str = "project", reason: Optional[s
     p.config = p.load_config()
     write_policy(p)
     return {"changed": True, "values": plan["values"], "scope": scope, "diff": plan["diff"], "path": plan["path"],
-            "policy": ".research/context/policy.md", "fingerprint": fingerprint(p)}
+            "policy": ".research/context/policy.md", "fingerprint": fingerprint(p), "digests": file_digests(p)}
 
 
 def _write_new(path: str, text: str) -> None:
