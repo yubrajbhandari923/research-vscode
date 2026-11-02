@@ -64,7 +64,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'research.resume';
   ctx.subscriptions.push(status);
+  let autoOpened = false;   // open the Control Center once per window, when an initialized project is first seen
   model.onChange(() => {
+    if (!autoOpened && model.initialized && cfg().get<boolean>('openControlCenterOnStartup', true)) {
+      autoOpened = true;
+      panels.openControlCenter().catch(() => undefined);
+    }
     const r = model.resume;
     if (!model.initialized || !r) {
       status.hide();

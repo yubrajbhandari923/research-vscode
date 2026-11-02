@@ -1395,6 +1395,11 @@
           ],
           "description": "Default execution mode for 'Run\u2026'."
         },
+        "research.openControlCenterOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the Research Control Center (Home, Work, Research, Agents, Settings) when a window with a research project opens."
+        },
         "research.projectRoot": {
           "type": "string",
           "default": "",
