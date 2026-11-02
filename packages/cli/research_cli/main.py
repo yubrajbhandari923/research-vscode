@@ -3586,6 +3586,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--context")
     x.add_argument("--status", choices=STATUSES["plan"])
     x.add_argument("--skill", action="append")
+    from . import supervisor_cmds as SC
+    SC.attach_plan(g, add)
+    SC.attach_top(sub, add, group)
 
     # Phase 0: Tasks
     g = group("task", "tasks within plans (units of work)", aliases=["tasks", "t"])
@@ -3758,6 +3761,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_project_init(a)
         if fn is cmd_doctor:
             return cmd_doctor(a)
+        if fn.__name__ == "cmd_plan_yaml" and getattr(a, "action", None) == "template":
+            return fn(a, None) or 0                # a template needs no project
         p = _proj(a, sync=not _is_readonly(a))
         try:
             rc = fn(a, p)

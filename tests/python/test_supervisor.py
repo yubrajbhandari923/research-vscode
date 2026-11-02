@@ -316,3 +316,27 @@ def test_agents_run_in_the_experiment_worktree_and_plan_tasks_share_it(repo, tmp
     assert os.path.realpath(open(os.path.join(cwd, "where.txt")).read().strip()) == os.path.realpath(cwd)
     assert not os.path.exists(os.path.join(repo, "where.txt"))
     p.close()
+
+
+# ------------------------------------------------------------------------------------------------ CLI
+def test_cli_yaml_round_trip_and_agent_commands_need_a_supervised_execution(proj, repo, tmp_path):
+    import subprocess
+    env = {**os.environ, "RESEARCH_AUTHOR_TYPE": "human"}
+    def cli(*a, **kw):
+        return subprocess.run([sys.executable, "-m", "research_cli", "--root", str(repo), *a], cwd=repo, env=env, capture_output=True, text=True, **kw)
+    f = tmp_path / "plan.yaml"
+    f.write_text(yaml_plan([task_yaml("a", "A", "true")]))
+    assert cli("plan", "yaml", "validate", str(f)).returncode == 0
+    d = cli("plan", "yaml", "diff", str(f))
+    assert d.returncode == 0 and "create_task" in d.stdout
+    assert cli("plan", "yaml", "apply", str(f)).returncode == 0
+    again = cli("plan", "yaml", "apply", str(f), "--json")
+    assert json.loads(again.stdout)["plans"][0]["changed"] is False
+    out = tmp_path / "out.yaml"
+    assert cli("plan", "yaml", "export", "demo-plan", "-o", str(out)).returncode == 0 and "revision: 1" in out.read_text()
+    assert cli("plan", "run", "demo-plan", "--no-daemon").returncode == 0
+    s = cli("plan", "status", "demo-plan", "--json")
+    assert json.loads(s.stdout)["state"] == "running"
+    bad = cli("agent", "progress", "T-001", "--message", "hi")
+    assert bad.returncode == 3 and "RESEARCH_EXECUTION" in bad.stderr
+    assert cli("plan", "yaml", "validate", "-", input="schema_version: 2\nplans: []\n").returncode != 0
