@@ -1,0 +1,13 @@
+checked 3 run(s) on plp-drcc-login2, skipped 9 already settled
+  RUN-0010 → [completed]  job 203887
+  RUN-0011 → [completed]  job 203888
+  RUN-0012 → [completed]  job 203889
+  ↓ RUN-0010 results imported  5 new metric entries, 2 artifact(s)
+  ↓ RUN-0011 results imported  5 new metric entries, 2 artifact(s)
+  ↓ RUN-0012 results imported  5 new metric entries, 2 artifact(s)
+
+Ready for interpretation
+  EXP-001  Diffusion coefficient sweep on a 64x64 grid  6 unsynthesized run(s)
+    → research experiment synthesize EXP-001
+
+  No agent was started: scientific interpretation stays a human/agent decision.

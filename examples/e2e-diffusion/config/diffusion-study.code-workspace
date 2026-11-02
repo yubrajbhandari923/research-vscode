@@ -1,0 +1,31 @@
+{
+  "folders": [
+    {
+      "name": "main (code)",
+      "path": "main"
+    },
+    {
+      "name": "ledger (research records)",
+      "path": "ledger"
+    },
+    {
+      "name": "EXP-001 (experiment code)",
+      "path": "experiments/EXP-001"
+    }
+  ],
+  "settings": {
+    "research.projectRoot": ".",
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "git.countBadge": "tracked",
+    "files.exclude": {
+      "**/.research/cache": true
+    },
+    "git.repositoryScanIgnoredFolders": []
+  },
+  "extensions": {
+    "recommendations": [
+      "research-os.research-panel"
+    ]
+  }
+}

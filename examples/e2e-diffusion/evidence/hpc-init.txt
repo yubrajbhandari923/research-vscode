@@ -1,0 +1,6 @@
+✓ /home/yb107/research-os-e2e/projects/diffusion-study
+✓ /home/yb107/research-os-e2e/projects/diffusion-study/code
+✓ /home/yb107/research-os-e2e/projects/diffusion-study/runs
+✓ /home/yb107/research-os-e2e/projects/diffusion-study/results
+✓ /home/yb107/research-os-e2e/projects/diffusion-study/metadata
+  Existing datasets, code, runs and results were not touched.

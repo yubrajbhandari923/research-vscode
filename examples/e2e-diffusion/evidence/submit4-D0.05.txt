@@ -1,0 +1,7 @@
+✓ RUN-0010 submitted to plp-drcc-login2 as slurm job 203887
+  reserved        1 CPU · no GPU · 1G memory · up to 00:05:00 wall-time
+  experiment      EXP-001
+  remote code     /home/yb107/research-os-e2e/projects/diffusion-study/code/EXP-001/RUN-0010
+  token           9097e8af52afefbcc3b5f90afa5735d4
+
+  research hpc status RUN-0010    # or just `research hpc sync` later
