@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.4
+
+- **Agent reviewers can actually record their verdict.** The headless allowlist now covers `.research/bin/research …` and `cd … && research …`; briefs tell agents to run `research` directly, one command per call. Terminal-run agents (finding reviews) print readable text instead of raw JSON.
+- **Policy gates say how to proceed.** The run-budget message lists the exact commands (`run update … --reviewed`, `experiment synthesize`, `--override "reason"`); `hpc submit` accepts `--override`.
+- **Promotion → Run tests** asks for the test command when none is configured (and points to `promotion.test_command`).
+- `hpc sync` prints the last stderr line of a failed job; `research run logs` reads logs that came home from the cluster.
+
 ## 2.0.3
 
 - **First dispatch no longer dead-ends.** When frozen acceptance tests are required, the dialog offers *Have the balanced agent write the tests first* (dispatches the coordinator level, which is exempt from the gate and whose brief says to write and freeze tests), besides *Freeze test files…* and the logged override. Errors can now carry machine-readable `data`.

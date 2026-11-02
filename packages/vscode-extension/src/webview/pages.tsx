@@ -294,6 +294,8 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sure, setSure] = useState(false);
+  const [cmd, setCmd] = useState('');
+  const needCmd = /No test command configured/.test(err);
   const act = async (action: string, extra: any = {}) => {
     setBusy(true); setErr('');
     try { setC(await host.call('promotion_action', { id: c.id, action, ...extra })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
@@ -304,7 +306,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
     <Dialog title={`${c.id} · ${c.title}`} onClose={onClose} actions={<>
       <button type="button" onClick={onClose} data-autofocus>Close</button>
       {c.state !== 'promoted' && c.state !== 'abandoned' && <button type="button" disabled={busy} onClick={() => act('abandon')}>Abandon</button>}
-      <button type="button" disabled={busy || c.state === 'promoted'} onClick={() => act('verify')}>Run tests</button>
+      <button type="button" disabled={busy || c.state === 'promoted'} onClick={() => act('verify', cmd.trim() ? { command: cmd.trim() } : {})}>Run tests</button>
       <button type="button" disabled={busy || g.review.state === 'approved' || g.tests.state !== 'passed'} onClick={() => act('review', { verdict: 'approve' })}>Approve code review</button>
       <button type="button" className="primary" disabled={busy || c.state !== 'reviewed'} onClick={() => act('approve')}>Approve promotion</button>
       <button type="button" className="primary" disabled={busy || c.state !== 'approved' || !sure} onClick={() => act('integrate', { confirm: true })}>Merge into main</button></>}>
@@ -313,6 +315,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
         {row('Tests', g.tests)}{row('Scientific evidence', g.evidence)}{row('Implementation review', g.review)}{row('Human approval', g.approval)}</tbody></table>
       <p className="small muted">Scientifically successful: <b>{String(c.classification.scientifically_successful ?? 'not known')}</b> · technically correct: <b>{String(c.classification.technically_correct ?? 'not known')}</b> · integration-ready: <b>{String(c.classification.integration_ready)}</b> · promoted: <b>{String(c.classification.promoted)}</b></p>
       {err && <div className="field-error" role="alert">{err}</div>}
+      {needCmd && <div className="stack"><label htmlFor="pc-cmd">Test command to run in the candidate <span className="muted">(set promotion.test_command in Settings → Git &amp; workspaces to keep it)</span></label><input id="pc-cmd" type="text" value={cmd} placeholder="python test_diffuse.py" onChange={(e) => setCmd(e.target.value)} /></div>}
       <h3>Patch main would receive</h3>
       <State a={diff}>{(d) => <><p className="muted small">{d.stat}</p><pre className="diff" tabIndex={0} aria-label="Patch">{d.patch.split('\n').slice(0, 400).map((l: string, i: number) => <div key={i} className={l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : ''}>{l || ' '}</div>)}</pre></>}</State>
       {c.state === 'approved' && <label className="check"><input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} /> I have read the patch. Moving <code>main</code> is a fast-forward merge; no history is rewritten and no branch is deleted.</label>}

@@ -2407,7 +2407,7 @@ def cmd_hpc(a, p) -> int:
     if act == "submit":
         r = HR.submit(p, a.id, cluster_name=cl, command=_shell_cmd(a) or None,
                       dry_run=a.dry_run, approve=a.yes, resources=_slurm_opts(a),
-                      stage_datasets=a.stage_datasets, deep_verify=a.deep)
+                      stage_datasets=a.stage_datasets, deep_verify=a.deep, override=a.override)
         if a.json:
             out_json(r)
             return 0
@@ -2468,6 +2468,8 @@ def cmd_hpc(a, p) -> int:
                                 f"{x['slurm_job_id']} (not resubmitted)")
         for x in r["updated"]:
             print(f"  {x['run']} → [{st(x['status'])}]" + dim(f"  job {x['slurm_job_id']}"))
+            if x.get("stderr_tail"):
+                print(yellow(f"      stderr: {x['stderr_tail']}") + dim(f"   (research run logs {x['run']} --stderr)"))
         for x in r["collected"]:
             print(green("  ↓ ") + f"{x['run']} results imported"
                   + dim(f"  {x['metrics_added']} new metric entries, {x['artifacts']} artifact(s)"))
@@ -3094,6 +3096,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--cluster", help="cluster name from hpc.clusters (default: hpc.default_cluster)")
     x.add_argument("--dry-run", action="store_true", help="preview only; transfers and submits nothing")
     x.add_argument("--yes", action="store_true", help="approve an expensive action (submit, dataset staging)")
+    x.add_argument("--override", metavar="REASON", help="submit: go past the unsynthesized/failed-run budget (logged)")
     x.add_argument("--format", choices=["tar.gz", "zip"], default="tar.gz", help="bundle archive format")
     x.add_argument("--project", help="inspect another project slug on the same cluster")
     x.add_argument("--no-collect", action="store_true", help="sync: update status only, fetch no results")

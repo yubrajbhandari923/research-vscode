@@ -46,7 +46,7 @@ def _task(p):
 def test_argv_per_provider():
     c = providers.build_argv({"command": "claude"}, "claude", "m1", "P", "/w", ["/l"], True)
     assert c == ["claude", "-p", "--output-format", "json", "--add-dir", "/l", "--allowedTools",
-                 "Bash(research *),Bash(./.research/bin/research *),Bash(*/.research/bin/research *),mcp__research", "--permission-mode", "acceptEdits", "--model", "m1", "P"]
+                 "Bash(research *),Bash(.research/bin/research *),Bash(./.research/bin/research *),Bash(*/.research/bin/research *),Bash(cd * && research *),Bash(cd * && .research/bin/research *),Bash(cd * && ./.research/bin/research *),mcp__research", "--permission-mode", "acceptEdits", "--model", "m1", "P"]
     assert "--allowedTools" not in providers.build_argv({"command": "claude"}, "claude", "m1", "P", "/w", [], False)   # interactive asks the human
     x = providers.build_argv({"command": "codex"}, "codex", "gpt", "P", "/w", ["/l"], True, "high")
     assert x[:3] == ["codex", "exec", "--json"] and "-C" in x and "/w" in x and "danger-full-access" not in x

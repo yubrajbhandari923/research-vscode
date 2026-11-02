@@ -208,6 +208,9 @@ def build_brief(p: Project, role: str, target: Optional[str] = None, objective: 
               f"Work only in `{workspace['path']}` (branch `{workspace['branch']}`, base `{str(workspace.get('base_rev'))[:8]}`, "
               f"workspace {workspace['id']}). The research ledger is shared: record everything through the `research` CLI, "
               "never by editing `.research/` files. Do not switch branches, merge into `main`, or push.", ""]
+    L += ["## Running commands", "",
+          "`research` is on your PATH: run it directly, one command per call. Compound commands, loops and `;` chains need "
+          "approval nobody can give in a headless session and will be refused.", ""]
     if role == "implementer":
         L += ["## If the code will run on a cluster (`research hpc submit`)", "",
               "Results only come home if the code records them: when `RESEARCH_RUN_DIR` is set, write files under "

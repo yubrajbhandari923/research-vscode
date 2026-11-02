@@ -94,12 +94,12 @@ class Server:
         return promotion.diff(self.project(sync=False), id)
 
     def m_promotion_action(self, id: str, action: str, note: Optional[str] = None, confirm: bool = False,
-                           verdict: Optional[str] = None) -> Dict[str, Any]:
+                           verdict: Optional[str] = None, command: Optional[str] = None) -> Dict[str, Any]:
         """verify | review | approve | integrate | abandon. The core refuses agents and unconfirmed integration."""
         from . import promotion as PR
         p = self.project()
         if action == "verify":
-            return PR.verify(p, id)
+            return PR.verify(p, id, command)
         if action == "review":
             return PR.review(p, id, verdict or "comment", note)
         if action == "approve":

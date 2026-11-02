@@ -239,7 +239,8 @@ def _remote_run_paths(paths: Dict[str, str], exp_id: str, run_id: str) -> Dict[s
 
 def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, command: Optional[str] = None,
            dry_run: bool = False, approve: bool = False, resources: Optional[Dict[str, Any]] = None,
-           stage_datasets: bool = False, deep_verify: bool = False) -> Dict[str, Any]:
+           stage_datasets: bool = False, deep_verify: bool = False,
+           override: Optional[str] = None) -> Dict[str, Any]:
     """Bundle, upload and submit one experiment run through SSH + Slurm.
 
     The run record and submission token exist before anything is transferred, so results always come home
@@ -301,7 +302,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
 
     run = create_run(p, exp_id, command=cmd, backend="slurm", status="queued",
                      parameters=exp.get("parameters") or {},
-                     notes=f"submitted to {cluster['name']} over ssh")
+                     notes=f"submitted to {cluster['name']} over ssh", override=override)
     run_id = run["id"]
     rp = _remote_run_paths(paths, exp_id, run_id)
     for path in rp.values():
@@ -600,6 +601,14 @@ def sync(p: Project, *, cluster_name: Optional[str] = None, collect_results: boo
             except ResearchError as e:
                 out["errors"].append({"run": run["id"], "error": str(e)})
 
+    for x in out["updated"]:   # a failed job says why right here, without an ssh session
+        if x.get("status") == "failed":
+            lp = os.path.join(p.abspath(p.rel(p.path("runs", x["run"]))), "collected", "logs", "stderr.log")
+            try:
+                lines = [l for l in open(lp, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
+                x["stderr_tail"] = lines[-1][:300] if lines else None
+            except OSError:
+                x["stderr_tail"] = None
     out["next_tasks"] = _pending_analysis(p)
     return out
 

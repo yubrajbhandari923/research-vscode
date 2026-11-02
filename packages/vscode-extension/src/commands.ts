@@ -784,7 +784,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     if (d.problem) return void vscode.window.showErrorMessage(d.problem);
     if (!d.execution_id) {  // not tied to a task (planner/analyst on a plan, finding review): no launch tracking is possible
       const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
-      term.show(); term.sendText(d.argv.map(shq).join(' '), true);
+      term.show(); term.sendText(d.argv.map((x: string, i: number, all: string[]) => (all[i - 1] === '--output-format' && x === 'json' ? 'text' : x)).map(shq).join(' '), true);   // readable output in a terminal
       return void done(`${d.profile}/${d.role}: command sent to a terminal; Research OS cannot confirm it is running`);
     }
     if (mode.headless) await rpc('execution_start', { id: d.execution_id });
