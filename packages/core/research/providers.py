@@ -250,3 +250,43 @@ def register(name: str, build: Callable[..., List[str]], capabilities: Dict[str,
         raise ResearchError(f"Provider {name!r} capabilities are missing: {', '.join(sorted(missing))}")
     ADAPTERS[name] = build
     CAPABILITIES[name] = capabilities
+
+
+# ------------------------------------------------------------------------------------------------ session continuity
+_RESUME_PROBE: Dict[Any, bool] = {}
+
+
+def native_resume_supported(kind: str, command: str) -> bool:
+    """True only when the *installed* CLI proves it: its own --help lists the resume interface. Nothing is assumed from the
+    provider's name, and an unprobeable provider falls back to a context handoff."""
+    key = (kind, command)
+    if key not in _RESUME_PROBE:
+        ok = False
+        if shutil.which(command):
+            argv = {"claude": [command, "--help"], "codex": [command, "exec", "resume", "--help"]}.get(kind)
+            r = _run(argv, timeout=20) if argv else None
+            if r and r.returncode == 0:
+                ok = (kind != "claude") or "--resume" in (r.stdout + r.stderr)
+        _RESUME_PROBE[key] = ok
+    return _RESUME_PROBE[key]
+
+
+def resume_argv(kind: str, argv: List[str], session_id: str) -> Optional[List[str]]:
+    """The provider command line that continues a native session, or None when this adapter has no verified resume shape."""
+    if kind == "claude" and "-p" in argv:
+        i = argv.index("-p")
+        return argv[:i + 1] + ["--resume", session_id] + argv[i + 1:]
+    return None
+
+
+def session_id_of(kind: str, output: str) -> Optional[str]:
+    """The provider's own session id from headless output, if the format reports one (claude --output-format json does)."""
+    if kind == "claude":
+        for line in reversed((output or "").strip().splitlines()):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("session_id"):
+                return str(d["session_id"])
+    return None
