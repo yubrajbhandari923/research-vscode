@@ -62,7 +62,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     await rpc('run_refresh', {});
     await model.refresh();
   });
-  reg('research.resume', () => panels.openResume());
+  reg('research.resume', () => panels.openControlCenter('home')); // status bar and sidebar go to the Control Center (Home, Work, Research, Agents, Settings)
   reg('research.openControlCenter', (page?: string, target?: string) => panels.openControlCenter(page, target));
   reg('research.openSettings', () => panels.openControlCenter('settings'));
   reg('research.open', async (a: any, side?: boolean) => {
