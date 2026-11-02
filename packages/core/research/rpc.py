@@ -536,6 +536,122 @@ class Server:
         from .hpc import remote as HR
         return HR.sync(self.project(), cluster_name=cluster)
 
+    # supervisor ----------------------------------------------------------------------------
+    def m_plan_yaml_template(self) -> Dict[str, Any]:
+        from . import planspec as PS
+        return {"text": PS.TEMPLATE}
+
+    def m_plan_yaml_validate(self, text: str) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.validate(text, self.project())
+
+    def m_plan_yaml_diff(self, text: str) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.diff(self.project(), text)
+
+    def m_plan_yaml_apply(self, text: str, dry_run: bool = False) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.apply(self.project(), text, dry_run=dry_run, source="ui")
+
+    def m_plan_yaml_export(self, plan: str, experiment: Optional[str] = None, task: Optional[str] = None,
+                           partial: bool = False) -> Dict[str, Any]:
+        from . import planspec as PS
+        return {"text": PS.export(self.project(), plan, scope="partial" if partial else "full", experiment=experiment, task=task)}
+
+    def m_managed_plans(self) -> List[Dict[str, Any]]:
+        """Plans that came through YAML, with their run state: the Control Center's Plans page."""
+        from . import planspec as PS, supervisor as SV
+        p = self.project(sync=False)
+        out = []
+        for st in PS.all_states(p):
+            try:
+                s = SV.status(p, st["plan_key"])
+                out.append({"key": st["plan_key"], "id": st["plan_id"], "revision": st["revision"], "title": (st.get("spec") or {}).get("title"),
+                            "state": s["state"], "progress": s["progress"], "counts": s["counts"], "pending_proposals": len(s["proposals"])})
+            except ResearchError:
+                continue
+        return out
+
+    def m_supervisor_status(self, plan: str) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.status(self.project(sync=False), plan)
+
+    def m_supervisor_daemon(self, action: str = "status") -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project(sync=False)
+        if action == "start":
+            return SV.daemon_start(p, detach=True)
+        if action == "stop":
+            return SV.daemon_stop(p)
+        return SV.daemon_status(p)
+
+    def m_plan_control(self, plan: str, action: str, cancel_agents: bool = False) -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project()
+        fn = {"run": lambda: SV.plan_run(p, plan), "pause": lambda: SV.plan_pause(p, plan), "resume": lambda: SV.plan_resume(p, plan),
+              "stop": lambda: SV.plan_stop(p, plan, cancel_agents)}.get(action)
+        if not fn:
+            raise ResearchError(f"unknown plan action {action!r}")
+        return fn()
+
+    def m_supervisor_task(self, task: str, action: str, note: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project()
+        if action == "approve":
+            return SV.approve_task(p, task, note)
+        if action == "accept":
+            return SV.accept(p, task, reason or "")
+        if action in ("failed", "completed", "retry", "unblock"):
+            return SV.resolve(p, task, action, note)
+        raise ResearchError(f"unknown task action {action!r}")
+
+    def m_proposals(self) -> List[Dict[str, Any]]:
+        from . import supervisor as SV
+        return SV.list_proposals(self.project(sync=False))
+
+    def m_proposal_decide(self, id: str, approve: bool, note: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.decide_proposal(self.project(), id, approve, note)
+
+    def m_attempt_detail(self, task: str, attempt: int = 0) -> Dict[str, Any]:
+        """One attempt: its exact prompt, context sources, verification, reports and log tails."""
+        from . import execution as E, planspec as PS, supervisor as SV
+        p = self.project(sync=False)
+        hit = PS.find_task_key(p, task)
+        rs = hit and SV.load_run(p, hit[0]["plan_id"])
+        atts = ((rs or {}).get("tasks", {}).get(task) or {}).get("attempts") or []
+        if not atts:
+            return {"task": task, "attempts": []}
+        a = atts[attempt - 1] if attempt else atts[-1]
+        prompt = None
+        if a.get("prompt_path"):
+            try:
+                prompt = open(p.abspath(a["prompt_path"]), encoding="utf-8").read()
+            except OSError:
+                prompt = None
+        logs = None
+        if a.get("execution"):
+            try:
+                logs = E.logs(p, a["execution"], 6000)
+            except (OSError, ResearchError):
+                logs = None
+        return {"task": task, "attempt": a, "attempts": len(atts), "prompt": prompt, "logs": logs, "reports": SV._reports(p, task, a.get("execution"))[-40:]}
+
+    def m_promotion_hint(self, plan: str) -> Dict[str, Any]:
+        from . import planspec as PS, workspace as W
+        p = self.project(sync=False)
+        st = PS._state_for(p, plan)
+        out = []
+        for ek, eid in (st.get("experiments") or {}).items():
+            try:
+                for ws in W.list_workspaces(p):
+                    if ws.get("experiment") == eid:
+                        out.append({"experiment": eid, "workspace": ws["id"], "path": ws.get("path"), "branch": ws.get("branch"), "ahead": ws.get("commits_ahead"),
+                                    "uncommitted": ws.get("dirty") or ws.get("untracked")})
+            except ResearchError:
+                continue
+        return {"plan": plan, "workspaces": out}
+
     # agents ------------------------------------------------------------------------------------
     def m_agents(self) -> Dict[str, Any]:
         from . import agents as AG
@@ -770,7 +886,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

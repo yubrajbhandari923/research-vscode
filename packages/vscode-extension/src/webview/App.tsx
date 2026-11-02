@@ -4,6 +4,7 @@ import { HomePage, ResearchPage, WorkPage } from './pages';
 import { Incompatible, Setup } from './Setup';
 import { InitProject } from './InitProject';
 import { ProvidersPage } from './Providers';
+import { PlansPage } from './PlansPage';
 import { NewExperiment } from './NewExperiment';
 import { Banner, Icon, useAsync } from './common';
 import { SettingsPage } from './SettingsPage';
@@ -13,6 +14,7 @@ const TABS: { id: Page; label: string; hint: string }[] = [
   { id: 'home', label: 'Home', hint: 'What needs you, what is running, what you learned' },
   { id: 'work', label: 'Work', hint: 'Plans, tasks, workspaces, runs, execution' },
   { id: 'research', label: 'Research', hint: 'Questions, experiments, findings, decisions' },
+  { id: 'plans', label: 'Plans', hint: 'YAML plans run by the supervisor' },
   { id: 'agents', label: 'Agents', hint: 'Providers, models, sessions' },
   { id: 'settings', label: 'Settings', hint: 'Policies, agents, git, sandbox, HPC' },
 ];
@@ -66,6 +68,7 @@ function Shell({ host, initial, name }: { host: Host; initial?: { page?: Page; t
         {page === 'home' && <HomePage key={rev} host={host} go={go} onAttention={setAttention} />}
         {page === 'work' && <WorkPage key={rev} host={host} go={go} />}
         {page === 'research' && <ResearchPage key={rev} host={host} />}
+        {page === 'plans' && <PlansPage key={rev} host={host} />}
         {page === 'agents' && <ProvidersPage key={rev} host={host} />}
         {page === 'settings' && <SettingsPage key={rev} host={host} initialCategory={target} />}
       </main>

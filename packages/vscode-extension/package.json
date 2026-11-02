@@ -630,6 +630,36 @@
         "title": "Run on HPC Cluster…",
         "category": "Research",
         "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "research.plan.yaml.import",
+        "title": "Import Plan YAML…",
+        "category": "Research",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "research.plan.yaml.new",
+        "title": "New Plan YAML from Template",
+        "category": "Research",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "research.plan.yaml.apply",
+        "title": "Apply Plan YAML from Editor…",
+        "category": "Research",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "research.plan.yaml.open",
+        "title": "Open Plan as YAML",
+        "category": "Research",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "research.plan.run",
+        "title": "Run Plan (Supervisor)…",
+        "category": "Research",
+        "icon": "$(play)"
       }
     ],
     "menus": {
@@ -944,6 +974,26 @@
         },
         {
           "command": "research.hpc.submit",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.yaml.import",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.yaml.new",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.yaml.apply",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.yaml.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.plan.run",
           "when": "research.initialized"
         }
       ],

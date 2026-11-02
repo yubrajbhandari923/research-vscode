@@ -159,7 +159,7 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   try {
     await ready(el);
     const tabs = qa(el, '[role=tab]');
-    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Agents', 'Settings']);
+    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Plans', 'Agents', 'Settings']);
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
@@ -371,4 +371,44 @@ test('files are authoritative: origin file and key are shown, manual edits appea
     assert.match(m.el.textContent, /could not be read/); assert.ok(byText(m.el, 'button', 'Open configuration file'));
     assert.equal(fs.readFileSync(cfg, 'utf8'), broken);
   } finally { await m.unmount(); core.stop(); fs.writeFileSync(cfg, original); }
+});
+
+
+test('plans page: import YAML through the core, run state and phases are shown, settings expose the supervisor', async () => {
+  const core = startCore(proj); const host = hostFor(core);
+  const yaml = `schema_version: 1
+plans:
+  - key: ui-plan
+    title: UI plan
+    objective: show phases
+    experiments:
+      - key: e1
+        title: Experiment one
+        tasks:
+          - {key: first, title: First task, prompt: do it, checks: ["cmd:true"]}
+          - {key: second, title: Second task, prompt: then this, depends_on: [first], execution: {requires_approval: true}}
+`;
+  try {
+    const bad = await core.call('plan_yaml_validate', { text: 'schema_version: 7\nplans: []\n' }).then(() => null, (e) => e.message);
+    assert.match(bad, /not supported|non-empty/);
+    const d = await core.call('plan_yaml_diff', { text: yaml });
+    assert.equal(d.operations > 0, true);
+    await core.call('plan_yaml_apply', { text: yaml });
+    const again = await core.call('plan_yaml_apply', { text: yaml });
+    assert.equal(again.plans[0].changed, false, 'applying twice changes nothing');
+    const { el, unmount } = await lib.mount(host, { page: 'plans' });
+    try {
+      await waitFor(() => /UI plan/.test(el.textContent), 8000);
+      assert.match(el.textContent, /not run|Run plan/);
+      await click(byText(el, 'button', 'Show tasks'));
+      await waitFor(() => /First task/.test(el.textContent), 8000);
+      assert.match(el.textContent, /waiting|ready/);
+      assert.ok(byText(el, 'button', 'Details'));
+    } finally { await unmount(); }
+    const { el: s2, unmount: u2 } = await lib.mount(host, { page: 'settings', target: 'supervisor' });
+    try {
+      await waitFor(() => /Agents at once|Attempts per task/.test(s2.textContent), 8000);
+      assert.match(s2.textContent, /supervisor\.max_attempts_per_task/);
+    } finally { await u2(); }
+  } finally { core.stop(); }
 });

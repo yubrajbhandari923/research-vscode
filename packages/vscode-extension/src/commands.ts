@@ -914,6 +914,61 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       done(applied.changed ? 'AGENTS.md managed block updated' : 'already up to date');
     }
   });
+  // ---------------------------------------------------------------- plan YAML (import / open / apply) and plan runs
+  const planDir = () => path.join(path.dirname(model.root) === model.root ? model.root : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || model.root), 'plans');
+  const previewAndApply = async (text: string, label: string) => {
+    const v = await rpc('plan_yaml_validate', { text });
+    const d = await rpc('plan_yaml_diff', { text });
+    if (!d.ok) return void vscode.window.showErrorMessage(`${label}: ${d.conflicts.join(' · ')}`, { modal: true });
+    const lines = d.plans.flatMap((pl: any) => [`Plan ${pl.plan}${pl.revision ? ` (ledger revision ${pl.revision})` : ' (new)'}`, ...pl.ops.map((o: any) => `   ${o.op.replace('_', ' ')}: ${o.key}${o.fields ? ' [' + Object.keys(o.fields).join(', ') + ']' : ''}`), ...(pl.ops.length ? [] : ['   no changes'])]);
+    if (!d.operations) return void vscode.window.showInformationMessage(`${label}: nothing to change (${v.tasks} task(s), already in sync).`);
+    const ok = await vscode.window.showWarningMessage(`Apply ${label}?\n\n${lines.join('\n')}${d.warnings.length ? '\n\n' + d.warnings.join('\n') : ''}\n\nCompleted and running work is never removed or rewritten.`, { modal: true }, 'Apply');
+    if (!ok) return;
+    const r = await rpc('plan_yaml_apply', { text });
+    done(`Plan YAML applied: ${r.plans.map((x: any) => `${x.plan} rev ${x.revision}`).join(', ')}`);
+    await vscode.commands.executeCommand('research.openControlCenter', 'plans');
+  };
+  reg('research.plan.yaml.import', async () => {
+    const f = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Research plan (YAML)': ['yaml', 'yml'] }, openLabel: 'Import plan' });
+    if (!f?.length) return;
+    await previewAndApply(fs.readFileSync(f[0].fsPath, 'utf8'), path.basename(f[0].fsPath));
+  });
+  reg('research.plan.yaml.new', async () => {
+    const t = await rpc('plan_yaml_template', {});
+    fs.mkdirSync(planDir(), { recursive: true });
+    let file = path.join(planDir(), 'research.yaml');
+    for (let i = 2; fs.existsSync(file); i++) file = path.join(planDir(), `research-${i}.yaml`);
+    fs.writeFileSync(file, t.text);
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+    vscode.window.showInformationMessage('Edit the plan, then run "Research: Apply Plan YAML from Editor".');
+  });
+  reg('research.plan.yaml.apply', async () => {
+    const ed = vscode.window.activeTextEditor;
+    if (!ed || !/ya?ml$/.test(ed.document.fileName)) return void vscode.window.showInformationMessage('Open a plan YAML file in the editor first.');
+    if (ed.document.isDirty) await ed.document.save();
+    await previewAndApply(ed.document.getText(), path.basename(ed.document.fileName));
+  });
+  reg('research.plan.yaml.open', async (key?: string) => {
+    key = typeof key === 'string' ? key : await pickEntity('plan', 'Which plan should open as YAML?');
+    if (!key) return;
+    const r = await rpc('plan_yaml_export', { plan: key });
+    fs.mkdirSync(planDir(), { recursive: true });
+    const m = /^# Research OS plan (\S+)/.exec(r.text);
+    const file = path.join(planDir(), `${m ? m[1] : key}.yaml`);
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== r.text) {
+      const c = await vscode.window.showWarningMessage(`${path.basename(file)} differs from the ledger. Overwrite it with the current ledger plan, or open the file as it is?`, { modal: true }, 'Overwrite with ledger', 'Open as is');
+      if (!c) return;
+      if (c === 'Overwrite with ledger') fs.writeFileSync(file, r.text);
+    } else fs.writeFileSync(file, r.text);
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+  });
+  reg('research.plan.run', async (a?: any) => {
+    const key = typeof a === 'string' ? a : await pickEntity('plan', 'Which plan should the supervisor run?');
+    if (!key) return;
+    const r = await rpc('plan_control', { plan: key, action: 'run' });
+    done(`${r.plan} running (${r.progress} verified)`);
+  });
+
   reg('research.hpc.submit', async (a?: any) => {   // preview -> explicit approval -> submit; creates the remote folders first if needed
     const st = await rpc('hpc_status', {});
     if (!st.enabled) return void vscode.window.showInformationMessage('No HPC cluster is configured. Add one in the Initialize Project wizard (Execution step) or under hpc.clusters in .research/config.yaml.');

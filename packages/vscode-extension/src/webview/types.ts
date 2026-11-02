@@ -1,4 +1,4 @@
-export type Page = 'home' | 'work' | 'research' | 'agents' | 'settings';
+export type Page = 'home' | 'work' | 'research' | 'plans' | 'agents' | 'settings';
 
 export interface SettingOption {
   key: string; type: 'bool' | 'int' | 'float' | 'str' | 'path' | 'enum' | 'list';

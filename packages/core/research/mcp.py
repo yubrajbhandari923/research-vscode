@@ -137,6 +137,16 @@ def _tools() -> List[Tool]:
         Tool("task_context", "Focused brief for one task: goal, acceptance criteria, checks, plan objective, "
              "dependency results, related experiment state, skills to load, progress notes, rules.", {"id": S}, ["id"],
              task_ctx, False),
+        Tool("agent_report", "Report on your supervised task: kind progress|milestone|artifact|metric|run|hpc_job|code|problem|report|finish. "
+             "Only valid inside an execution started by the Research OS supervisor; you cannot mark the task verified.",
+             {"task": S, "kind": S, "message": S, "summary": S, "path": S, "name": S, "value": N, "run": S, "job": S, "category": S, "commit": S},
+             ["task", "kind"], lambda p, task, kind, **kw: __import__("research.supervisor", fromlist=["x"]).report(p, task, kind, **kw)),
+        Tool("agent_propose", "Propose a plan change as a YAML patch (same schema as plan YAML, scope partial). Operational additions may apply "
+             "automatically; scientific changes wait for the researcher.", {"task": S, "yaml": S, "rationale": S}, ["task", "yaml", "rationale"],
+             lambda p, task, yaml, rationale: (lambda sv: (sv._active_attempt(p, task), sv.propose(p, task, yaml, rationale, source="agent"))[1])(
+                 __import__("research.supervisor", fromlist=["x"]))),
+        Tool("plan_status", "Supervised status of a plan: task phases, attempts, budgets, pending proposals.", {"plan": S}, ["plan"],
+             lambda p, plan: __import__("research.supervisor", fromlist=["x"]).status(p, plan), False),
         Tool("task_start", "Claim a task and mark it running. Fails if another agent holds it.",
              {"id": S, "force": B}, ["id"], lambda p, id, force=False: P.start_task(p, id, force=force)),
         Tool("task_note", "Append a progress note to a task (the hand-off trail for whoever continues).",
