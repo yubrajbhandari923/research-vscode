@@ -19,6 +19,7 @@ class ResearchError(Exception):
     def __init__(self, message: str, hint: Optional[str] = None):
         super().__init__(message)
         self.hint = hint
+        self.data = None   # optional machine-readable detail for UIs
 
 
 class NotFound(ResearchError):

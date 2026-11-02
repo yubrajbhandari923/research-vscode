@@ -12,7 +12,7 @@ import * as vscode from 'vscode';
 import { StringDecoder } from 'string_decoder';
 
 export class RpcError extends Error {
-  constructor(message: string, public code?: number, public hint?: string, public kind?: string) {
+  constructor(message: string, public code?: number, public hint?: string, public kind?: string, public data?: any) {
     super(message);
   }
 }
@@ -119,7 +119,7 @@ export class CoreClient implements vscode.Disposable {
           if (msg.error) {
             const e = msg.error;
             if (e.trace) this.out.appendLine(`[core] ${p.method} failed:\n${e.trace}`);
-            p.reject(new RpcError(e.message, e.code, e.hint, e.kind));
+            p.reject(new RpcError(e.message, e.code, e.hint, e.kind, e.data));
           } else p.resolve(msg.result);
         }
       });

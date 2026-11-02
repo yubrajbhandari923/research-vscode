@@ -227,6 +227,10 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                         cfg[f"hpc.clusters.{name_}.paths.{k}"] = h[k]
                 if h.get("partition"):
                     cfg[f"hpc.clusters.{name_}.slurm.partition"] = h["partition"]
+                setup = h.get("setup") or []
+                setup = [x.strip() for x in (setup.splitlines() if isinstance(setup, str) else setup) if str(x).strip()]
+                if setup:   # runs inside every job: compute nodes often lack what the login node has
+                    cfg[f"hpc.clusters.{name_}.slurm.setup"] = setup
                 cfg["hpc.default_cluster"] = name_
             p.save_config(cfg)
             p.config = p.load_config()

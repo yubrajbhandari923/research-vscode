@@ -500,6 +500,38 @@ class Server:
         return {"clusters": HC.names(p), "default_cluster": HC.default_name(p), "runs": runs,
                 "enabled": bool(HC.names(p))}
 
+    def _exp_project(self, experiment: str):
+        """The Project rooted at the experiment's worktree: a bundle must ship the experiment's code, not main's."""
+        from . import workspace as W
+        from .schema import normalize_id
+        p = self.project()
+        exp = normalize_id(experiment, "EXP")
+        for rec in W._fold(W._records(p)).values():
+            if rec["status"] == "active" and rec.get("experiment") == exp:
+                s = W.show(p, rec["id"])
+                if s["present"]:
+                    return Project(s["path"], author=self.author, sync=False)
+        return p
+
+    def m_hpc_init(self, cluster: Optional[str] = None, dry_run: bool = True) -> Dict[str, Any]:
+        """Create the remote project directories (the preview is the default)."""
+        from .hpc import remote as HR
+        return HR.init_workspace(self.project(), cluster, dry_run=dry_run)
+
+    def m_hpc_submit(self, experiment: str, command: str, cluster: Optional[str] = None, dry_run: bool = True,
+                     approve: bool = False, resources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Submit one run of EXPERIMENT's worktree code to the cluster. Preview first; `approve` is the explicit go-ahead."""
+        from .hpc import remote as HR
+        if not command or not command.strip():
+            raise ResearchError("A command to run is required")
+        p = self._exp_project(experiment)
+        try:
+            return HR.submit(p, experiment, cluster_name=cluster, command=command.strip(), dry_run=dry_run,
+                             approve=approve and not dry_run, resources=resources or {})
+        finally:
+            if p is not self.p:
+                p.close()
+
     def m_hpc_sync(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         from .hpc import remote as HR
         return HR.sync(self.project(), cluster_name=cluster)
@@ -738,7 +770,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
@@ -795,7 +827,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                     pass
             send({"id": rid, "result": result})
         except ResearchError as e:
-            send({"id": rid, "error": {"message": str(e), "hint": e.hint, "code": e.exit_code,
+            send({"id": rid, "error": {"message": str(e), "hint": e.hint, "code": e.exit_code, "data": e.data,
                                        "kind": type(e).__name__}})
         except TypeError as e:
             send({"id": rid, "error": {"message": f"bad parameters for {method}: {e}", "code": -32602}})

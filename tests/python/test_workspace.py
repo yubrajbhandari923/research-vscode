@@ -246,3 +246,23 @@ def test_implementer_brief_states_the_hpc_result_contract(shared):
         b = agents.build_brief(p, "implementer")
         assert "artifacts.jsonl" in b and "RESEARCH_RUN_DIR" in b
         assert "artifacts.jsonl" not in agents.build_brief(p, "verifier")
+
+
+def test_ui_hpc_submit_ships_the_experiment_worktree_not_main(shared):
+    """The Control Center/RPC submit path must bundle the experiment's own code (CLI users cd into the worktree)."""
+    repo, _ = shared
+    from research.rpc import Server
+    with Project(str(repo)) as p:
+        from research import services
+        e = services.create_experiment(p, "e", hypothesis="h", question=services.create_question(p, "q")["id"])
+        ws = W.create(p, e["id"])
+    srv = Server(str(repo))
+    try:
+        q = srv._exp_project(e["id"])
+        assert q.root == ws["path"] and q is not srv.p
+        q.close()
+        with pytest.raises(ResearchError):
+            srv.m_hpc_submit(e["id"], "  ")
+    finally:
+        if srv.p:
+            srv.p.close()

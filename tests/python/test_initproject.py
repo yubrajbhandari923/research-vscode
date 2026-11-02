@@ -71,3 +71,14 @@ def test_refuses_nonempty_targets_and_bad_input(tmp_path):
     assert not IP.plan(str(tmp_path), {"name": ""})["ok"]
     assert not IP.plan(str(tmp_path / "q"), {"name": "q", "agents": {"enabled": ["claude"], "default": "codex"}})["ok"]
     assert not IP.plan(str(tmp_path / "q"), {"name": "q", "hpc": {"enabled": True}})["ok"]
+
+
+def test_hpc_job_environment_is_saved_as_slurm_setup(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "hp"
+    root.mkdir()
+    spec = {"name": "hp", "hpc": {"enabled": True, "ssh_host": "clu", "workspace_root": "/w", "setup": "module load python/3.11\n\n source ~/v/bin/activate "}}
+    assert IP.plan(str(root), spec)["ok"]
+    IP.apply(str(root), spec)
+    with Project(str(root / "main")) as p:
+        assert p.config["hpc"]["clusters"]["clu"]["slurm"]["setup"] == ["module load python/3.11", "source ~/v/bin/activate"]

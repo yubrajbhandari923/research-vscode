@@ -40,7 +40,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
   const [strategy, setStrategy] = useState('sonnet_first');
   const [review, setReview] = useState(true);
   const [hpc, setHpc] = useState(false);
-  const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '' });
+  const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '' });
   const [probe, setProbe] = useState<any>(null);
   const [plan, setPlan] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -167,6 +167,9 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
             <label htmlFor="hp-data">Shared datasets directory <span className="muted">(read-only reuse, optional)</span></label><input id="hp-data" type="text" value={h.shared_data} onChange={(e) => setH({ ...h, shared_data: e.target.value })} />
             <label htmlFor="hp-scr">Scratch directory <span className="muted">(optional)</span></label><input id="hp-scr" type="text" value={h.scratch} onChange={(e) => setH({ ...h, scratch: e.target.value })} />
             <label htmlFor="hp-part">Slurm partition <span className="muted">(optional)</span></label><input id="hp-part" type="text" value={h.partition} onChange={(e) => setH({ ...h, partition: e.target.value })} />
+            <label htmlFor="hp-setup">Job environment <span className="muted">(optional; one shell line per row, run inside every job)</span></label>
+            <textarea id="hp-setup" rows={2} placeholder={'module load python/3.11\nsource ~/venvs/research/bin/activate'} value={h.setup} onChange={(e) => setH({ ...h, setup: e.target.value })} />
+            <p className="muted small">Compute nodes often lack packages (for example NumPy) that the login node has. Without this, the first job can fail with ModuleNotFoundError.</p>
             <div className="row"><button type="button" disabled={!h.ssh_host || probe?.busy} onClick={test}>Test connection (read-only)</button></div>
             {probe?.busy && <p className="muted">Connecting…</p>}
             {probe?.error && <div className="field-error" role="alert">{probe.error}</div>}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.3
+
+- **First dispatch no longer dead-ends.** When frozen acceptance tests are required, the dialog offers *Have the balanced agent write the tests first* (dispatches the coordinator level, which is exempt from the gate and whose brief says to write and freeze tests), besides *Freeze test files…* and the logged override. Errors can now carry machine-readable `data`.
+- **HPC from the UI.** *Research: Run on HPC Cluster…* (palette and Work tab **Run on cluster**): pick experiment, enter the command, create the remote folders if missing, review the reservation, approve, submit; then *Check status and fetch results*. It bundles the experiment's worktree code, like the CLI does from inside the worktree. New RPC `hpc_init`, `hpc_submit`.
+- The Initialize wizard's HPC step asks for the **job environment** (module load / venv lines → `slurm.setup`), because compute nodes often lack packages the login node has.
+
 ## 2.0.2
 
 Fixes from the end-to-end test (`docs/E2E_TEST_REPORT.md`):

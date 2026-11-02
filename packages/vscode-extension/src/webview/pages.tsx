@@ -122,7 +122,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
         return (
           <>
             <PageHeader title="Work" sub="Who is doing what, where it runs, and what is ready to move into main."
-              actions={<><button type="button" onClick={() => host.run('research.plan.create')}><Icon name="tasks" /> New plan</button>{d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New worktree</button>}</>} />
+              actions={<><button type="button" onClick={() => host.run('research.plan.create')}><Icon name="tasks" /> New plan</button><button type="button" onClick={() => host.run('research.hpc.submit')}><Icon name="branch" /> Run on cluster</button>{d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New worktree</button>}</>} />
             <div className="kpis" role="list" aria-label="Operations at a glance">
               <Stat value={by('todo') + by('running') + by('in_progress')} sub={by('running') + by('in_progress') ? `${by('running') + by('in_progress')} in progress` : undefined} label="Open tasks" />
               <Stat value={by('blocked')} label="Blocked" warn={by('blocked') > 0} />

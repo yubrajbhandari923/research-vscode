@@ -750,9 +750,13 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
           if (!b) return;
           args.create_workspace = true;
         } else if (e.kind === 'NoFrozenTests') {
-          const b = await vscode.window.showWarningMessage(`${e.message}\n\nFrozen tests are the oracle the agent must pass; it cannot weaken them. Pick the test files you wrote for this task.`, { modal: true }, 'Freeze test files…', 'Dispatch without frozen tests…');
+          const lvl = e.data?.coordinator_level;
+          const b = await vscode.window.showWarningMessage(`${e.message}\n\nFrozen tests are the oracle the agent must pass; it cannot weaken them. The coordinator can write them for you, or you can pick tests you already wrote.`, { modal: true },
+            ...(lvl ? [`Have the ${lvl} agent write the tests first`] : []), 'Freeze test files…', 'Dispatch without frozen tests…');
           if (!b) return;
-          if (b.startsWith('Freeze')) {
+          if (b.startsWith('Have the')) {
+            args.level = lvl;   // the coordinator level is exempt from the gate; its brief says: write failing tests, freeze them, then implement or delegate
+          } else if (b.startsWith('Freeze')) {
             const files = await vscode.window.showOpenDialog({ canSelectMany: true, defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri, openLabel: 'Freeze' });
             if (!files?.length) return;
             await rpc('freeze_tests', { task: target, paths: files.map((f) => f.fsPath) });
@@ -909,6 +913,32 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       const applied = await rpc('agents_md_apply', {});
       done(applied.changed ? 'AGENTS.md managed block updated' : 'already up to date');
     }
+  });
+  reg('research.hpc.submit', async (a?: any) => {   // preview -> explicit approval -> submit; creates the remote folders first if needed
+    const st = await rpc('hpc_status', {});
+    if (!st.enabled) return void vscode.window.showInformationMessage('No HPC cluster is configured. Add one in the Initialize Project wizard (Execution step) or under hpc.clusters in .research/config.yaml.');
+    const experiment = idArg(a)?.startsWith('EXP-') ? idArg(a) : await pickEntity('experiment', 'Which experiment should run on the cluster?');
+    if (!experiment) return;
+    const command = await vscode.window.showInputBox({ prompt: `Command to run on the cluster for ${experiment}`, value: 'python3 ', placeHolder: 'python3 train.py --lr 0.01 --out outputs/run1', ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() && v.trim() !== 'python3' ? undefined : 'Enter the full command') });
+    if (!command) return;
+    const init = await rpc('hpc_init', { dry_run: true });
+    if (init.would_create?.length) {
+      const c = await vscode.window.showWarningMessage(`The cluster folders for this project do not exist yet. Create them?\n\n${init.would_create.join('\n')}`, { modal: true }, 'Create folders');
+      if (!c) return;
+      await rpc('hpc_init', { dry_run: false });
+    }
+    const pv = await rpc('hpc_submit', { experiment, command, dry_run: true });
+    const res = pv.reservation || {};
+    const ok = await vscode.window.showWarningMessage(
+      `Submit ${experiment} to ${pv.cluster}?\n\nCommand: ${pv.command}\nReserves: ${res.summary || 'cluster defaults'}${res.worst_case ? ` (worst case ${res.worst_case})` : ''}\nPartition: ${res.partition || 'cluster default'}\n\nThe code of the experiment's worktree (including uncommitted files) is bundled, uploaded and submitted with sbatch. Slurm bills what you reserve.`,
+      { modal: true }, 'Submit');
+    if (!ok) return;
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Submitting ${experiment}…` },
+      () => rpc('hpc_submit', { experiment, command, dry_run: false, approve: true }));
+    done(`${r.run} submitted as slurm job ${r.slurm_job_id}`);
+    const next = await vscode.window.showInformationMessage(`${r.run} submitted to ${r.cluster} as slurm job ${r.slurm_job_id}.`, 'Check status and fetch results');
+    if (next) await vscode.commands.executeCommand('research.hpcSync');
   });
   reg('research.hpcSync', async () => {
     const st = await rpc('hpc_status', {});

@@ -129,7 +129,7 @@ export class Panels implements vscode.Disposable {
 <body><div id="root"></div><script nonce="${n}">window.__RESEARCH_INITIAL__=${initial};</script><script nonce="${n}" src="${media('app.js')}"></script></body></html>`;
     w.onDidReceiveMessage(async (m) => {
       if (m.type === 'open-entity') return this.openEntity(String(m.id));
-      if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
+      if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open', 'research.hpc.submit'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
       if (m.type === 'open-doc') return this.openDoc(String(m.path));
       if (m.type === 'open-file') return this.openConfigFile(String(m.path));
       if (m.type !== 'rpc') return;

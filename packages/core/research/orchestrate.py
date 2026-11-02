@@ -487,9 +487,12 @@ def preparation(p, tid, role, policy=None, allow_unfrozen=None):
         raise PolicyBlocked("Unfinished dependencies: " + ", ".join(unmet))
     if policy and S.requires_frozen(policy, task) and not led["frozen"]:
         if not allow_unfrozen:
-            raise NoFrozenTests(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
+            err = NoFrozenTests(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
                                 f"freeze them before {policy['level']} implements",
-                                hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
+                                hint=f"Dispatch the coordinator level ({policy['coordinator']}) first so it writes them, or "
+                                     f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
+            err.data = {"coordinator_level": policy["coordinator"]}
+            raise err
         plans.add_task_note(p, tid, f"{policy['level']} dispatched WITHOUT frozen tests: {allow_unfrozen}")
     ins = []
     if policy:

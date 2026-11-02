@@ -5,7 +5,7 @@ export interface Host {
   /** Open a record (Q-, EXP-, RUN-, F-, D-, T-, …) in the host's detail view. */
   openEntity(id: string): void;
   /** Run one of the few editor commands the Control Center may trigger (new plan, add task, dispatch). */
-  run(command: 'research.plan.create' | 'research.task.create' | 'research.dispatch' | 'research.workspace.open', arg?: string): void;
+  run(command: 'research.plan.create' | 'research.task.create' | 'research.dispatch' | 'research.workspace.open' | 'research.hpc.submit', arg?: string): void;
   /** Open a configuration file in the editor (project-relative path, or the machine config path the core reported). */
   openFile(path: string): void;
   /** Open documentation (a repo-relative path with optional #anchor). */
