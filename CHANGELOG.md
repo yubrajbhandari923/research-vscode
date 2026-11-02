@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Initialize Project** wizard: empty folder → `main/` + `ledger/` + `experiments/` + `.code-workspace`, one git repository, safe first commit, instructive steps, optional HPC discovery/test.
+- **Provider adapters** (Claude Code, Codex, Antigravity, custom) with explicit capabilities; `research provider|execution|project-init`; Agents tab; Agent/Model/Mode/Preview/Start dispatch.
+- **Fixes**: the execution wrapper and VS Code terminal now start the agent in the experiment worktree; briefs are referenced by absolute path; `running` is reported only for a confirmed live process.
+
 ## 2.0.0
 
 **Breaking release.** Project format 2; v1 projects are not upgraded or migrated (see `docs/GUIDE_V2_START_FRESH.md`). Storage schema stays at 3.

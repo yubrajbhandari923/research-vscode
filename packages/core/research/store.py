@@ -32,6 +32,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "name": "", "description": "", "goal": "", "status": "active",
         "created_at": None, "git_repo": None, "default_backend": "local",
     },
+    # Where things live for projects made by `Initialize Project`; relative paths are under the container folder (the parent of
+    # the main checkout). null = legacy placement (<name>-ledger / <name>-experiments beside the checkout).
+    "layout": {"main_dir": None, "ledger_dir": None, "experiments_dir": None, "workspace_file": None},
     "agent_policy": {
         "max_runs_without_synthesis": 5,
         "max_failed_runs_without_review": 3,
@@ -72,6 +75,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "profiles": {
             "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
             "codex": {"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
+            "agy": {"provider": "agy", "command": "agy", "args": [], "model": None, "effort": None},
             "gemini": {"command": "gemini", "args": [], "model": None, "model_flag": "-m", "prompt_flag": "-i"},
             # Model profiles the built-in strategies point at (levels fast/balanced/deep). Swap a model here, not in routing.
             "claude-fast": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-haiku-5-5", "model_flag": "--model", "prompt_flag": None},

@@ -112,6 +112,12 @@ OPTIONS: List[Option] = [
     _o("verification.check_timeout_seconds", "int", "verification", "Check timeout", "How long one task check may run before it is stopped and counted as failed.",
        why="A hung check must not block everyone.", effect="Too low fails slow-but-correct checks.", min_=1, max_=86400, unit="seconds"),
 
+    _o("layout.experiments_dir", "str", "git", "Experiment worktree folder", "Where new experiment worktrees are created. Relative paths are under the project folder that holds main/ and ledger/. Empty keeps the legacy <name>-experiments folder beside the checkout.",
+       why="Keeps every experiment checkout in one place you chose.", effect="Only affects experiments created afterwards; existing worktrees stay where they are.", nullable=True),
+    _o("layout.main_dir", "str", "git", "Main checkout folder", "Folder name of the main git checkout (informational; set by Initialize Project).", nullable=True,
+       why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
+    _o("layout.ledger_dir", "str", "git", "Ledger folder", "Folder name of the shared-ledger worktree (informational; set by Initialize Project).", nullable=True,
+       why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
     _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (claude, codex, gemini, or one you define) `research dispatch` starts when a role names none.",
        why="Lets you hand work to your usual agent without choosing each time.", effect="Only affects new dispatches. The CLI must be installed on the machine that runs it."),
     _o("orchestration.enabled", "bool", "agents", "Model routing", "Route work to cheaper or stronger models by level (fast, balanced, deep) instead of one model for everything.",

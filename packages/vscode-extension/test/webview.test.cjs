@@ -159,7 +159,7 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   try {
     await ready(el);
     const tabs = qa(el, '[role=tab]');
-    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Settings']);
+    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Agents', 'Settings']);
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
@@ -229,6 +229,8 @@ test('first run: two answers create a v2 project; advanced options stay folded a
   const core = startCore(dir); const host = hostFor(core);
   const { el, unmount } = await lib.mount(host);
   try {
+    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
+    await click(byText(el, 'button', 'Use a single folder instead'));
     await waitFor(() => /Set up Research OS/.test(el.textContent), 8000);
     assert.equal(q(el, '#su-name').value, path.basename(dir), 'the folder name is the default project name');
     assert.equal(q(el, '[role=tab]'), null, 'no navigation until a project exists');
@@ -248,6 +250,44 @@ test('first run: two answers create a v2 project; advanced options stay folded a
     assert.match(fs.readFileSync(path.join(dir, '.research', 'config.yaml'), 'utf8'), /Learn the effect of alpha/);
     assert.ok(!fs.existsSync(path.join(dir, '.git')), 'no git repository was created behind your back');
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Initialize Project: teaches first, previews the layout, creates main/ledger/experiments and shows the Agents page', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-init-'));
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
+    assert.match(el.textContent, /How Research OS works/); assert.match(el.textContent, /Switch agents any time/);
+    assert.match(el.textContent, /belong to one git repository/);
+    await click(byText(el, 'button', 'Next'));
+    await type(q(el, '#ip-goal'), 'Find alpha');
+    await click(byText(el, 'button', 'Next'));
+    assert.match(el.textContent, /top level/); await click(byText(el, 'button', 'Next'));
+    assert.match(el.textContent, /Claude Code/); assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Google Antigravity/);
+    assert.match(el.textContent, /sonnet_first/);
+    await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
+    await click(byText(el, 'button', 'Next'));
+    await waitFor(() => /do exactly this/.test(el.textContent));
+    assert.ok(!fs.existsSync(path.join(dir, 'main')), 'nothing is written before Create');
+    await click(byText(el, 'button', 'Create project'));
+    await waitFor(() => /Project created/.test(el.textContent), 30000);
+    assert.match(el.textContent, /Your first 5 minutes/);
+    for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments']) assert.ok(fs.existsSync(path.join(dir, d)), d);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'experiments')), []);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Agents & Providers page lists the three providers with readiness and capabilities', async () => {
+  const core = startCore(proj);
+  const { el, unmount } = await lib.mount(hostFor(core));
+  try {
+    await waitFor(() => q(el, '[role=tab]'), 12000);
+    await click(byText(el, '[role=tab]', 'Agents'));
+    await waitFor(() => /Agents & Providers/.test(el.textContent) && /Google Antigravity/.test(el.textContent), 15000);
+    assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Claude Code/);
+    assert.match(el.textContent, /Completed = the agent process exited successfully/);
+  } finally { await unmount(); core.stop(); }
 });
 
 test('a v1 project is shown a clear explanation and nothing is changed', async () => {

@@ -721,24 +721,62 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       target = await pickEntity(ROLE_TARGET[role], `Which ${ROLE_TARGET[role]} should the ${role} work on?`);
       if (!target) return;
     }
-    let d = await rpc('dispatch', { role, target, objective });
-    const choice = await vscode.window.showInformationMessage(
-      `${d.model || d.profile} · ${d.policy?.strategy || 'project profiles'} · ${d.policy?.why || 'configured role'}`,
-      'Start', 'Advanced model override');
-    if (!choice) return;
-    if (choice === 'Advanced model override') {
-      const ag = await rpc('agents');
-      const prof: any = await vscode.window.showQuickPick((ag.profiles || []).map((x: any) => ({
-        label: x.name, description: x.model || x.command, name: x.name,
-      })), { placeHolder: 'Explicit override of project strategy and task pin' });
-      if (!prof) return;
-      d = await rpc('dispatch', { role, target, objective, profile: prof.name });
+    // Agent -> Model -> Mode -> Preview | Start. Choices come from detected capabilities; nothing is substituted silently.
+    const pv = await rpc('providers');
+    const agentPick: any = await vscode.window.showQuickPick([
+      { label: '$(sparkle) Project routing', description: `default agent ${pv.default}${pv.strategy ? ' · ' + pv.strategy : ''}`, profile: undefined, prov: undefined },
+      ...pv.providers.map((p: any) => ({ label: p.name, description: p.installed ? `installed ${p.version || ''}` : 'NOT INSTALLED', detail: p.problem, profile: p.name, prov: p })),
+    ], { placeHolder: 'Agent' });
+    if (!agentPick) return;
+    if (agentPick.prov && !agentPick.prov.installed) return void vscode.window.showErrorMessage(agentPick.prov.problem);
+    let chosen: string | undefined;
+    if (agentPick.prov?.models.models.length) {
+      const m: any = await vscode.window.showQuickPick([{ label: 'Default for this agent', id: undefined }, ...agentPick.prov.models.models.map((x: any) => ({ label: x.id, description: x.label, id: x.id }))], { placeHolder: 'Model' });
+      if (!m) return;
+      chosen = m.id;
     }
-    const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: model.root, env: { ...shim.env(), ...d.env } });
-    term.show();
-    term.sendText(d.argv.map(shq).join(' '), true);
-    done(`${d.profile}/${d.role}: launch command sent; execution not yet confirmed`);
-    if (!d.available) vscode.window.showWarningMessage(`\`${d.provider_argv[0]}\` was not found on PATH. Install it, or point the "${d.profile}" profile at the right command in .research/config.yaml.`);
+    const caps = agentPick.prov?.capabilities;
+    const modes = [{ label: 'Interactive', description: 'opens a terminal you can talk to', headless: false },
+      ...(!caps || caps.headless ? [{ label: 'Headless', description: 'runs in the background; logs and exit status are captured', headless: true }] : [])];
+    const mode: any = await vscode.window.showQuickPick(modes, { placeHolder: 'Mode' });
+    if (!mode) return;
+    const d = await rpc('dispatch', { role, target, objective, profile: agentPick.profile, model: chosen, headless: mode.headless });
+    const al = d.allocation || {};
+    const act = await vscode.window.showInformationMessage(
+      `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · worktree ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''),
+      { modal: false }, 'Preview', 'Start');
+    if (act === 'Preview') return void vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(d.env.RESEARCH_BRIEF)), { preview: true });
+    if (act !== 'Start') return;
+    if (d.problem) return void vscode.window.showErrorMessage(d.problem);
+    if (!d.execution_id) {  // not tied to a task (planner/analyst on a plan, finding review): no launch tracking is possible
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
+      term.show(); term.sendText(d.argv.map(shq).join(' '), true);
+      return void done(`${d.profile}/${d.role}: command sent to a terminal; Research OS cannot confirm it is running`);
+    }
+    if (mode.headless) await rpc('execution_start', { id: d.execution_id });
+    else {
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role} · ${target}`, cwd: d.cwd, env: { ...shim.env(), ...d.env } });
+      term.show(); term.sendText(d.argv.map(shq).join(' '), true);
+    }
+    // "Running" is only reported once the launcher has recorded a live process; "completed" only once it exited 0.
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `${d.profile}/${d.role} on ${target}: starting…`, cancellable: false }, async (prog) => {
+      let last = '';
+      for (let i = 0; i < 1800; i++) {
+        await new Promise((r) => setTimeout(r, i < 60 ? 500 : 2000));
+        const r = await rpc('execution_show', { id: d.execution_id }).catch(() => null);
+        if (!r) continue;
+        if (r.state !== last) { last = r.state; prog.report({ message: r.state === 'running' ? `running (pid ${r.pid}) in ${d.cwd}` : r.state }); }
+        if (['completed', 'failed', 'cancelled', 'unknown'].includes(r.state)) {
+          const msg = r.state === 'completed' ? `${d.profile} exited successfully. That is not verification: run the task's checks.`
+            : `${d.profile} ${r.state}${r.exit_code != null ? ` (exit ${r.exit_code})` : ''}${r.error ? ': ' + r.error : ''}`;
+          return void (r.state === 'completed' ? vscode.window.showInformationMessage(msg) : vscode.window.showWarningMessage(msg));
+        }
+        if (!['prepared', 'launched', 'running'].includes(r.state)) return;
+        if (i === 60 && r.state === 'prepared') { vscode.window.showWarningMessage('The launch command was sent but no process has been confirmed yet. Check the terminal.'); }
+        if (mode.headless === false && r.state === 'running' && i > 4) return;  // interactive: confirmed running; the terminal owns it from here
+      }
+    });
+    done();
   });
   reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
 

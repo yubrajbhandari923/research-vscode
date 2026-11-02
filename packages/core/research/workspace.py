@@ -426,7 +426,9 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
     base_ref = base or "HEAD"
     if _git(top, "rev-parse", "--verify", "-q", f"refs/heads/{br}"):
         raise ResearchError(f"Branch {br} already exists.", hint="Use `research workspace attach` to adopt an existing branch.")
-    base_dir = os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments")
+    cfg_dir = (p.config.get("layout") or {}).get("experiments_dir")
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(top), cfg_dir)) if cfg_dir else \
+        os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments")
     wt = os.path.abspath(path or os.path.join(base_dir, exp))
     if not path:   # a second workspace for the same experiment (a different implementation) gets its own directory
         n = 2

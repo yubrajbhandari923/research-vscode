@@ -362,3 +362,6 @@ details > summary h2 { display: inline-flex; gap: 6px; align-items: baseline; }
 input[type=checkbox], input[type=radio] { accent-color: var(--vscode-checkbox-selectBackground, var(--accent)); margin: 0; }
 .setting-origin code { font-size: 11px; }
 @media (max-width: 560px) { .cfgbar .search { flex-basis: 100%; max-width: none; } .cfgbar .spacer { display: none; } }
+
+.learn { margin: var(--sp-3) 0; display: block; } .learn > b { display: block; margin-bottom: 4px; } .learn pre { overflow-x: auto; max-width: 100%; } .learn ol { margin: 6px 0 0 18px; padding: 0; } .learn li { margin: 4px 0; }
+.cards .card { border: 1px solid var(--border, var(--vscode-panel-border)); border-radius: 6px; }

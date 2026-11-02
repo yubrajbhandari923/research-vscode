@@ -68,10 +68,10 @@ function workspace(name, harness, settings) {
   return w;
 }
 const NODE_WIN = '/mnt/c/Program Files/nodejs/node.exe';
-const driver = (name, extra = []) => {
-  const dst = '/mnt/c/Windows/Temp/rp-pw/webdev-drive.cjs';
-  fs.copyFileSync(path.join(here, 'webdev-drive.cjs'), dst);
-  return spawn(NODE_WIN, ['C:\\Windows\\Temp\\rp-pw\\webdev-drive.cjs', String(port), WS_FOLDER, win(stage), name, ...extra], { stdio: 'inherit', cwd: '/mnt/c/Windows/Temp/rp-pw' });
+const driver = (name, extra = [], script = 'webdev-drive.cjs') => {
+  const dst = '/mnt/c/Windows/Temp/rp-pw/' + script;
+  fs.copyFileSync(path.join(here, script), dst);
+  return spawn(NODE_WIN, ['C:\\Windows\\Temp\\rp-pw\\' + script, String(port), WS_FOLDER, win(stage), name, ...extra], { stdio: 'inherit', cwd: '/mnt/c/Windows/Temp/rp-pw' });
 };
 let WS_FOLDER = '';
 let failed = 0;
@@ -99,6 +99,21 @@ if (mode === 'ui' || mode === 'all') {
     if (fs.existsSync(rf)) failed += JSON.parse(fs.readFileSync(rf, 'utf8')).filter((x) => !x.ok).length;
     for (const f of fs.readdirSync(stage).filter((x) => x.startsWith(theme[0] + '-') && x.endsWith('.png'))) fs.copyFileSync(path.join(stage, f), path.join(outDir, `vscode-${f}`));
   }
+}
+if (mode === 'init') {   // Initialize Project from an EMPTY folder, then the Agents tab of the created project (demo arg is ignored)
+  const empty = path.join(os.tmpdir(), 'rp-ws-init', 'sparse-ct');
+  fs.rmSync(path.dirname(empty), { recursive: true, force: true });
+  fs.mkdirSync(empty, { recursive: true });
+  userSettings({ 'workbench.colorTheme': 'Default Dark Modern' });
+  fs.mkdirSync(path.join(empty, '.vscode'), { recursive: true });   // trust is off only via workspace settings in this harness
+  fs.writeFileSync(path.join(empty, '.vscode', 'settings.json'), JSON.stringify({ 'workbench.startupEditor': 'none', 'security.workspace.trust.enabled': false, 'window.commandCenter': false }));
+  for (const [phase, folder] of [[undefined, empty], ['2', path.join(empty, 'main')]]) {
+    WS_FOLDER = folder;
+    await new Promise((resolve) => { const d = driver(phase ? 'init2' : 'init', phase ? ['2'] : [], 'webdev-init-drive.cjs'); d.on('exit', (code) => { if (code) failed++; resolve(); }); });
+  }
+  for (const n of ['init', 'init2']) { const rf = path.join(stage, n + '-results.json'); if (fs.existsSync(rf)) failed += JSON.parse(fs.readFileSync(rf, 'utf8')).filter((x) => !x.ok).length; }
+  for (const f of fs.readdirSync(stage).filter((x) => x.startsWith('init') && x.endsWith('.png'))) fs.copyFileSync(path.join(stage, f), path.join(outDir, `vscode-${f}`));
+  for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments', 'sparse-ct.code-workspace']) console.log((fs.existsSync(path.join(empty, d)) ? '✓ on disk: ' : '✗ MISSING: ') + d);
 }
 stop();
 fs.rmSync(stage, { recursive: true, force: true });

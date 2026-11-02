@@ -242,7 +242,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
              profile: Optional[str] = None, model: Optional[str] = None, instructions: Optional[str] = None,
              strategy: Optional[str] = None, level: Optional[str] = None, policy: Optional[Dict[str, Any]] = None,
              headless: bool = False, allow_unfrozen: Optional[str] = None,
-             require_skills: Any = None) -> Dict[str, Any]:
+             require_skills: Any = None, effort: Optional[str] = None) -> Dict[str, Any]:
     """Prepare an agent session: write the brief, build argv + env. Does not start anything.
 
     With an active (or `strategy=`) allocation strategy the profile comes from `strategy.select`; callers that already
@@ -253,6 +253,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     """
     from . import harness as H
     from . import strategy as S
+    orig_instructions = instructions
     role = role or default_role(p, target)
     if role not in ROLES:
         raise ResearchError(f"role must be one of {', '.join(ROLES)}")
@@ -308,22 +309,14 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _atomic_write(path, brief)
     rel = p.rel(path)
-    prompt = (f"You are the {role} on this research project. Read the brief at {rel} and follow it exactly. "
+    abs_brief = p.abspath(rel)  # absolute: the ledger may live outside the worktree the agent runs in
+    prompt = (f"You are the {role} on this research project. Read the brief at {abs_brief} and follow it exactly. "
               "Use the `research` CLI for every record.")
+    from . import providers as PR
     cmd = prof.get("command") or name
-    argv: List[str] = [cmd, *[str(a) for a in as_list(prof.get("args"))]]
-    if headless:
-        if not prof.get("headless_args"):
-            raise ResearchError(f"Profile {name!r} has no headless_args, so its usage cannot be captured",
-                                hint="Set agents.profiles.<name>.headless_args and usage_parser (see claude-fast).")
-        argv += [str(a) for a in as_list(prof["headless_args"])]
     mdl = model or prof.get("model")
-    if mdl and prof.get("model_flag"):
-        argv += [prof["model_flag"], str(mdl)]
-    if prof.get("prompt_flag"):
-        argv.append(prof["prompt_flag"])
-    argv.append(prompt)
-    env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": src_root, "RESEARCH_BRIEF": rel}
+    argv: List[str] = PR.build_argv(prof, name, mdl, prompt, src_root, [os.path.dirname(os.path.dirname(p.rdir))], headless, effort or (policy or {}).get("effort"))
+    env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": src_root, "RESEARCH_BRIEF": abs_brief}
     if mdl:
         env["RESEARCH_AGENT_MODEL"] = str(mdl)
     if sk["required"]:
@@ -352,15 +345,32 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
             f"Prepared {name}/{role}" + (f" on {label}" if target else "") + (f": {objective[:120]}" if objective else "")
             + (f" [required skills {', '.join(r['name'] for r in sk['required'])}]" if sk["required"] else "")
             + (f" [strategy {policy['strategy']}@{policy['fingerprint']} level {policy['level']} model {mdl}]" if policy else ""))
+    kind = PR.provider_of(prof, name)
+    usage_parser = prof.get("usage_parser") or ("claude_json" if kind == "claude" and headless else None)
+    caps = PR.CAPABILITIES[kind]
+    if headless and caps["headless"] is not True and not prof.get("headless_args"):
+        raise ResearchError(f"Provider {kind!r} has no headless mode configured")
+    allocation = {"task_class": (policy or {}).get("class"), "strategy": (policy or {}).get("strategy"), "level": (policy or {}).get("level"),
+                  "provider": kind, "profile": name, "model": mdl, "reasoning_effort": effort or (policy or {}).get("effort") or prof.get("effort"),
+                  "execution_mode": "headless" if headless else "interactive",
+                  "workspace": {"id": ws["id"], "path": ws["path"], "branch": ws["branch"]} if ws else {"path": src_root},
+                  "permissions": {"sandbox": prof.get("sandbox") or ("workspace-write" if kind == "codex" else "provider default"),
+                                  "approvals": "provider default (Research OS never disables them)"},
+                  "verification_policy": {"checks_gate_completion": bool(p.config.get("verification", {}).get("checks_gate_task_completion", True)),
+                                          "independent_review": bool(p.config.get("verification", {}).get("independent_reviewer", True))},
+                  "requested": True, "reported_by_provider": None}
     execution_id, provider_argv = None, argv
     if target and type_of(target) == "task":
         from .execution import prepare
-        execution_id, argv = prepare(p, normalize_id(target, "T"), argv, env)
-    return {"state": "prepared", "execution_id": execution_id,
+        execution_id, argv = prepare(p, normalize_id(target, "T"), argv, env, src_root, headless,
+                                     {"role": role, "target": label, "profile": name, "model": mdl, "objective": objective,
+                                      "instructions": orig_instructions, "strategy": strategy, "level": level, "effort": effort}, usage_parser)
+    return {"state": "prepared", "execution_id": execution_id, "allocation": allocation,
+            "problem": None if shutil.which(cmd) else f"`{cmd}` is not installed or not on PATH. Nothing was substituted; install it or pick another agent.",
             "skills": {"required": [{k: r[k] for k in ("name", "level", "sha256")} for r in sk["required"]],
                        "recommended": sk["recommended"]}, "provider_argv": provider_argv, "role": role, "profile": name, "model": mdl, "argv": argv, "env": env, "cwd": src_root, "workspace": ws and ws["id"], "brief": rel, "policy": snap,
             "preflight": preflight,
-            "target": label if target else None, "headless": headless, "usage_parser": prof.get("usage_parser"),
+            "target": label if target else None, "headless": headless, "usage_parser": usage_parser,
             "available": bool(shutil.which(cmd)),
             "shell": " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items()) + " " + " ".join(shlex.quote(a) for a in argv)}
 
@@ -399,3 +409,18 @@ def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None)
                    wall_seconds=round(time.time() - t0, 1)) if parsed else None
     return {"exit_code": code, "timed_out": timed_out, "result": parsed.get("result_text") or out[-4000:], "stderr": err[-1000:],
             "usage": rec or "unavailable (the provider reported no usage for this session)"}
+
+
+def redispatch(p: Project, execution_id: str, profile: Optional[str] = None, model: Optional[str] = None,
+               headless: Optional[bool] = None) -> Dict[str, Any]:
+    """Retry or continue a task from a finished execution, optionally with another provider/model. All research records
+    are task-keyed, so nothing is recreated; gates (skills, checks, review) are re-evaluated by the new dispatch."""
+    from . import execution as E
+    r = E.show(p, execution_id)
+    if r["state"] in ("prepared", "launched", "running"):
+        raise ResearchError(f"Execution {execution_id} is {r['state']}; stop it before retrying")
+    q = r.get("request") or {}
+    return dispatch(p, q.get("role"), q.get("target") or r["task"], q.get("objective"), profile or q.get("profile"),
+                    model if (profile or model) else q.get("model"), q.get("instructions"),
+                    strategy=q.get("strategy") if not profile else None, level=q.get("level") if not profile else None, effort=q.get("effort"),
+                    headless=(r.get("mode") == "headless") if headless is None else headless)

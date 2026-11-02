@@ -48,3 +48,19 @@ Every change is recorded in the audit log, and `.research/context/policy.md` is 
 Clusters (`hpc.clusters.*`), agent profiles and strategies (`agents.profiles.*`, `orchestration.strategies.*`), hooks (`harness.hooks.*`) and
 sandbox profiles (`sandbox.profiles.*`) are configured in YAML and diagnosed by `research config check`; the Control Center shows their
 effect (for example, the sandbox profile table on Work) but does not yet edit them with forms.
+
+## Layout and providers (added with Initialize Project)
+
+```yaml
+layout:                      # written by Initialize Project; paths are relative to the folder holding main/ and ledger/
+  main_dir: main
+  ledger_dir: ledger
+  experiments_dir: experiments   # new experiment worktrees are created here (null = legacy <name>-experiments beside the checkout)
+agents:
+  default_profile: claude        # claude | codex | agy | any profile you define
+  profiles:
+    codex: {provider: codex, command: codex, model: null, effort: null, sandbox: workspace-write}
+    agy:   {provider: agy,   command: agy,   model: null, effort: null}
+```
+
+All of these appear in Settings (git category / agents) and round-trip with the file. See `docs/PROVIDERS.md`.

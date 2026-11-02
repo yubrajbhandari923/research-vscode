@@ -367,7 +367,7 @@ def test_dispatch_profiles_roles_and_briefs(proj, repo):
     brief = (repo / d["brief"]).read_text()
     assert "IMPLEMENTER" in brief and "Task T-001" in brief and "file: x.png" in brief and "match fig 3" in brief
     v = AG.dispatch(proj, None, f["id"])
-    assert v["role"] == "verifier" and v["provider_argv"][:3] == ["codex", "-m", "gpt-5"]
+    assert v["role"] == "verifier" and v["provider_argv"][0] == "codex" and "-m" in v["provider_argv"] and "gpt-5" in v["provider_argv"]
     vb = (repo / v["brief"]).read_text()
     assert "check a claim against its evidence" in vb and "task verify" not in vb
     g = AG.dispatch(proj, "planner", objective="Reproduce Table 2", profile="gemini")

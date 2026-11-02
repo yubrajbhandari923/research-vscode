@@ -511,9 +511,106 @@ class Server:
 
     def m_dispatch(self, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
                    profile: Optional[str] = None, model: Optional[str] = None,
-                   instructions: Optional[str] = None) -> Dict[str, Any]:
+                   instructions: Optional[str] = None, headless: bool = False, effort: Optional[str] = None,
+                   strategy: Optional[str] = None, level: Optional[str] = None) -> Dict[str, Any]:
+        """PREPARE only: resolves everything and writes the brief. Nothing runs until `execution_start` / the wrapper is run."""
         from . import agents as AG
-        return AG.dispatch(self.project(), role, target, objective, profile, model, instructions)
+        d = AG.dispatch(self.project(), role, target, objective, profile, model, instructions, headless=headless, effort=effort,
+                        strategy=strategy, level=level)
+        d["shell"] = None      # never ship a copy-pasteable string built from task text
+        return d
+
+    def m_execution_start(self, id: str) -> Dict[str, Any]:
+        """Start a prepared headless execution detached from the UI. Returns at once; poll `execution_show` for `running`."""
+        import subprocess
+        from . import execution as EX
+        r = EX.show(self.project(sync=False), id)
+        if r["state"] != "prepared" or r.get("mode") != "headless":
+            raise ResearchError(f"Only a prepared headless execution can be started here (this one is {r['state']}/{r.get('mode')})")
+        subprocess.Popen([sys.executable, os.path.abspath(EX.__file__), self.root, id], cwd=r.get("cwd") or self.root,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return {"id": id, "state": "starting"}
+
+    def m_executions(self, task: Optional[str] = None) -> List[Dict[str, Any]]:
+        from . import execution as EX
+        return EX.list_all(self.project(sync=False), task)
+
+    def m_execution_show(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.show(self.project(sync=False), id)
+
+    def m_execution_logs(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.logs(self.project(sync=False), id)
+
+    def m_execution_stop(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.stop(self.project(), id)
+
+    def m_execution_retry(self, id: str, profile: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+        from . import agents as AG
+        d = AG.redispatch(self.project(), id, profile, model)
+        d["shell"] = None
+        return d
+
+    def m_providers(self) -> Dict[str, Any]:
+        """Agent providers for the Control Center: readiness, models, MCP, default, strategy, recent executions."""
+        from . import execution as EX, providers as PR, strategy as S
+        p = self.project(sync=False)
+        p.config = p.load_config()
+        profs = (p.config.get("agents") or {}).get("profiles") or {}
+        rows = []
+        for name, prof in profs.items():
+            if name in ("claude", "codex", "agy") or prof.get("provider"):
+                r = PR.readiness(prof, name, p.root)
+                r["models"] = PR.available_models(r["provider"], r["command"], profs)
+                r["profiles"] = sorted(n for n, x in profs.items() if PR.provider_of(x, n) == r["provider"] and n != name)
+                rows.append(r)
+        return {"default": (p.config.get("agents") or {}).get("default_profile"), "strategy": S.active_name(p),
+                "providers": rows, "recent": [{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")} | {
+                    "profile": (e.get("request") or {}).get("profile"), "model": (e.get("request") or {}).get("model")} for e in EX.list_all(p)[:15]],
+                "instructions": PR.instruction_files(p.root)}
+
+    def m_provider_default(self, name: str) -> Dict[str, Any]:
+        """Change the project default agent (same setting as the YAML key agents.default_profile). Future dispatches only."""
+        from . import registry
+        return registry.apply(self.project(), {"agents.default_profile": name}, reason="provider default")
+
+    def m_provider_mcp(self, name: str, apply: bool = False) -> Dict[str, Any]:
+        from . import providers as PR, workspace as W
+        p = self.project(sync=False)
+        prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(name) or {}
+        kind = PR.provider_of(prof, name)
+        done = PR.mcp_install(kind, p.root) if apply else None
+        ws = W.list_workspaces(p)
+        return {"installed": done, "verify": PR.mcp_verify(p.root, ws[0]["path"] if ws else p.root)}
+
+    def m_init_environment(self) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.environment(self.root)
+
+    def m_init_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.plan(self.root, spec)
+
+    def m_init_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.apply(self.root, spec)
+
+    def m_hpc_discover(self) -> Dict[str, Any]:
+        """SSH aliases from ~/.ssh/config. Reads a local file; contacts nothing."""
+        from . import initproject
+        return {"hosts": initproject.ssh_hosts()}
+
+    def m_hpc_test(self, ssh_host: str, workspace_root: str = "") -> Dict[str, Any]:
+        """Explicit, read-only connection test (the existing `hpc doctor` checks) before any project exists."""
+        from types import SimpleNamespace
+        from .hpc import remote as HR
+        if not ssh_host or any(c.isspace() for c in ssh_host) or ssh_host.startswith("-"):
+            raise ResearchError("Invalid SSH host alias")
+        fake = SimpleNamespace(config={"hpc": {"clusters": {"probe": {"ssh_host": ssh_host, "paths": {"workspace_root": workspace_root or "~/research-os-probe"}}}}},
+                               name="probe", root=self.root)
+        return HR.doctor(fake, "probe")
 
     def m_mcp_install(self, clients: Any = None) -> Dict[str, Any]:
         from . import mcp as MCP
@@ -683,7 +780,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor") and not srv.initialized():
+            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)
             if method in MUTATING and srv.p is not None:
