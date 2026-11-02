@@ -160,7 +160,8 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def workspace_file(root: str, spec: Dict[str, Any], lay: Dict[str, str]) -> Dict[str, Any]:
-    folders = [{"name": "main (code)", "path": lay["main_dir"]}, {"name": "ledger (research records)", "path": lay["ledger_dir"]}]
+    folders = [{"name": "main (code)", "path": lay["main_dir"]}, {"name": "ledger (research records)", "path": lay["ledger_dir"]},
+               {"name": "experiments (one worktree each)", "path": lay.get("experiments_dir", "experiments")}]
     return {"folders": folders,
             "settings": {"research.projectRoot": ".", "git.autoRepositoryDetection": "subFolders",
                          "git.repositoryScanMaxDepth": 3, "git.countBadge": "tracked", "files.exclude": {"**/.research/cache": True},

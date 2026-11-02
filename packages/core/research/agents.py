@@ -208,6 +208,12 @@ def build_brief(p: Project, role: str, target: Optional[str] = None, objective: 
               f"Work only in `{workspace['path']}` (branch `{workspace['branch']}`, base `{str(workspace.get('base_rev'))[:8]}`, "
               f"workspace {workspace['id']}). The research ledger is shared: record everything through the `research` CLI, "
               "never by editing `.research/` files. Do not switch branches, merge into `main`, or push.", ""]
+    if role == "implementer":
+        L += ["## If the code will run on a cluster (`research hpc submit`)", "",
+              "Results only come home if the code records them: when `RESEARCH_RUN_DIR` is set, write files under "
+              "`$RESEARCH_RUN_DIR/outputs/`, append `{\"name\":…, \"value\":…, \"step\":0}` lines to `$RESEARCH_RUN_DIR/metrics.jsonl`, "
+              "and register each output file by appending `{\"path\": \"<absolute path>\"}` to `$RESEARCH_RUN_DIR/artifacts.jsonl`. "
+              "Files that are not registered stay on the cluster. Do not assume packages beyond the standard library are installed there.", ""]
     from . import registry
     L += ["## Effective policy", "",
           f"Rules in force are in `.research/context/policy.md` (settings fingerprint `{registry.fingerprint(p)}`). Key limits: "

@@ -918,6 +918,10 @@ def cmd_run_cancel(a, p) -> int:
 def cmd_run_logs(a, p) -> int:
     r = R.get_run(p, a.id)
     path = p.abspath(r["stderr_path"] if a.stderr else r["stdout_path"])
+    if not path or not os.path.exists(path):   # HPC runs: logs come home under collected/logs
+        alt = os.path.join(p.abspath(r["run_dir"] if r.get("run_dir") else os.path.join(".research", "runs", r["id"])),
+                           "collected", "logs", "stderr.log" if a.stderr else "stdout.log")
+        path = alt if os.path.exists(alt) else path
     if not path or not os.path.exists(path):
         print(dim("(no log file yet)"))
         return 0

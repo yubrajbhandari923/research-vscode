@@ -161,7 +161,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
                               <td className="hide-narrow min">{w.experiment ? <IdLink id={w.experiment} host={host} /> : '—'}</td>
                               <td className="min">{!w.present ? <Badge kind="bad">missing</Badge> : w.dirty || w.untracked ? <Badge kind="warn">uncommitted</Badge> : <Badge kind="ok">clean</Badge>}{w.active_runs.length > 0 && <Badge kind="info" live>{w.active_runs.length} running</Badge>}</td>
                               <td className="hide-narrow dim">{[w.agent, w.tasks.length ? w.tasks.join(', ') : null].filter(Boolean).join(' · ') || '—'}</td>
-                              <td className="min"><button type="button" className="sm" onClick={async () => setImpact(await host.call('workspace_archive', { id: w.id, dry_run: true }))}>Archive…</button></td></tr>))}</tbody></table></div>}
+                              <td className="min"><button type="button" className="sm" onClick={() => host.run('research.workspace.open', w.path)}>Open</button> <button type="button" className="sm" onClick={async () => setImpact(await host.call('workspace_archive', { id: w.id, dry_run: true }))}>Archive…</button></td></tr>))}</tbody></table></div>}
                   </Section>
 
                   {d.layout.mode !== 'classic' && (

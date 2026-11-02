@@ -45,7 +45,7 @@ def test_layout_one_repo_and_root_of_main(made):
 def test_workspace_file_and_project_resolves_from_every_root(made):
     root, _, r = made
     ws = json.load(open(r["workspace_file"]))
-    assert [f["path"] for f in ws["folders"]] == ["main", "ledger"] and ws["settings"]["research.projectRoot"] == "."
+    assert [f["path"] for f in ws["folders"]] == ["main", "ledger", "experiments"] and ws["settings"]["research.projectRoot"] == "."
     for d in ("main", "ledger"):
         with Project(str(root / d)) as p:
             assert p.name == "sparse-ct" and p.config["layout"]["experiments_dir"] == "experiments"

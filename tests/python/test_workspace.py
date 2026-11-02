@@ -237,3 +237,12 @@ def test_hpc_manifest_pins_the_exact_source(shared):
     snap = m["provenance"]["workspace"]["snapshot"]
     shown = subprocess.run(["git", "show", f"{snap['commit']}:uncommitted.py"], cwd=ws["path"], capture_output=True, text=True)
     assert shown.stdout == "y = 2\n" and m["provenance"]["workspace"]["id"] == ws["id"]
+
+
+def test_implementer_brief_states_the_hpc_result_contract(shared):
+    repo, _ = shared
+    with Project(str(repo)) as p:
+        from research import agents
+        b = agents.build_brief(p, "implementer")
+        assert "artifacts.jsonl" in b and "RESEARCH_RUN_DIR" in b
+        assert "artifacts.jsonl" not in agents.build_brief(p, "verifier")

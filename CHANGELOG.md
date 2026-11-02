@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.2
+
+Fixes from the end-to-end test (`docs/E2E_TEST_REPORT.md`):
+- New projects' workspace shows `experiments/` so the code of every experiment worktree is visible; the Work tab's worktree rows have **Open** (adds the folder to the workspace).
+- Dispatch's "prepared" step is a QuickPick (Start / Preview brief / Not now) instead of a toast that vanishes; Preview returns to it, so Start is never lost.
+- *Add task* on a plan pre-fills type, role and the plan's experiment.
+- Implementer briefs state the HPC result contract (`RESEARCH_RUN_DIR`, `metrics.jsonl`, `artifacts.jsonl`).
+- `research run logs` finds logs that came home from a cluster (`collected/logs`).
+
 ## 2.0.1
 
 - **Dispatch gates are actionable.** "No frozen acceptance tests" and "no worktree" now open a modal with the full message and actions (Freeze test files…, Dispatch without frozen tests… with a logged reason, Create worktree and continue). The gates themselves are unchanged.

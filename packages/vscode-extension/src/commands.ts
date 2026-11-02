@@ -616,7 +616,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       kind: 'task', title: `Add task to ${planId}`, icon: 'list-ordered', submit: 'Add task',
       subtitle: `<b>${escapeHtml(plan.title)}</b> — ${existingTasks.length} tasks so far`,
       context: { plan_id: planId },
-      groups: taskGroups({ task_type: 'research' }),
+      groups: taskGroups({ task_type: 'implementation', assigned_role: 'implementer', related_experiment_id: existingTasks.map((t: any) => t.related_experiment_id).find(Boolean) }),
     }, async (v, c) => (await rpc('create', { type: 'task', plan_id: c.plan_id, ...taskValues(v), status: 'todo' })).id);
   });
 
@@ -765,10 +765,17 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       }
     }
     const al = d.allocation || {};
-    const act = await vscode.window.showInformationMessage(
-      `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · runs in ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''),
-      { modal: false }, 'Preview', 'Start');
-    if (act === 'Preview') return void vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(d.env.RESEARCH_BRIEF)), { preview: true });
+    let act: string | undefined;
+    for (;;) {   // a QuickPick, not a toast: it does not vanish, and Preview returns here so Start stays available
+      const pick: any = await vscode.window.showQuickPick([
+        { label: '$(play) Start', description: 'launch the agent now', act: 'Start' },
+        { label: '$(eye) Preview brief', description: 'read exactly what the agent is told', act: 'Preview' },
+        { label: '$(clock) Not now', description: 'keep it prepared; start it later from the Agents tab', act: undefined }],
+        { placeHolder: `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · runs in ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''), ignoreFocusOut: true });
+      act = pick?.act;
+      if (act !== 'Preview') break;
+      await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(d.env.RESEARCH_BRIEF));
+    }
     if (act !== 'Start') return;
     if (d.problem) return void vscode.window.showErrorMessage(d.problem);
     if (!d.execution_id) {  // not tied to a task (planner/analyst on a plan, finding review): no launch tracking is possible
@@ -800,6 +807,13 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       }
     });
     done();
+  });
+  reg('research.workspace.open', async (p?: string) => {   // show an experiment worktree in the Explorer
+    if (!p) return;
+    const uri = vscode.Uri.file(p);
+    if (!vscode.workspace.workspaceFolders?.some((f) => f.uri.fsPath === uri.fsPath))
+      vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length || 0, 0, { uri, name: `${path.basename(p)} (experiment code)` });
+    await vscode.commands.executeCommand('revealInExplorer', uri);
   });
   reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
 
