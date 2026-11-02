@@ -6,6 +6,7 @@
 - **Agents never silently edit `main/`.** In a shared-ledger project an implementer dispatch needs the experiment's worktree; an experiment's worktree serves all its tasks. New experiment creates a worktree by default.
 - **Headless Claude Code can actually work.** `claude -p` is started with `--permission-mode acceptEdits` and `--allowedTools` limited to the `research` CLI/MCP (override per profile with `allowed_tools`, `permission_mode`); the ledger's `research` shim is put on `PATH`. Previously a headless run could exit 0 having done nothing.
 - **Task checks run in the task's worktree** (command cwd and `file:` paths), not the ledger folder.
+- **HPC (verified on a real Slurm cluster):** fixed the bundle being looked up under `main/` instead of the ledger in shared-ledger projects (upload failed), and commands with quotes/spaces (`-- python -c 'print("x")'`) now reach the cluster shell-quoted. Containerised jobs: a sandbox profile on a remote `hpc submit` is still refused (fail closed); run Research OS on the cluster and use `research run submit` with an apptainer/singularity profile, which was verified end to end.
 - Work tab: New plan, Add task, Dispatch; "workspace" wording is now "worktree"; readable effective task spec; new projects do not badge Source Control for ledger records.
 
 ## Unreleased

@@ -326,7 +326,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
                 hint="Remote code snapshots are immutable once submitted. This should not happen for a "
                      "fresh run id; check the remote directory by hand. Nothing was overwritten.")
     ssh.mkdir(rp["code"], rp["run"], rp["results"])
-    ssh.push(os.path.join(p.root, bun["dir"]), rp["code"],
+    ssh.push(p.abspath(bun["dir"]), rp["code"],
              method=(cluster.get("transfer") or {}).get("method", "rsync"))
     ssh.write_file(posixpath.join(rp["code"], ".bundle-token"), token + "\n")
     verified = _verify_upload(ssh, rp["code"], bun)

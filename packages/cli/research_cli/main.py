@@ -965,6 +965,12 @@ def cmd_metric_add(a, p) -> int:
 
 
 @mut
+def _shell_cmd(a) -> str:
+    """argv after `--` as one shell command line: words are quoted, a single argument is taken as already being a command line."""
+    c = _cmd_list(a)
+    return c[0] if len(c) == 1 else __import__("shlex").join(c)
+
+
 def cmd_artifact_add(a, p) -> int:
     res = []
     for path in a.paths:
@@ -2375,7 +2381,7 @@ def cmd_hpc(a, p) -> int:
     if act == "bundle":
         cluster = HC.get(p, cl) if (cl or HC.names(p)) else None
         res = (HC.check_resources(cluster, _slurm_opts(a)) if cluster else _slurm_opts(a))
-        r = HB.build(p, a.id, command=" ".join(_cmd_list(a)) or None, fmt=a.format,
+        r = HB.build(p, a.id, command=_shell_cmd(a) or None, fmt=a.format,
                      cluster=cluster, resources=res)
         if a.json:
             out_json({k: v for k, v in r.items() if k != "manifest"})
@@ -2395,7 +2401,7 @@ def cmd_hpc(a, p) -> int:
         return 0
 
     if act == "submit":
-        r = HR.submit(p, a.id, cluster_name=cl, command=" ".join(_cmd_list(a)) or None,
+        r = HR.submit(p, a.id, cluster_name=cl, command=_shell_cmd(a) or None,
                       dry_run=a.dry_run, approve=a.yes, resources=_slurm_opts(a),
                       stage_datasets=a.stage_datasets, deep_verify=a.deep)
         if a.json:
