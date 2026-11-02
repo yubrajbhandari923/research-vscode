@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased: persistent supervisor
+
+- **YAML research plans** (`research plan yaml template|export|validate|diff|apply`): versioned schema, stable keys, revision-aware idempotent reconciliation, safe edits of unstarted work, protection of running/completed work.
+- **Supervisor** (`research plan run|pause|resume|stop|status`, `research supervisor …`): a persistent process that schedules ready tasks, launches agents in the right worktree with assembled context, verifies results itself, repairs within limits, waits for HPC runs, recovers after restarts. Only its verification (or a human `accept`) completes a supervised task, by any route, including hand-edited files.
+- **Agent reporting** (`research agent progress|artifact|report|problem|propose|finish`, MCP `agent_report`/`agent_propose`/`plan_status`), validated against the owning execution.
+- **Plan-change proposals** (operational vs scientific) with approval in the UI.
+- **Control Center → Plans** tab and YAML import/open/apply commands; **Settings → Supervisor**.
+- Fixes found by real runs: frozen tests inside worktrees, provider usage limits, claim handling. See docs/SUPERVISOR.md and docs/SUPERVISOR_E2E_REPORT.md.
+
 ## 2.0.4
 
 - **Agent reviewers can actually record their verdict.** The headless allowlist now covers `.research/bin/research …` and `cd … && research …`; briefs tell agents to run `research` directly, one command per call. Terminal-run agents (finding reviews) print readable text instead of raw JSON.

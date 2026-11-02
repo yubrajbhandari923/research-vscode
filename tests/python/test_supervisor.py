@@ -400,3 +400,30 @@ def run_until_status(p, state, timeout):
             return True
         time.sleep(0.5)
     return False
+
+
+def test_provider_usage_limit_pauses_the_task_without_consuming_attempts(proj):
+    """Found by the real run: a 429 'usage limit' used to burn repair attempts. It is not the agent's fault and not retried blindly."""
+    y = yaml_plan([task_yaml("a", "A", "echo '{\"is_error\": true, \"terminal_reason\": \"api_error\", \"result\": \"You have hit your usage limit\"}'; exit 1",
+                             checks=["file:never.txt"])])
+    PS.apply(proj, y)
+    SV.plan_run(proj, "demo-plan", start_daemon=False)
+    assert run_until(proj, lambda: phases(proj)["a"] == "attention", 60)
+    pid = PS.load_state(proj, "demo-plan")["plan_id"]
+    rs = SV.load_run(proj, pid)
+    e = next(iter(rs["tasks"].values()))
+    assert len(e["attempts"]) == 1 and "provider error" in e["attempts"][0]["voided"] and rs["budgets"]["attempts"] == 0
+    assert "usage limit" in e["reason"]
+    SV.tick(proj)
+    assert len(SV.load_run(proj, pid)["tasks"][next(iter(rs["tasks"]))]["attempts"]) == 1      # nothing was retried behind the user's back
+
+
+def test_voiding_one_attempt_keeps_the_earlier_failure_as_the_repair_basis(proj):
+    y = yaml_plan([task_yaml("a", "A", "echo bad > r.txt", attempt="*", checks=["cmd:grep -q good r.txt"])])
+    PS.apply(proj, y)
+    SV.plan_run(proj, "demo-plan", start_daemon=False)
+    assert run_until(proj, lambda: phases(proj)["a"] == "blocked", 90)           # two attempts, budget 2
+    tid = PS.load_state(proj, "demo-plan")["tasks"]["a"]
+    SV.void_attempts(proj, tid, "second attempt was not the agent's fault", attempts=[2])
+    e = SV.load_run(proj, PS.load_state(proj, "demo-plan")["plan_id"])["tasks"][tid]
+    assert e["phase"] == "repair_pending" and e["attempts"][1]["voided"] and not e["attempts"][0].get("voided")

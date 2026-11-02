@@ -535,7 +535,7 @@ def _reconcile_attempts(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: D
                 continue
             a["state"] = "unknown"
             e.update(phase="attention", reason="the launcher exited without recording an outcome; the agent may still be running. "
-                                               "Check it, then `research supervisor resolve " + tid + " --failed|--completed`")
+                                               "Check it, then settle it with Retry in the Plans page or the supervisor resolve command")
             a["category"] = "unknown_execution_state"
             _event(p, tid, "supervisor_unknown", f"attempt {a['n']} state unknown; not retried automatically")
             out["blocked"].append({"task": tid, "reason": "unknown execution state"})
