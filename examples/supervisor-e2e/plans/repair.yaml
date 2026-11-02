@@ -1,0 +1,25 @@
+schema_version: 1
+project:
+  context: [RESEARCH.md]
+plans:
+  - key: repair-demo
+    title: Recoverable bug demonstration
+    objective: Show that Research OS detects a failed attempt, repairs it with an agent, and re-verifies.
+    execution:
+      max_attempts_per_task: 3
+      max_total_attempts: 4
+    experiments:
+      - key: smoothing
+        title: Fix the moving average
+        hypothesis: A correct centered moving average passes the unit tests.
+        tasks:
+          - key: fix
+            title: Fix smooth.py
+            agent: {role: implementer, profile: claude-balanced, session_group: fix}
+            prompt: |
+              `smooth.py` has a bug that makes `test_smooth.py` fail. Fix `smooth.py` by reading it carefully. Do NOT edit `test_smooth.py`.
+              Do not execute the tests or any Python in this task: Research OS runs the verification itself after you finish and will tell you
+              exactly what failed if anything is still wrong. Keep the change minimal.
+            checks:
+              - "cmd:/tmp/e2e-venv/bin/python test_smooth.py"
+            expected_artifacts: [smooth.py]

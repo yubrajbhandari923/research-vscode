@@ -385,13 +385,17 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     role = ag.get("role") or "implementer"
     n = len(e["attempts"]) + 1
     diagnostics = (e["attempts"][-1].get("verification") or {}).get("diagnostics") if e["attempts"] and kind == "repair" else None
-    if kind == "repair" and e["attempts"] and e["attempts"][-1].get("diagnostics_extra"):
-        diagnostics = (diagnostics or []) + e["attempts"][-1]["diagnostics_extra"]
+    if kind == "repair":      # the latest attempt that actually stands (voided ones are evidence, not instructions)
+        standing = [x for x in e["attempts"] if not x.get("voided")]
+        diagnostics = ((standing[-1].get("verification") or {}).get("diagnostics")) if standing else None
     # reserve first: a crash after this point is reconciled from the attempt ledger, never double-launched
     task = p.get("task", tid)
     if task["status"] in ("todo", "blocked"):
-        P.update_task(p, tid, status="running", claimed_by="supervisor", claimed_at=now_iso(),
-                      started_at=task.get("started_at") or now_iso())
+        # The supervisor's own ledger is the exclusive reservation. The task's `claimed_by` stays free so the agent's mandatory
+        # `research task start` succeeds (found by the first real run: a supervisor-held claim made every agent stop).
+        P.update_task(p, tid, status="running", claimed_by=None, claimed_at=None, started_at=task.get("started_at") or now_iso())
+    elif task["status"] == "running" and task.get("claimed_by"):
+        P.update_task(p, tid, claimed_by=None, claimed_at=None)
     attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": ag.get("profile"),
                "role": role}
     e["attempts"].append(attempt)
@@ -565,6 +569,14 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
         a["state"] = "failed"
         logs = E.logs(p, a["execution"], 1500)
         tail = taskprompt.redact((logs.get("err") or logs.get("out") or "")[-900:]) or ""
+        pe = _provider_error(p, a)
+        if pe:     # not the agent's fault and not repairable by trying again now: pause the task, keep the attempt as evidence, count nothing
+            a.update(state="failed", category="resource_limit", voided="provider error: " + pe)
+            rs["budgets"]["attempts"] = max(0, rs["budgets"]["attempts"] - 1)
+            e.update(phase="attention", reason=f"the provider refused the request ({pe}). Nothing was retried; resume the plan or press Retry when it is available again")
+            _event(p, tid, "supervisor_provider_error", pe)
+            out["blocked"].append({"task": tid, "reason": e["reason"]})
+            return
         code = ex.get("exit_code")
         cat = "environment" if code in (127, 126) or re.search(r"ModuleNotFoundError|command not found|No such file or directory: '", tail) else "agent_process_failure"
         a["category"] = cat
@@ -575,6 +587,26 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
     a["state"] = "done"
     e["phase"] = "verifying"
     _verify_attempt(p, st, rs, tid, e, a, c, out)
+
+
+_PROVIDER_ERR = re.compile(r"hit your .*limit|rate.?limit|usage limit|overloaded|\b429\b|\b529\b|credit balance|quota", re.I)
+
+
+def _provider_error(p: Project, a: Dict[str, Any]) -> Optional[str]:
+    """A provider-side refusal (usage limit, overload, quota), read from the agent's own structured output; never from the task's work."""
+    from . import execution as E
+    try:
+        text = (E.logs(p, a["execution"], 200000).get("out")) or ""
+        for line in reversed(text.strip().splitlines()):
+            d = json.loads(line)
+            if isinstance(d, dict) and (d.get("is_error") or d.get("terminal_reason") == "api_error"):
+                msg = str(d.get("result") or "")
+                if d.get("terminal_reason") == "api_error" or _PROVIDER_ERR.search(msg):
+                    return msg[:200] or "api error"
+            break
+    except (OSError, ValueError, ResearchError):
+        pass
+    return None
 
 
 def _session_id(p: Project, a: Dict[str, Any], ex: Dict[str, Any]) -> Optional[str]:
@@ -670,7 +702,7 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
     from . import orchestrate as O
     spec = _flat(st, tid)
     max_att = int((spec.get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"])
-    n_fail = len(e["attempts"])
+    n_fail = len([x for x in e["attempts"] if not x.get("voided")])
     try:   # keep the established attempt ledger and escalation rules in step
         tier = a.get("tier") or (a.get("profile") or "agent")
         O.record_attempt(p, tid, tier, "fail", cat if cat in O.CATEGORIES else "incorrect_implementation", note=(diagnostics or [""])[0][:200])
@@ -811,6 +843,36 @@ def accept(p: Project, tid: str, reason: str) -> Dict[str, Any]:
                 save_run(p, rs)
     p.event("task", tid, "supervisor_accepted", "accepted without verification: " + reason)
     return {"task": tid, "accepted": True}
+
+
+def void_attempts(p: Project, tid: str, reason: str, attempts: Optional[List[int]] = None) -> Dict[str, Any]:
+    """A human declares attempts invalid because of a defect outside the agent's work (Research OS, the provider, the environment).
+    They stay in the ledger as evidence but stop counting against the task's budget. Default: every attempt that did not verify.
+    If an earlier attempt still stands as a failed verification, the next dispatch is a repair carrying its diagnostics."""
+    require_human(p, "Voiding attempts")
+    hit = PS.find_task_key(p, tid)
+    if not hit:
+        raise ResearchError(f"{tid} is not part of a managed plan")
+    with _lock(p):
+        rs = load_run(p, hit[0]["plan_id"])
+        e = _entry(rs, tid)
+        n = 0
+        for a in e["attempts"]:
+            if (attempts is None or a["n"] in attempts) and not a.get("voided") and a.get("state") != "verified":
+                a["voided"] = reason
+                n += 1
+                rs["budgets"]["attempts"] = max(0, rs["budgets"]["attempts"] - 1)
+        standing = [a for a in e["attempts"] if not a.get("voided")]
+        failed_verification = bool(standing and standing[-1].get("verification") and not standing[-1]["verification"].get("passed"))
+        e.update(phase="repair_pending" if failed_verification else "waiting", reason=None)
+        if rs["state"] in ("blocked", "attention"):
+            rs["state"] = "running"
+        save_run(p, rs)
+    from . import plans as P
+    if p.get("task", tid)["status"] == "blocked":
+        P.update_task(p, tid, status="todo", blockers=None)
+    p.event("task", tid, "supervisor_voided", f"{n} attempt(s) voided: {reason}")
+    return {"task": tid, "voided": n}
 
 
 def retry_task(p: Project, tid: str, note: Optional[str] = None) -> Dict[str, Any]:
@@ -984,7 +1046,7 @@ def daemon_start(p: Project, detach: bool = True, exit_when_idle: bool = False) 
     st = daemon_status(p)
     if st["running"]:
         return {**st, "already": True}
-    argv = [sys.executable, "-m", "research.supervisor", "run", "--root", p.root] + (["--exit-when-idle"] if exit_when_idle else [])
+    argv = [sys.executable, "-m", "research.supervisord", "run", "--root", p.root] + (["--exit-when-idle"] if exit_when_idle else [])
     if not detach:
         return {"argv": argv}
     log = open(sdir(p, "daemon.log"), "ab")
@@ -1071,6 +1133,3 @@ def main(argv: List[str]) -> int:
     a = ap.parse_args(argv)
     return run_forever(a.root, a.exit_when_idle)
 
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))

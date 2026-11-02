@@ -594,13 +594,16 @@ class Server:
             raise ResearchError(f"unknown plan action {action!r}")
         return fn()
 
-    def m_supervisor_task(self, task: str, action: str, note: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+    def m_supervisor_task(self, task: str, action: str, note: Optional[str] = None, reason: Optional[str] = None,
+                          attempts: Optional[List[int]] = None) -> Dict[str, Any]:
         from . import supervisor as SV
         p = self.project()
         if action == "approve":
             return SV.approve_task(p, task, note)
         if action == "accept":
             return SV.accept(p, task, reason or "")
+        if action == "void":
+            return SV.void_attempts(p, task, note or reason or "attempts voided by a human", attempts)
         if action in ("failed", "completed", "retry", "unblock"):
             return SV.resolve(p, task, action, note)
         raise ResearchError(f"unknown task action {action!r}")

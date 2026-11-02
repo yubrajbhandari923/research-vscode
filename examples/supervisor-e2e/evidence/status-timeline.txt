@@ -1,0 +1,11 @@
+[18:21:41] T-001 running;T-002 waiting;T-003 waiting;
+[18:22:14] T-001 blocked;T-002 waiting;T-003 waiting;
+[18:25:23] T-001 running;T-002 waiting;T-003 waiting;
+[18:26:30] T-001 blocked;T-002 waiting;T-003 waiting;
+[18:28:21] T-001 verifying;T-002 waiting;T-003 waiting;
+[18:38:41] T-001 verified;T-002 running;T-003 waiting;
+[18:39:56] T-001 verified;T-002 running;T-003 waiting;
+[18:40:04] T-001 verified;T-002 verified;T-003 running;
+[18:40:05] T-001 verified;T-002 verified;T-003 running;
+[18:41:26] T-001 verified;T-002 verified;T-003 verified;
+[18:41:27] T-001 verified;T-002 verified;T-003 verified;

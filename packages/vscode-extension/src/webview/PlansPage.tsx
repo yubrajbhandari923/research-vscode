@@ -74,7 +74,7 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
           <tbody>{s.tasks.map((t: any) => { const ph = PHASE[t.phase] || PHASE.waiting; return (
             <tr key={t.id}>
               <td><button type="button" className="link idlink" onClick={() => host.openEntity(t.id)}>{t.id}</button> <b>{t.title}</b>{t.experiment && <span className="sub">{t.experiment}</span>}
-                {t.reason && <span className="sub">{t.reason}</span>}</td>
+                {t.reason && <span className="sub" title={t.reason}>{t.reason.length > 170 ? t.reason.slice(0, 170) + '… (Details has the rest)' : t.reason}</span>}</td>
               <td title={ph.hint}><Badge kind={ph.kind} live={live(t.phase)}>{ph.label}</Badge>{t.execution?.state && live(t.phase) && <span className="sub">process {t.execution.state}{t.execution.alive ? '' : ' (not confirmed)'}</span>}
                 {t.deferred && <span className="sub">spec change queued for next attempt</span>}</td>
               <td className="hide-narrow">{t.role}{t.profile ? <span className="sub">{t.profile}</span> : null}</td>
@@ -83,7 +83,9 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
               <td className="min"><button type="button" className="sm" onClick={() => setDetail(t.id)}>Details</button>
                 {t.phase === 'awaiting_approval' && <button type="button" className="sm primary" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'approve' }), `${t.id} approved`)}>Approve</button>}
                 {t.phase === 'attention' && <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'retry' }), `${t.id} queued for another attempt`)}>Retry</button>}
-                {t.phase === 'blocked' && <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'unblock' }), `${t.id} unblocked`)}>Unblock</button>}</td>
+                {t.phase === 'blocked' && <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'unblock' }), `${t.id} unblocked`)}>Unblock</button>}
+                {['blocked', 'attention'].includes(t.phase) && t.attempts > 0 && <button type="button" className="sm" title="Run the checks again on the work as it stands (no new agent)" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'completed', note: 're-verify requested' }), `${t.id}: verifying again`)}>Re-verify</button>}
+                {['blocked', 'attention'].includes(t.phase) && t.attempts > 0 && <button type="button" className="sm" title="Use when the failure was Research OS's fault, not the agent's: the old attempts stay as evidence but stop counting" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'void', note: 'voided by the researcher: the failure was not the agent\'s' }), `${t.id}: attempts voided, queued again`)}>Retry fresh</button>}</td>
             </tr>); })}</tbody></table></div>
         <p className="muted small">Attempts {s.budgets.attempts || 0} of {s.budgets.max_total_attempts} · wall time {Math.round((s.budgets.wall_seconds || 0) / 60)} of {s.budgets.max_wall_minutes} min · limits are in Settings → Supervisor</p>
       </Section>
@@ -113,6 +115,7 @@ function Promotion({ host, plan }: { host: Host; plan: string }) {
 }
 
 function AttemptDialog({ host, task, onClose, tick }: { host: Host; task: string; onClose: () => void; tick: number }) {
+  const [vmsg, setVmsg] = useState('');
   const [n, setN] = useState(0);
   const a = useAsync<any>(() => host.call('attempt_detail', { task, attempt: n }), [task, n, tick]);
   return (
@@ -126,7 +129,9 @@ function AttemptDialog({ host, task, onClose, tick }: { host: Host; task: string
           {d.attempt.verification && <><dt>Verification</dt><dd>{d.attempt.verification.passed ? <Badge kind="ok">passed</Badge> : <Badge kind="bad">failed</Badge>} {d.attempt.verification.checks}
             {d.attempt.verification.diagnostics?.length > 0 && <ul>{d.attempt.verification.diagnostics.map((x: string, i: number) => <li key={i}><code>{x.slice(0, 400)}</code></li>)}</ul>}</dd></>}
           {d.attempt.category && <><dt>Problem class</dt><dd>{d.attempt.category}</dd></>}
+          {d.attempt.voided && <><dt>Not counted</dt><dd>{d.attempt.voided}</dd></>}
         </dl>
+        {!d.attempt.voided && d.attempt.state !== 'verified' && d.attempt.ended && <p><button type="button" className="sm" title="The failure was not the agent's work (provider limit, environment, Research OS defect). The attempt stays as evidence but stops counting." onClick={async () => { try { await host.call('supervisor_task', { task, action: 'void', attempts: [d.attempt.n], note: 'voided by the researcher: not the agent\'s fault' }); setVmsg('Voided; the task is queued again.'); } catch (e: any) { setVmsg(e.message); } }}>Void this attempt (not the agent's fault)</button> {vmsg}</p>}
         <h3>Prompt context (exact text, with sources)</h3>
         {d.attempt.context_sources && <p className="muted small">{d.attempt.context_sources.map((c: any) => c.section).join(' · ')}</p>}
         <pre className="diff" tabIndex={0} style={{ maxHeight: 220, overflow: 'auto' }}>{d.prompt || '(not recorded)'}</pre>

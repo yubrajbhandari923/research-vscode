@@ -159,6 +159,9 @@ def cmd_supervisor(a, p) -> int:
         return _emit(a, SV.approve_task(p, a.target, a.note), lambda d: [M.green("✓ ") + f"{d['task']} approved to start"])
     if act == "accept":
         return _emit(a, SV.accept(p, a.target, a.reason or ""), lambda d: [M.yellow("✓ ") + f"{d['task']} accepted WITHOUT verification (logged)"])
+    if act == "void":
+        return _emit(a, SV.void_attempts(p, a.target, a.reason or a.note or "attempts voided by a human"),
+                     lambda d: [M.green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
     if act == "resolve":
         o = "failed" if a.failed else "completed" if a.completed else "retry" if a.retry else "unblock" if a.unblock else None
         if not o:
@@ -234,7 +237,7 @@ def attach_plan(g, add) -> None:
 
 def attach_top(sub, add, group) -> None:
     x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve")
-    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve"])
+    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void"])
     x.add_argument("target", nargs="?", help="approve/accept/resolve: task id")
     x.add_argument("--foreground", action="store_true", help="start: run in this terminal instead of detaching")
     x.add_argument("--detach", action="store_true", help="start: detach (the default)")

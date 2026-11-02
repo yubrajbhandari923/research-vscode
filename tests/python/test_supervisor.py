@@ -18,8 +18,10 @@ import os, re, subprocess, sys
 brief = re.search(r"brief at (\S+)", sys.argv[-1]).group(1)
 text = open(brief).read()
 attempt = os.environ.get("RESEARCH_ATTEMPT", "1")
-for m in re.finditer(r"^MOCK_SH(?:@(\d+|\*))?: (.*)$", text, re.M):
-    if m.group(1) in (None, "*", attempt):
+seen = set()
+for m in re.finditer(r"^MOCK_SH(?:@(\d+|\*))?: (.*)$", text, re.M):       # the brief repeats the task text: run each command once
+    if m.group(1) in (None, "*", attempt) and m.group(2) not in seen:
+        seen.add(m.group(2))
         r = subprocess.run(m.group(2), shell=True)
         if r.returncode:
             sys.exit(r.returncode)
@@ -340,3 +342,61 @@ def test_cli_yaml_round_trip_and_agent_commands_need_a_supervised_execution(proj
     bad = cli("agent", "progress", "T-001", "--message", "hi")
     assert bad.returncode == 3 and "RESEARCH_EXECUTION" in bad.stderr
     assert cli("plan", "yaml", "validate", "-", input="schema_version: 2\nplans: []\n").returncode != 0
+
+
+def test_agent_can_claim_and_report_through_the_cli_under_supervision(proj):
+    """Regression from the first real run: a supervisor-held claim made the agent's mandatory `task start` fail."""
+    cli = f"{sys.executable} -m research_cli"
+    PS.apply(proj, yaml_plan([task_yaml("a", "A", f"{cli} task start $RESEARCH_TASK && {cli} agent progress $RESEARCH_TASK --message started && "
+                                                  f"echo ok > a.txt && {cli} agent finish $RESEARCH_TASK --request-verification",
+                                        checks=["file:a.txt"])]))
+    SV.plan_run(proj, "demo-plan", start_daemon=False)
+    assert run_until(proj, lambda: phases(proj)["a"] == "verified", 60)
+    tid = PS.load_state(proj, "demo-plan")["tasks"]["a"]
+    kinds = [r["kind"] for r in SV._reports(proj, tid)]
+    assert kinds == ["progress", "finish"]
+    e = SV.load_run(proj, PS.load_state(proj, "demo-plan")["plan_id"])["tasks"][tid]
+    assert len(e["attempts"]) == 1 and e["attempts"][0].get("verify_requested")
+
+
+def test_frozen_tests_frozen_inside_a_worktree_verify_from_the_supervisor(repo, tmp_path):
+    """Regression from the second real run: a relative freeze made in the worktree looked 'modified' from the project root."""
+    Project.init(str(repo), name="demo", goal="g").close()
+    git(repo, "add", "train.py")
+    W.enable(str(repo), str(tmp_path / "ledger"))
+    script = tmp_path / "mock_agent.py"
+    script.write_text(MOCK)
+    p = Project(str(repo))
+    p.config["agents"]["profiles"]["fake"] = {"command": sys.executable, "args": [str(script)], "headless_args": ["--headless"]}
+    p.save_config()
+    cli = f"{sys.executable} -m research_cli"
+    PS.apply(p, yaml_plan([task_yaml("a", "A", f"echo 'assert True' > test_x.py && {cli} orchestrate freeze $RESEARCH_TASK test_x.py && echo ok > a.txt",
+                                     checks=["file:a.txt"])]))
+    SV.plan_run(p, "demo-plan", start_daemon=False)
+    assert run_until(p, lambda: phases(p)["a"] in ("verified", "blocked", "attention"), 60)
+    assert phases(p)["a"] == "verified"
+    p.close()
+
+
+def test_the_detached_daemon_process_runs_a_plan_to_completion(proj):
+    """The persistent process (not just in-process ticks): it launches, verifies and completes, and exits when idle."""
+    PS.apply(proj, yaml_plan([task_yaml("a", "A", "echo 1 > a.txt", checks=["file:a.txt"]), task_yaml("b", "B", "echo 2 > b.txt", deps=["a"], checks=["file:b.txt"])]))
+    SV.plan_run(proj, "demo-plan", start_daemon=False)
+    d = SV.daemon_start(proj, detach=True, exit_when_idle=True)
+    assert d["running"] and d["pid"]
+    assert run_until_status(proj, "completed", 90), SV.status(proj, "demo-plan")
+    deadline = time.time() + 30
+    while time.time() < deadline and SV.daemon_status(proj)["running"]:
+        time.sleep(0.5)
+    assert not SV.daemon_status(proj)["running"]                   # exit-when-idle: no plan running any more
+    log = os.path.join(proj.rdir, "supervisor", "daemon.log")
+    assert not os.path.exists(log) or "tick error" not in open(log).read()
+
+
+def run_until_status(p, state, timeout):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if SV.status(p, "demo-plan")["state"] == state:
+            return True
+        time.sleep(0.5)
+    return False
