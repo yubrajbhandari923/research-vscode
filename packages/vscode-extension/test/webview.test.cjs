@@ -32,7 +32,7 @@ function startCore(root) {
 }
 function hostFor(core) {
   const log = { entities: [], docs: [] }; let state = {};
-  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
+  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
 }
 
 before(async () => {

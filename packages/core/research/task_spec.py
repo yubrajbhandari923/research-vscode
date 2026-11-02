@@ -3,6 +3,8 @@
 Neither legacy representation is rewritten. Conflicting declarations are retained
 with their sources; callers must reconcile them before execution or completion.
 """
+import os
+
 from .util import PolicyBlocked
 
 
@@ -55,6 +57,10 @@ def render(spec):
                 'allowed_files', 'verification', 'checks', 'frozen_tests'):
         value = spec.get(key)
         if value:
+            if key == 'checks':
+                value = '; '.join(c.get('run') or c.get('path') or str(c) if isinstance(c, dict) else str(c) for c in value)
+            elif key == 'frozen_tests':
+                value = ', '.join(os.path.basename(k) for k in value)   # full paths and hashes live in the ledger
             lines.append('- **' + key.replace('_', ' ').capitalize() + ':** ' + str(value))
     for conflict in spec['conflicts']:
         lines.append('- **CONFLICT ' + conflict['field'] + ':** ' + str(conflict['declarations']))

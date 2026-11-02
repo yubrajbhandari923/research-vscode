@@ -198,7 +198,17 @@ def test_dispatch_runs_in_the_linked_workspace_and_says_so(shared):
         brief = open(p.abspath(d["brief"])).read()
         assert "## Workspace" in brief and ws["branch"] in brief
         other = plans.create_task(p, pl["id"], "unlinked", goal="g")
-        assert agents.dispatch(p, "implementer", other["id"])["cwd"] == str(repo)
+        from research.util import NoWorkspace
+        with pytest.raises(NoWorkspace):          # never silently edit the main checkout
+            agents.dispatch(p, "implementer", other["id"])
+        assert agents.dispatch(p, "analyst", other["id"])["cwd"] == str(repo)   # read-only roles are unaffected
+        e2 = services.create_experiment(p, "e2", hypothesis="h", question=e["question_id"] if "question_id" in e else None)
+        t2 = plans.create_task(p, pl["id"], "exp task", goal="g", related_experiment_id=e2["id"])
+        with pytest.raises(NoWorkspace):
+            agents.dispatch(p, "implementer", t2["id"])
+        d2 = agents.dispatch(p, "implementer", t2["id"], create_workspace=True)
+        assert d2["cwd"] != str(repo) and "/" + e2["id"] in d2["cwd"]
+        assert agents.dispatch(p, "implementer", t2["id"])["cwd"] == d2["cwd"]   # reused via the experiment
 
 
 def test_hpc_manifest_pins_the_exact_source(shared):

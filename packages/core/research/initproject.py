@@ -163,7 +163,7 @@ def workspace_file(root: str, spec: Dict[str, Any], lay: Dict[str, str]) -> Dict
     folders = [{"name": "main (code)", "path": lay["main_dir"]}, {"name": "ledger (research records)", "path": lay["ledger_dir"]}]
     return {"folders": folders,
             "settings": {"research.projectRoot": ".", "git.autoRepositoryDetection": "subFolders",
-                         "git.repositoryScanMaxDepth": 3, "files.exclude": {"**/.research/cache": True},
+                         "git.repositoryScanMaxDepth": 3, "git.countBadge": "tracked", "files.exclude": {"**/.research/cache": True},
                          "git.repositoryScanIgnoredFolders": []},
             "extensions": {"recommendations": ["research-os.research-panel"]}}
 

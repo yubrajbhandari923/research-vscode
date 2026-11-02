@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from . import gitinfo
 from .schema import normalize_id, type_of
 from .store import Project, _atomic_write
-from .util import PolicyBlocked, ResearchError, as_list
+from .util import NoWorkspace, PolicyBlocked, ResearchError, as_list
 
 ROLES = ["planner", "implementer", "verifier", "analyst"]
 
@@ -242,7 +242,8 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
              profile: Optional[str] = None, model: Optional[str] = None, instructions: Optional[str] = None,
              strategy: Optional[str] = None, level: Optional[str] = None, policy: Optional[Dict[str, Any]] = None,
              headless: bool = False, allow_unfrozen: Optional[str] = None,
-             require_skills: Any = None, effort: Optional[str] = None) -> Dict[str, Any]:
+             require_skills: Any = None, effort: Optional[str] = None,
+             create_workspace: bool = False) -> Dict[str, Any]:
     """Prepare an agent session: write the brief, build argv + env. Does not start anything.
 
     With an active (or `strategy=`) allocation strategy the profile comes from `strategy.select`; callers that already
@@ -300,7 +301,17 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     ws = None
     if target and type_of(target) == "task":
         from . import workspace as W
-        ws = W.for_task(p, normalize_id(target, "T"))
+        tid = normalize_id(target, "T")
+        ws = W.for_task(p, tid)
+        if ws is None and role == "implementer" and p.location.linked:   # never silently edit the main checkout
+            exp = p.get("task", tid).get("related_experiment_id")
+            if create_workspace and exp:
+                ws = W.link_task(p, W.create(p, exp)["id"], tid)
+            else:
+                raise NoWorkspace(f"{tid}: {exp or 'it'} has no worktree, so the agent would edit the main checkout" if exp else
+                                  f"{tid} is not tied to an experiment, so the agent would edit the main checkout",
+                                  hint=f"Create a worktree for {exp} first (Work → New worktree)." if exp else
+                                       "Link the task to an experiment with a worktree first.")
     src_root = ws["path"] if ws else p.root
     brief = build_brief(p, role, target, objective, instructions, required_md, ws)
     stamp = time.strftime("%Y%m%d-%H%M%S") + "-" + __import__("uuid").uuid4().hex[:12]

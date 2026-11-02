@@ -2,7 +2,7 @@
   "name": "research-panel",
   "displayName": "Research Panel",
   "description": "Research memory for computational projects: questions \u2192 experiments \u2192 runs \u2192 findings \u2192 decisions \u2192 checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "publisher": "research-local",
   "license": "MIT",
   "engines": {

@@ -740,10 +740,33 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       ...(!caps || caps.headless ? [{ label: 'Headless', description: 'runs in the background; logs and exit status are captured', headless: true }] : [])];
     const mode: any = await vscode.window.showQuickPick(modes, { placeHolder: 'Mode' });
     if (!mode) return;
-    const d = await rpc('dispatch', { role, target, objective, profile: agentPick.profile, model: chosen, headless: mode.headless });
+    const args: any = { role, target, objective, profile: agentPick.profile, model: chosen, headless: mode.headless };
+    let d: any;
+    for (;;) {  // gates that the user can resolve right here are offered as actions, with the full message
+      try { d = await rpc('dispatch', args); break; } catch (e: any) {
+        const full = e.message + (e.hint ? `\n\n${e.hint}` : '');
+        if (e.kind === 'NoWorkspace') {
+          const b = await vscode.window.showWarningMessage(full, { modal: true }, 'Create worktree and continue');
+          if (!b) return;
+          args.create_workspace = true;
+        } else if (e.kind === 'NoFrozenTests') {
+          const b = await vscode.window.showWarningMessage(`${e.message}\n\nFrozen tests are the oracle the agent must pass; it cannot weaken them. Pick the test files you wrote for this task.`, { modal: true }, 'Freeze test files…', 'Dispatch without frozen tests…');
+          if (!b) return;
+          if (b.startsWith('Freeze')) {
+            const files = await vscode.window.showOpenDialog({ canSelectMany: true, defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri, openLabel: 'Freeze' });
+            if (!files?.length) return;
+            await rpc('freeze_tests', { task: target, paths: files.map((f) => f.fsPath) });
+          } else {
+            const why = await vscode.window.showInputBox({ prompt: 'Why dispatch without frozen tests? (logged on the task)', ignoreFocusOut: true });
+            if (!why) return;
+            args.allow_unfrozen = why;
+          }
+        } else throw e;
+      }
+    }
     const al = d.allocation || {};
     const act = await vscode.window.showInformationMessage(
-      `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · worktree ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''),
+      `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · runs in ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''),
       { modal: false }, 'Preview', 'Start');
     if (act === 'Preview') return void vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(d.env.RESEARCH_BRIEF)), { preview: true });
     if (act !== 'Start') return;

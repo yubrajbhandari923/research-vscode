@@ -122,7 +122,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
         return (
           <>
             <PageHeader title="Work" sub="Who is doing what, where it runs, and what is ready to move into main."
-              actions={d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New workspace</button>} />
+              actions={<><button type="button" onClick={() => host.run('research.plan.create')}><Icon name="tasks" /> New plan</button>{d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New worktree</button>}</>} />
             <div className="kpis" role="list" aria-label="Operations at a glance">
               <Stat value={by('todo') + by('running') + by('in_progress')} sub={by('running') + by('in_progress') ? `${by('running') + by('in_progress')} in progress` : undefined} label="Open tasks" />
               <Stat value={by('blocked')} label="Blocked" warn={by('blocked') > 0} />
@@ -134,26 +134,26 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
             <div className="stack">
               <Section id="pl" title="Plans and tasks" count={d.plans.length || undefined}>
                 {d.plans.length === 0 ? <EmptyState icon="tasks" title="No plans yet.">A plan breaks an objective into tasks that agents or you can claim. Dependencies decide what is ready next.
-                  <br /><code>research plan create "Compare priors" --objective "…"</code></EmptyState> :
+                  <br /><button type="button" onClick={() => host.run('research.plan.create')}>New plan</button></EmptyState> :
                   <div className="grid-2">{d.plans.map((pl: any) => {
                     const done = pl.tasks.filter((t: any) => t.status === 'done').length;
                     return <div key={pl.id} className="card plan">
-                      <div className="plan-head"><div className="grow"><span><IdLink id={pl.id} host={host} /> <b>{pl.title}</b></span></div><Progress value={done} max={pl.tasks.length} ok={done === pl.tasks.length && done > 0} label={`${done} of ${pl.tasks.length} tasks done`} /></div>
+                      <div className="plan-head"><div className="grow"><span><IdLink id={pl.id} host={host} /> <b>{pl.title}</b></span></div><Progress value={done} max={pl.tasks.length} ok={done === pl.tasks.length && done > 0} label={`${done} of ${pl.tasks.length} tasks done`} /><button type="button" className="sm" onClick={() => host.run('research.task.create', pl.id)}>Add task</button></div>
                       {pl.tasks.length === 0 ? <EmptyState inline title="No tasks in this plan." /> : pl.tasks.map((t: any) => (
                         <div key={t.id} className={'task' + (t.status === 'done' ? ' done' : '')}>
                           <i className={'dot k-' + (TASK_KIND[t.status] || '')} aria-hidden /><IdLink id={t.id} host={host} /><span className="t">{t.title}</span>
                           {t.assigned_role && <span className="meta hide-narrow">{t.assigned_role}</span>}
-                          <Status value={t.status} /></div>))}
+                          <Status value={t.status} />{t.status !== 'done' && <button type="button" className="sm" aria-label={`Dispatch ${t.id} to an agent`} onClick={() => host.run('research.dispatch', t.id)}>Dispatch</button>}</div>))}
                     </div>;
                   })}</div>}
               </Section>
 
               <div className="grid-main">
                 <div className="col">
-                  <Section id="ws" title="Experiment branches" count={d.workspaces.length} boxed
+                  <Section id="ws" title="Experiment worktrees" count={d.workspaces.length} boxed
                     lead={d.layout.mode === 'classic' ? undefined : <>Each experiment can live on its own git branch and folder while sharing one research history. Ledger <code>{d.layout.ledger_root}</code></>}>
-                    {d.layout.mode === 'classic' ? <EmptyState icon="branch" title="Optional: try ideas on separate git branches.">Experiment branches and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</EmptyState> :
-                      d.workspaces.length === 0 ? <EmptyState inline icon="branch" title="No workspaces yet." actions={<button type="button" onClick={() => setCreating(true)}>New workspace</button>}>Create one to try an idea without touching your current branch.</EmptyState> :
+                    {d.layout.mode === 'classic' ? <EmptyState icon="branch" title="Optional: try ideas on separate git branches.">Experiment worktrees and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</EmptyState> :
+                      d.workspaces.length === 0 ? <EmptyState inline icon="branch" title="No experiment worktrees yet." actions={<button type="button" onClick={() => setCreating(true)}>New worktree</button>}>Create one to try an idea without touching your current branch.</EmptyState> :
                         <div className="tbl-wrap"><table><caption className="sr">Experiment workspaces</caption><thead><tr><th scope="col">Workspace</th><th scope="col">Branch</th><th scope="col" className="hide-narrow">Experiment</th><th scope="col">State</th><th scope="col" className="hide-narrow">Agent / tasks</th><th scope="col"><span className="sr">Actions</span></th></tr></thead><tbody>
                           {d.workspaces.map((w: any) => (
                             <tr key={w.id}><td className="min"><b>{w.id}</b></td>

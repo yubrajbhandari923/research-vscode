@@ -22,7 +22,7 @@ from . import plans
 from . import strategy as S
 from .schema import normalize_id
 from .store import Project, _atomic_write
-from .util import NotFound, PolicyBlocked, ResearchError, as_list, now_iso
+from .util import NoFrozenTests, NotFound, PolicyBlocked, ResearchError, as_list, now_iso
 
 TIERS = ["haiku", "sonnet", "opus"]
 CATEGORIES = ["incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle",
@@ -487,7 +487,7 @@ def preparation(p, tid, role, policy=None, allow_unfrozen=None):
         raise PolicyBlocked("Unfinished dependencies: " + ", ".join(unmet))
     if policy and S.requires_frozen(policy, task) and not led["frozen"]:
         if not allow_unfrozen:
-            raise PolicyBlocked(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
+            raise NoFrozenTests(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
                                 f"freeze them before {policy['level']} implements",
                                 hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
         plans.add_task_note(p, tid, f"{policy['level']} dispatched WITHOUT frozen tests: {allow_unfrozen}")
@@ -534,7 +534,7 @@ def dispatch_task(p: Project, target: str, tier: Optional[str] = None, available
             raise ResearchError(r["note"], hint="Set orchestration.tiers / orchestration.available in .research/config.yaml.")
         if r["tier"] == "haiku" and task.get("task_type") in (None, "implementation", "debug") and not ledger(p, tid)["frozen"]:
             if not allow_unfrozen:
-                raise PolicyBlocked(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
+                raise NoFrozenTests(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
                                     hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
             plans.add_task_note(p, tid, f"haiku dispatched WITHOUT frozen tests: {allow_unfrozen}")
         lim = {"haiku_attempts": 3, **limits(p)}

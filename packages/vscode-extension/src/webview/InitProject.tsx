@@ -98,9 +98,9 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
           </Learn>
           <Learn title="What this wizard builds">
             <pre className="diff" aria-label="Folder layout">{`${env.folder_name}/
-├── main/          code: a git checkout of branch main (this is the root of your GitHub repo)
-├── ledger/        research records (.research/): questions, experiments, runs, findings
-├── experiments/   one git worktree per experiment: EXP-001/, EXP-002/ (empty until you create one)
+├── main/          code: checkout of branch main (your GitHub root)
+├── ledger/        research records (.research/)
+├── experiments/   one git worktree per experiment
 └── ${env.folder_name}.code-workspace   opens main/ and ledger/ together`}</pre>
             <p className="muted small">All three folders belong to one git repository, so branches, history and GitHub work normally.</p>
           </Learn>

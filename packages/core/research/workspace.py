@@ -591,4 +591,9 @@ def for_task(p, task: str) -> Optional[Dict[str, Any]]:
         if rec["status"] == "active" and task in rec["tasks"]:
             s = show(p, ws)
             return s if s["present"] else None
+    exp = p.get("task", task).get("related_experiment_id")   # an experiment's worktree serves all its tasks
+    for ws, rec in _fold(_records(p)).items():
+        if exp and rec["status"] == "active" and rec.get("experiment") == exp:
+            s = show(p, ws)
+            return s if s["present"] else None
     return None

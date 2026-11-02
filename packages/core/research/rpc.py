@@ -512,13 +512,18 @@ class Server:
     def m_dispatch(self, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
                    profile: Optional[str] = None, model: Optional[str] = None,
                    instructions: Optional[str] = None, headless: bool = False, effort: Optional[str] = None,
-                   strategy: Optional[str] = None, level: Optional[str] = None) -> Dict[str, Any]:
+                   strategy: Optional[str] = None, level: Optional[str] = None,
+                   create_workspace: bool = False, allow_unfrozen: Optional[str] = None) -> Dict[str, Any]:
         """PREPARE only: resolves everything and writes the brief. Nothing runs until `execution_start` / the wrapper is run."""
         from . import agents as AG
         d = AG.dispatch(self.project(), role, target, objective, profile, model, instructions, headless=headless, effort=effort,
-                        strategy=strategy, level=level)
+                        strategy=strategy, level=level, create_workspace=create_workspace, allow_unfrozen=allow_unfrozen)
         d["shell"] = None      # never ship a copy-pasteable string built from task text
         return d
+
+    def m_freeze_tests(self, task: str, paths: Any) -> Dict[str, Any]:
+        from . import orchestrate as O
+        return O.freeze(self.project(), task, paths)
 
     def m_execution_start(self, id: str) -> Dict[str, Any]:
         """Start a prepared headless execution detached from the UI. Returns at once; poll `execution_show` for `running`."""
@@ -733,7 +738,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
