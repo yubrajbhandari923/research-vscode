@@ -15,9 +15,9 @@ sparse-ct/
 All three are one git repository. `main/` is the checkout root, so files in it appear at the top level of GitHub's `main`.
 Nothing is pushed for you; add a remote in the wizard (or later) and push from `main/`.
 
-4. **Research: New experiment** (question, hypothesis). A worktree is created in `experiments/`.
+4. **Research: New experiment** (question, hypothesis). A worktree is created in `experiments/` (the box is on by default; dispatch to an implementer is refused without one, with a one-click *Create worktree*).
 5. Add a plan and tasks with acceptance checks.
-6. Open a task → **Dispatch**: choose Agent (Claude Code, Codex, Antigravity), Model, Mode (Interactive or Headless), then *Preview* or *Start*. The agent runs inside that experiment's worktree. Watch it under the **Agents** tab.
+6. Open a task → **Dispatch**: choose Agent (Claude Code, Codex, Antigravity), Model, Mode (Interactive or Headless), then *Preview* or *Start*. Routed tasks that a cheaper model implements need **frozen acceptance tests** first: dispatch offers *Freeze test files…* (or a logged *Dispatch without frozen tests…*). Plans, tasks and Dispatch are also on the **Work** tab. The agent runs inside that experiment's worktree. Watch it under the **Agents** tab.
 7. When it completes, run **Verify**. Completed is not verified.
 8. Want a different agent for the next step? Dispatch the same task with another provider; the history carries over.
 

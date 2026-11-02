@@ -47,6 +47,9 @@ def _claude(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
         argv += ["-p", "--output-format", "json"]
     for d in dirs:
         argv += ["--add-dir", d]
+    if headless:   # nobody can answer a permission prompt: allow edits and the research CLI only, never arbitrary Bash
+        tools = prof.get("allowed_tools") or ["Bash(research *)", "Bash(./.research/bin/research *)", "Bash(*/.research/bin/research *)", "mcp__research"]
+        argv += ["--allowedTools", ",".join(as_list(tools)), "--permission-mode", str(prof.get("permission_mode") or "acceptEdits")]
     if model:
         argv += ["--model", str(model)]
     return argv + [prompt]

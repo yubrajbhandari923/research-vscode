@@ -211,6 +211,19 @@ def test_dispatch_runs_in_the_linked_workspace_and_says_so(shared):
         assert agents.dispatch(p, "implementer", t2["id"])["cwd"] == d2["cwd"]   # reused via the experiment
 
 
+def test_task_checks_run_in_the_task_worktree(shared):
+    repo, _ = shared
+    with Project(str(repo)) as p:
+        from research import services, plans, verification
+        e = services.create_experiment(p, "e", hypothesis="h", question=services.create_question(p, "q")["id"])
+        ws = W.create(p, e["id"])
+        t = plans.create_task(p, plans.create_plan(p, "plan", objective="o")["id"], "t", goal="g", related_experiment_id=e["id"],
+                              checks=["file:out.txt", "cmd:test -f out.txt"])
+        assert not verification.verify_task(p, t["id"], transition=False)["passed"]
+        open(os.path.join(ws["path"], "out.txt"), "w").write("x")
+        assert verification.verify_task(p, t["id"], transition=False)["passed"]
+
+
 def test_hpc_manifest_pins_the_exact_source(shared):
     repo, _ = shared
     from research.hpc import bundle

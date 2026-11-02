@@ -56,6 +56,8 @@ whatever the provider.
 | **verified** | The task's checks and review policy passed (`research task verify`). Only this counts scientifically. |
 
 `research execution list|show|logs|stop|retry`. A task can only be launched once at a time (a kernel lock); a prepared execution is single use.
+Headless Claude Code runs are started with `--permission-mode acceptEdits` and `--allowedTools` limited to the `research` CLI and MCP server, because nobody can answer a prompt; arbitrary shell commands are not pre-approved. Override per profile with `allowed_tools: [...]` and `permission_mode`. The ledger's `.research/bin` is put on `PATH`. Exit 0 means the process ended, not that the task passed: run the task's checks (they run in the experiment worktree).
+
 Headless runs capture stdout/stderr to `.research/orchestration/executions/<id>.out|.err` and the exit status.
 `retry --profile codex` continues the same task with another provider in the same worktree.
 

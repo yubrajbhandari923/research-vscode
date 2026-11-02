@@ -330,6 +330,9 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": src_root, "RESEARCH_BRIEF": abs_brief}
     if mdl:
         env["RESEARCH_AGENT_MODEL"] = str(mdl)
+    shim = os.path.join(p.rdir, "bin")   # the worktree has no .research/bin: put the ledger's `research` on PATH
+    if os.path.isdir(shim):
+        env["PATH"] = shim + os.pathsep + os.environ.get("PATH", "")
     if sk["required"]:
         _atomic_write(path[:-3] + ".skills.json", json.dumps(
             {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "role": role, "target": label, "skills": sk["required"]},

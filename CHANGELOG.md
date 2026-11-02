@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+- **Dispatch gates are actionable.** "No frozen acceptance tests" and "no worktree" now open a modal with the full message and actions (Freeze test files…, Dispatch without frozen tests… with a logged reason, Create worktree and continue). The gates themselves are unchanged.
+- **Agents never silently edit `main/`.** In a shared-ledger project an implementer dispatch needs the experiment's worktree; an experiment's worktree serves all its tasks. New experiment creates a worktree by default.
+- **Headless Claude Code can actually work.** `claude -p` is started with `--permission-mode acceptEdits` and `--allowedTools` limited to the `research` CLI/MCP (override per profile with `allowed_tools`, `permission_mode`); the ledger's `research` shim is put on `PATH`. Previously a headless run could exit 0 having done nothing.
+- **Task checks run in the task's worktree** (command cwd and `file:` paths), not the ledger folder.
+- Work tab: New plan, Add task, Dispatch; "workspace" wording is now "worktree"; readable effective task spec; new projects do not badge Source Control for ledger records.
+
 ## Unreleased
 
 - **Initialize Project** wizard: empty folder → `main/` + `ledger/` + `experiments/` + `.code-workspace`, one git repository, safe first commit, instructive steps, optional HPC discovery/test.
