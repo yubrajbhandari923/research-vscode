@@ -283,6 +283,9 @@ def review_finding(p: Project, finding_id: str, verdict: str, notes: Optional[st
         changes["contradicting_evidence"] = ((f.get("contradicting_evidence") or "") + f"\n\n{rec['id']}: {notes}").strip()
     p.update_entity("finding", fid, changes, action="reviewed",
                     summary=f"{fid} reviewed by {me.get('author_name') or me.get('author_type')}: {verdict}")
+    if verdict == "supported":  # an important result: add its short entry to the Scientist Guide (a convenience, never an error)
+        from . import guide as _guide
+        _guide.auto_log(p)
     return {"finding": p.get("finding", fid), "review": rec}
 
 

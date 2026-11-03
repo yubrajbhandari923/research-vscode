@@ -78,6 +78,28 @@ def add(p, name: str, stage: str, command: str, timeout: Optional[float] = None,
     return status_one(p, name)
 
 
+# Cheap, safe checks every project benefits from. They never block (required: false), so they cost nothing until they find something.
+STARTERS = {
+    "syntax-check": {"stage": "post_implementation", "required": False, "timeout": 120,
+                     "command": "python3 -m compileall -q -x '(\\.venv|node_modules|\\.git|experiments)' .",
+                     "description": "Python files compile after an agent's change (catches syntax errors before anything runs)."},
+    "whitespace-check": {"stage": "post_implementation", "required": False, "timeout": 60, "command": "git diff --check",
+                         "description": "No conflict markers or trailing-whitespace errors in the change."},
+}
+
+
+def install_starters(p, approve_now: bool = False) -> Dict[str, Any]:
+    """Register the starter hooks that are not there yet (never overwrites a hook of the same name). With approve_now (a human acting
+    through the wizard or the Agents page, after seeing the commands) they are approved too, so they run from the first task."""
+    added = []
+    for n, s in STARTERS.items():
+        if n not in specs(p):
+            add(p, n, s["stage"], s["command"], s.get("timeout"), s.get("required", True), s.get("description"))
+            added.append(n)
+    approved = approve(p, added)["approved"] if approve_now and added else []
+    return {"added": added, "approved": approved}
+
+
 def set_enabled(p, name: str, enabled: bool) -> Dict[str, Any]:
     if name not in specs(p):
         raise ResearchError(f"No hook named {name!r}", hint="`research hook list`")

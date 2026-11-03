@@ -530,6 +530,11 @@ def _artifact_table(d: _Doc, arts: List[Dict[str, Any]]) -> None:
     d.line("")
 
 
+def _anchor(heading: str) -> str:
+    """GitHub's id for a heading ("12. Audit / Event History" -> "12-audit--event-history")."""
+    return re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+
+
 def render(snap: Dict[str, Any], *, stamp: bool = False) -> str:
     """Render the snapshot. Deterministic unless `stamp=True` (which adds a wall-clock generation time)."""
     d = _Doc()
@@ -540,6 +545,14 @@ def render(snap: Dict[str, Any], *, stamp: bool = False) -> str:
     d.line("")
     d.para("Complete recorded research context, rendered directly from the canonical Research OS records. "
            "Nothing here is summarized, inferred or model-generated; fields that were never recorded say so.")
+
+    glance = ", ".join(f"{counts[c]} {c}{'' if counts[c] == 1 else 's'}" for c in
+                       ("question", "plan", "task", "experiment", "run", "artifact", "finding", "decision", "checkpoint") if counts[c])
+    d.para(f"**At a glance:** {glance or 'no records yet'}.")
+    d.para("**Contents:** " + " · ".join(f"[{s}](#{_anchor(s)})" for s in SECTIONS))
+    d.para("How to read it: every record is a heading with its id, followed by a field list and its long-form text; "
+           "`<!-- research:record … -->` comments are markers used to verify that nothing is missing (section 14). "
+           "For a short, readable summary use `research report` instead; this document is the complete record.")
 
     # ---- 1. metadata
     d.h(2, SECTIONS[0])
@@ -1024,7 +1037,7 @@ def write(p: Project, scope: Optional[str] = None, out: Optional[str] = None, *,
     path = os.path.abspath(out) if out else default_path(p, scope)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _atomic_write(path, text)
-    res: Dict[str, Any] = {"path": p.rel(path), "bytes": len(text.encode("utf-8")),
+    res: Dict[str, Any] = {"path": p.rel(path), "abs": path, "bytes": len(text.encode("utf-8")),
                            "counts": snap["counts"], "scope": snap["scope"]}
     if check:
         res["check"] = coverage(snap, text)

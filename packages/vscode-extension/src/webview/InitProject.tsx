@@ -10,7 +10,8 @@ interface Env {
   providers: Prov[]; strategies: string[]; ssh_hosts: string[]; layout: Record<string, string>;
 }
 
-const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Review'];
+const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Guide', 'Review'];
+const REVIEW = STEPS.length - 1;
 const BLURB: Record<string, string> = {
   claude: 'Anthropic’s Claude Code. Default. Interactive and headless, per-task model choice, reports token usage.',
   codex: 'OpenAI Codex CLI. Interactive and headless (`codex exec`), model and reasoning effort, runs in a sandbox.',
@@ -44,6 +45,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
   const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '', python: '', required_packages: '' });
   const [py, setPy] = useState({ mode: env.uv?.path ? 'create' : 'none', path: '', packages: 'numpy, matplotlib' });
   const [pyProbe, setPyProbe] = useState<any>(null);
+  const [guide, setGuide] = useState({ enabled: true, publish: true, trigger: 'result', max_words: 150, max_sections: 3, max_figures: 1, auto_log: true, highlights: 'supported' });
   const [compute, setCompute] = useState(false);
   const [probe, setProbe] = useState<any>(null);
   const [plan, setPlan] = useState<any>(null);
@@ -55,11 +57,11 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
     name, goal, layout: lay, create_workspace: wsFile, git: remote ? { remote_url: remote } : {},
     agents: { enabled, default: dflt, strategy: dflt === 'claude' || enabled.includes('claude') ? strategy : undefined },
     verification: { independent_review: review }, hpc: hpc ? { enabled: true, ...h } : undefined,
-    python: py.mode === 'none' ? undefined : py,
+    python: py.mode === 'none' ? undefined : py, guide,
   });
   const go = async (n: number) => {
     setStep(n); setErr('');
-    if (n === 5) { try { setPlan(await host.call('init_preview', { spec: spec() })); } catch (e: any) { setErr(e.message); } }
+    if (n === REVIEW) { try { setPlan(await host.call('init_preview', { spec: spec() })); } catch (e: any) { setErr(e.message); } }
   };
   const toggle = (k: string) => {
     const on = enabled.includes(k) ? enabled.filter((x) => x !== k) : [...enabled, k];
@@ -207,6 +209,44 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
         </section>)}
 
       {step === 5 && (
+        <section aria-label="Guide">
+          <Learn title="The Scientist Guide: where you explain the science">
+            <code>research report</code> records <i>everything</i>. The guide is the opposite: a short, readable <b>Quarto book</b> with only the results that matter, in your words, with your citations. It lives in <code>docs/scientist-guide/</code> on the <b>main</b> branch, so it is versioned with your code and can be published as a website.
+            <ol>
+              <li><b>Important results are logged for you.</b> When a finding is independently reviewed as <i>supported</i> (or you star it), a short entry with its claim and plot appears in the <b>Key results</b> chapter. No agent is involved.</li>
+              <li><b>An agent writes a short first draft only when you ask</b>, within the limits below: the main idea, not the paper.</li>
+              <li><b>You finish it.</b> Edit any chapter, put results in context, and cite sources: paste BibTeX into <code>references.bib</code> (or Guide → Add a reference) and write <code>[@key]</code>. <b>Notes and ideas</b> is yours alone: agents never touch it.</li>
+              <li><b>Publish with a push.</b> A GitHub Actions workflow builds the site on every push to main (turn on Pages once: Settings → Pages → Source: GitHub Actions). Building locally needs <a href="https://quarto.org/docs/get-started/">Quarto</a>; nothing else does.</li>
+            </ol>
+            Look and feel: edit <code>theme.scss</code> for this project’s own colours and fonts, or swap in any Quarto theme in <code>_quarto.yml</code>.
+          </Learn>
+          <label className="check"><input type="checkbox" checked={guide.enabled} onChange={(e) => setGuide({ ...guide, enabled: e.target.checked })} /> Create the Scientist Guide (recommended)</label>
+          {guide.enabled && <>
+            <label className="check"><input type="checkbox" checked={guide.publish} onChange={(e) => setGuide({ ...guide, publish: e.target.checked })} /> Add the GitHub workflow that publishes it as a website on every push to main</label>
+            <label htmlFor="g-hl">What counts as an important result</label>
+            <select id="g-hl" value={guide.highlights} onChange={(e) => setGuide({ ...guide, highlights: e.target.value })}>
+              <option value="supported">Findings an independent review marked supported (recommended)</option>
+              <option value="starred">Only findings I star</option>
+              <option value="all">Every finding that is not superseded</option>
+            </select>
+            <label className="check"><input type="checkbox" checked={guide.auto_log} onChange={(e) => setGuide({ ...guide, auto_log: e.target.checked })} /> Log important results into the guide automatically (a short skeleton; no agent)</label>
+            <label htmlFor="g-tr">When should Research OS suggest an agent draft?</label>
+            <select id="g-tr" value={guide.trigger} onChange={(e) => setGuide({ ...guide, trigger: e.target.value })}>
+              <option value="result">When an important result has no draft yet (reminder on Home)</option>
+              <option value="checkpoint">Only after I record a checkpoint (batched)</option>
+              <option value="manual">Never remind me; I will ask</option>
+            </select>
+            <p className="muted small">This only controls the reminder. An agent never writes into the guide until you press <i>Draft with an agent</i>.</p>
+            <div className="row">
+              <div><label htmlFor="g-w">Words per section</label><input id="g-w" type="number" min={30} max={2000} value={guide.max_words} onChange={(e) => setGuide({ ...guide, max_words: Number(e.target.value) || 150 })} /></div>
+              <div><label htmlFor="g-s">Sections per draft</label><input id="g-s" type="number" min={1} max={20} value={guide.max_sections} onChange={(e) => setGuide({ ...guide, max_sections: Number(e.target.value) || 3 })} /></div>
+              <div><label htmlFor="g-f">Figures per section</label><input id="g-f" type="number" min={0} max={10} value={guide.max_figures} onChange={(e) => setGuide({ ...guide, max_figures: Math.max(0, Number(e.target.value) || 0) })} /></div>
+            </div>
+            <p className="muted small">These limits are written into the agent’s brief and checked afterwards; a draft that exceeds them is flagged. Change any of this later in Settings → Scientist Guide.</p>
+          </>}
+        </section>)}
+
+      {step === 6 && (
         <section aria-label="Review">
           {plan ? (plan.ok ? <>
             <p>Research OS will create:</p>
@@ -223,7 +263,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
         {step > 0 && <button type="button" onClick={() => go(step - 1)}>Back</button>}
         {step === 0 && <button type="button" className="link" onClick={onClassic}>Use a single folder instead (classic)</button>}
         <span className="spacer" />
-        {step < 5 ? <button type="button" className="primary" disabled={!canNext} onClick={() => go(step + 1)}>Next</button>
+        {step < REVIEW ? <button type="button" className="primary" disabled={!canNext} onClick={() => go(step + 1)}>Next</button>
           : <button type="button" className="primary" disabled={busy || !plan?.ok} onClick={create}>{busy ? 'Creating…' : 'Create project'}</button>}
       </div>
     </div>
@@ -241,6 +281,7 @@ function Done({ r }: { r: any; host: Host }) {
           <li>In the <b>Work</b> tab, add a plan and tasks with acceptance checks (or dispatch the <i>planner</i> agent to draft them).</li>
           <li>Open a task → choose <b>Agent</b>, <b>Model</b>, <b>Mode</b> → <b>Preview</b>, then <b>Start</b>. The agent runs inside that experiment’s worktree.</li>
           <li>Watch it under <b>Settings → Agents &amp; Providers</b> (state: prepared → running → completed). Completed means the agent exited; then run <b>Verify</b>.</li>
+          <li>Open the <b>Guide</b> tab: supported results are logged into your Scientist Guide; ask an agent for a short draft, add your citations, and push to publish the site.</li>
           <li>Want a different agent for the next step? Dispatch the same task with another provider. History carries over.</li>
         </ol>
       </Learn>

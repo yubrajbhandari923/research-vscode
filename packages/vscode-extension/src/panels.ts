@@ -9,8 +9,8 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
-const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'setup_apply', 'init_apply', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
+const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
+const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'setup_apply', 'init_apply', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_add', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
@@ -46,6 +46,8 @@ interface EntityPanel {
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
+  shellReady?: boolean;                               // the Control Center's React shell is listening for 'navigate'
+  pendingNav?: { page: string; target?: string };     // a navigation requested before it was
 }
 
 export class Panels implements vscode.Disposable {
@@ -111,11 +113,32 @@ export class Panels implements vscode.Disposable {
     await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: false });
   }
 
+  /** Open a written report: HTML in the browser, Markdown in the editor. Only files under the project's reports folder. */
+  private async openReport(file: string) {
+    const abs = path.resolve(file);
+    if (!/[\\/]\.research[\\/]reports[\\/][^\\/]+\.(md|html)$/i.test(abs) || !fs.existsSync(abs)) return void vscode.window.showWarningMessage('Research: that is not a report written by Research OS.');
+    if (abs.endsWith('.html')) return void vscode.env.openExternal(vscode.Uri.file(abs));
+    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: false });
+  }
+
+  /** Open a file of the Scientist Guide. The guide lives on the main checkout, which may be outside the open folder, so the path is
+   *  checked against the directory the core reported instead of the workspace root. Built pages and PDFs open in the browser/viewer. */
+  private async openGuideFile(dir: string, file: string) {
+    const base = path.resolve(dir);
+    const abs = path.resolve(base, file);
+    const known = path.basename(base) === 'scientist-guide' || fs.existsSync(path.join(base, '_quarto.yml'));
+    if (!known || !(abs === base || abs.startsWith(base + path.sep)) || !/\.(qmd|bib|scss|ya?ml|md|html|pdf)$/i.test(abs))
+      return vscode.window.showWarningMessage('Research: that is not a file of the Scientist Guide.');
+    if (!fs.existsSync(abs)) return vscode.window.showWarningMessage(`Research: ${file} does not exist yet.`);
+    if (/\.(html|pdf)$/i.test(abs)) return void vscode.env.openExternal(vscode.Uri.file(abs));
+    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: false });
+  }
+
   async openControlCenter(page?: string, target?: string) {
     const existing = this.panels.get('control');
     const ep = this.create('control', 'Research Control Center', 'dashboard', 'control');
     if (existing) {
-      if (page) ep.panel.webview.postMessage({ type: 'navigate', page, target });
+      if (page) { if (ep.shellReady) ep.panel.webview.postMessage({ type: 'navigate', page, target }); else ep.pendingNav = { page, target }; }   // never lose a navigation sent while the page is still loading
       return;
     }
     const w = ep.panel.webview;
@@ -129,9 +152,12 @@ export class Panels implements vscode.Disposable {
 <body><div id="root"></div><script nonce="${n}">window.__RESEARCH_INITIAL__=${initial};</script><script nonce="${n}" src="${media('app.js')}"></script></body></html>`;
     w.onDidReceiveMessage(async (m) => {
       if (m.type === 'open-entity') return this.openEntity(String(m.id));
-      if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open', 'research.hpc.submit', 'research.plan.yaml.import', 'research.plan.yaml.new', 'research.plan.yaml.apply', 'research.plan.yaml.open', 'research.plan.run'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
+      if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open', 'research.hpc.submit', 'research.plan.yaml.import', 'research.plan.yaml.new', 'research.plan.yaml.apply', 'research.plan.yaml.open', 'research.plan.run', 'research.guide.draft', 'research.guide.preview'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
       if (m.type === 'open-doc') return this.openDoc(String(m.path));
       if (m.type === 'open-file') return this.openConfigFile(String(m.path));
+      if (m.type === 'shell-ready') { ep.shellReady = true; if (ep.pendingNav) { w.postMessage({ type: 'navigate', ...ep.pendingNav }); ep.pendingNav = undefined; } return; }
+      if (m.type === 'open-report') return this.openReport(String(m.file));
+      if (m.type === 'open-guide') return this.openGuideFile(String(m.dir), String(m.file));
       if (m.type !== 'rpc') return;
       try {
         if (!CONTROL_RPC.has(m.method)) throw new Error(`Not available from the Control Center: ${m.method}`);

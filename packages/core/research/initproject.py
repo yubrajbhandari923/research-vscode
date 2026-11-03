@@ -151,6 +151,19 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         ex = os.path.expanduser(str(pyenv.get("path") or ""))
         if not ex or not (os.path.isfile(ex) or os.path.isfile(os.path.join(ex, "bin", "python"))):
             problems.append("Existing Python: give a venv folder or an interpreter that exists.")
+    gs = spec.get("guide") or {}
+    if gs.get("enabled", True):
+        for k, lo, hi in (("max_words", 30, 2000), ("max_sections", 1, 20), ("max_figures", 0, 10)):
+            try:
+                ok = lo <= int(gs.get(k, lo if k == "max_figures" else lo)) <= hi
+            except (TypeError, ValueError):
+                ok = False
+            if not ok:
+                problems.append(f"Guide {k.replace('_', ' ')} must be a whole number from {lo} to {hi}.")
+        if gs.get("trigger", "result") not in ("manual", "result", "checkpoint"):
+            problems.append("Guide trigger must be manual, result or checkpoint.")
+        if gs.get("highlights", "supported") not in ("supported", "starred", "all"):
+            problems.append("Guide highlights must be supported, starred or all.")
     remote = (spec.get("git") or {}).get("remote_url")
     if remote and not re.match(r"^(https://|git@|ssh://)[^\s]+$", remote):
         problems.append("The GitHub remote URL must start with https://, git@ or ssh://.")
@@ -166,6 +179,18 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             actions.append({"claude": "Register the Research MCP server for Claude Code in main/.mcp.json",
                             "agy": "Register the Research MCP server for Antigravity in main/.agents/mcp_config.json",
                             "codex": "Register the Research MCP server for Codex with `codex mcp add research` (your user-level Codex config)"}[x])
+        tl = spec.get("tools") or {}
+        if tl.get("link_skills", True):
+            actions.append("Link the shipped skills (run-experiment, engineering-loop, scientific-briefing, …) into main/.claude/skills and main/.agents/skills so Claude Code and Codex find them (machine-local links, git-ignored)")
+        if tl.get("starter_hooks", True):
+            actions.append("Add and approve two starter hooks that run after an agent's change: a Python syntax check and `git diff --check` (they never block; edit or revoke them in Agents → Skills, hooks and MCP)")
+        gs = spec.get("guide") or {}
+        if gs.get("enabled", True):
+            actions.append(f"Create the Scientist Guide (a Quarto book for communicating results) in {rel(lay['main_path'])}/docs/scientist-guide/ on main, "
+                           f"with references.bib, a theme you can edit and a notes chapter, and commit it"
+                           + ("; add a GitHub Actions workflow that publishes it as a website on every push to main" if gs.get("publish", True) else ""))
+            actions.append(f"Guide drafts: an agent writes only when you ask; at most {int(gs.get('max_words', 150))} words per section"
+                           f" (reminders: {gs.get('trigger', 'result')})")
         if spec.get("create_workspace", True):
             actions.append(f"Write {_workspace_name(spec, root)}.code-workspace and open it in VS Code")
         if pmode == "create":
@@ -214,7 +239,7 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         if r.returncode:
             raise ResearchError("git init failed: " + r.stderr.strip())
         done.append("git init (branch main)")
-        for fname, text in ((".gitignore", ".research/\n.research.pre-ledger/\n.venv/\n__pycache__/\n*.pyc\n"),
+        for fname, text in ((".gitignore", ".research/\n.research.pre-ledger/\n.venv/\n__pycache__/\n*.pyc\n.claude/skills/\n.agents/skills/\n"),
                             ("README.md", f"# {name}\n\n{goal}\n\nManaged with [Research OS](https://github.com/yubrajbhandari923/research-vscode): "
                                           "see AGENTS.md for the project rules agents follow.\n")):
             fp = os.path.join(main, fname)
@@ -270,14 +295,40 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                 cfg["environment.python"] = os.path.abspath(os.path.expanduser(pyenv["path"]))
             if pk:
                 cfg["environment.packages"] = pk
+            gs = spec.get("guide") or {}
+            cfg["guide.enabled"] = bool(gs.get("enabled", True))
+            if gs.get("enabled", True):
+                cfg.update({"guide.draft.trigger": gs.get("trigger", "result"), "guide.draft.max_words": int(gs.get("max_words", 150)),
+                            "guide.draft.max_sections": int(gs.get("max_sections", 3)), "guide.draft.max_figures": int(gs.get("max_figures", 1)),
+                            "guide.auto_log": bool(gs.get("auto_log", True)), "guide.highlights": gs.get("highlights", "supported"),
+                            "guide.publish.workflow": bool(gs.get("publish", True))})
             p.save_config(cfg)
             p.config = p.load_config()
             from . import registry
             registry.write_policy(p)
+            tl = spec.get("tools") or {}
+            if tl.get("link_skills", True):   # the shipped skills reach the agent CLIs from the first session (machine-local links, git-ignored)
+                from . import skills as _skills
+                lk = _skills.link_skills(p)
+                done.append("skills linked for agents: " + ", ".join(f"{k} ({len(v['linked'])})" for k, v in lk.items()))
+            if tl.get("starter_hooks", True):
+                from . import hooks as _hooks
+                human = (p.author or {}).get("author_type") != "agent"   # only a human may approve a command that will run on this machine
+                hk = _hooks.install_starters(p, approve_now=human)
+                if hk["added"]:
+                    done.append("starter hooks approved: " + ", ".join(hk["approved"]) if human else
+                                "starter hooks added but NOT approved (an agent ran this): approve them in Agents → Skills, hooks and MCP")
+            if gs.get("enabled", True):
+                from . import guide as _guide
+                gres = _guide.init(p)
+                done.append(f"Scientist Guide created in {gres['guide_dir']}/ ({len(gres['created'])} files)"
+                            + ("; publish workflow added" if gres["workflow"] else ""))
         finally:
             p.close()
         providers.sync_instructions(main)
         tracked = ["AGENTS.md", "CLAUDE.md"]
+        if (spec.get("guide") or {}).get("enabled", True):
+            tracked += ["docs/scientist-guide", ".github"]
         for x in enabled:
             try:
                 mi = providers.mcp_install(PROVIDER_PROFILES[x], main)
@@ -288,7 +339,7 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                 done.append(f"MCP for {x} NOT registered: {e}")
         existing = [t for t in tracked if os.path.exists(os.path.join(main, t))]
         subprocess.run(["git", "add", "--", *existing], cwd=main, capture_output=True, env=env)
-        subprocess.run(["git", "commit", "-q", "-m", "Add agent instructions and MCP configuration"], cwd=main, capture_output=True, env=env)
+        subprocess.run(["git", "commit", "-q", "-m", "Add agent instructions, MCP configuration and the Scientist Guide"], cwd=main, capture_output=True, env=env)
         done.append("committed " + ", ".join(existing))
         if (spec.get("git") or {}).get("remote_url"):
             _git(main, "remote", "add", "origin", spec["git"]["remote_url"])

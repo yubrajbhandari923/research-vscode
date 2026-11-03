@@ -325,8 +325,8 @@ def agent_doc(p, name: str, level: str, marker: str) -> str:
                    "attempt run `research orchestrate verify T-… --tier " + level + " --record`; it returns the deterministic diagnostics and "
                    "the bounded next step. Never edit, delete or weaken frozen tests. If the spec or a test looks wrong, report it."),
         "scientist": ("You are the SCIENTIST. Own scientific design, ambiguity, interpretation and synthesis; rarely write routine code. "
-                      "Deterministic verification is done by programs (`research experiment check`), not by you. After a synthesis update the "
-                      "Scientist Guide and run `research guide done`."),
+                      "Deterministic verification is done by programs (`research experiment check`), not by you. Do not write into the "
+                      "Scientist Guide unless dispatched with `research guide draft`."),
     }[role]
     return f"""---
 name: research-{level}

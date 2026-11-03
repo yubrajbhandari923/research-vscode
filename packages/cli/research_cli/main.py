@@ -787,8 +787,8 @@ def cmd_experiment_synthesize(a, p) -> int:
     if not a.json:
         print(dim("  promote reusable conclusions: research finding create \"…\" --supports " + normalize_id(a.id, "EXP")))
         from research import guide as G
-        if G.settings(p).get("enabled", True) and os.path.exists(G.guide_path(p)):
-            print(yellow("  Scientist Guide is now out of date (not updated yet): research guide refresh"))
+        if G.settings(p)["enabled"] and G.exists(p) and G.undrafted(p):
+            print(yellow("  Important results still need a draft in the Scientist Guide: research guide draft"))
     return 0
 
 
@@ -1349,20 +1349,10 @@ def _guide_quarto(a, p) -> int:
     from research import guide_quarto as GQ
     verb = a.ids[0] if a.ids else ("doctor" if a.action == "quarto" else "")
     if a.action == "chapter" and verb == "add" and len(a.ids) > 1:
-        r = GQ.chapter_add(p, a.ids[1], a.title, a.owner or "agent")
+        r = GQ.chapter_add(p, a.ids[1], a.title, a.owner)
         _done(a, r, msg=f"{r['chapter']} " + ("created and " if r["file_created"] else "") + ("added to the book" if r["added_to_book"] else "already in the book"))
     elif a.action == "quarto" and verb == "init":
-        r = GQ.init_quarto(p, dry_run=a.dry_run)
-        if a.json:
-            out_json(r)
-        elif r.get("dry_run"):
-            for f in r["files"]:
-                print(("exists   " if f["exists"] else "would add") + "  " + f["path"])
-        else:
-            print(green("✓ ") + f"Quarto guide in {r['guide_dir']}: {len(r['created'])} file(s) created, {len(r['left_untouched'])} left untouched")
-            if r["legacy_guide"]:
-                print(dim(f"  {r['legacy_guide']} is untouched and appears as an appendix in the researcher edition"))
-            print(dim("  next: " + " · ".join(r["next"])))
+        return cmd_guide(type("A", (), {**vars(a), "action": "init"})(), p)
     elif a.action == "quarto" and verb == "prepare":
         r = GQ.prepare(p)
         _done(a, r, msg=f"{r['files_written']} generated file(s) updated in {r['generated']}")
@@ -1401,11 +1391,12 @@ def _guide_quarto(a, p) -> int:
             out_json(results)
         return rc
     else:
-        raise ResearchError("usage: research guide quarto init|prepare|build|preview|doctor  ·  research guide chapter add PATH [--title …]")
+        raise ResearchError("usage: research guide quarto prepare|build|preview|doctor  ·  research guide chapter add PATH [--title …]")
     return 0
 
 
 def cmd_guide(a, p) -> int:
+    """`research guide`: the Quarto Scientist Guide. Without an action it shows status."""
     from research import guide as G
     act = a.action
     if act in ("claim", "figure", "section", "validate", "coverage"):
@@ -1414,46 +1405,122 @@ def cmd_guide(a, p) -> int:
         return _guide_quarto(a, p)
     if act == "review":
         return _guide_review(a, p)
+    ids = list(a.ids or [])
     if act == "init":
-        r = G.init_guide(p)
-        _done(a, r, msg=f"{r['path']} " + ("created" if r["created"] else "already exists (left untouched)"))
-    elif act == "done":
-        r = G.mark_done(p, a.ids)
-        _done(a, r, msg=f"recorded; {len(r['pending'])} still pending")
-    elif act == "refresh":
-        r = G.refresh(p, a.profile, getattr(a, "model", None), getattr(a, "strategy", None))
+        r = G.init(p, dry_run=a.dry_run)
         if a.json:
             out_json(r)
-        elif r.get("up_to_date"):
-            print(green("✓ ") + "guide is up to date")
-        elif a.run:
-            print(f"running {r['profile']}/{r['role']} (model {r['model']}) on {len(r['pending'])} pending synthesis(es)", file=sys.stderr)
-            import subprocess
-            root = p.root
-            p.close()
-            return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
+        elif r.get("dry_run"):
+            for f in r["files"]:
+                print(("exists   " if f["exists"] else "would add") + "  " + f["path"])
         else:
-            print(f"{len(r['pending'])} pending: {', '.join(r['pending'])} — run this (nothing is marked done until the agent does):")
-            print(r["shell"])
+            print(green("✓ ") + f"Scientist Guide in {r['guide_dir']}: {len(r['created'])} file(s) created, {len(r['left_untouched'])} left untouched")
+            if r["workflow"]:
+                print(dim("  publish on every push: GitHub → Settings → Pages → Source: GitHub Actions (once)"))
+            print(dim("  next: " + " · ".join(r["next"])))
+    elif act == "highlights":
+        hl = G.highlights(p)
+        if a.json:
+            out_json(hl)
+        else:
+            rule = G.settings(p)["highlights"]
+            print(dim(f"important results (guide.highlights = {rule}; star with `research guide star F-001`)"))
+            for h in hl:
+                print(f"  {h['id']}  {h['status']:12} {'★ ' if h['starred'] else '  '}{h['title']}  "
+                      + dim(("in guide" if h["in_guide"] else "not in guide") + (", drafted" if h["drafted"] else ", no draft")))
+            if not hl:
+                print(dim("  none yet"))
+    elif act in ("star", "unstar"):
+        if not ids:
+            raise ResearchError(f"usage: research guide {act} F-001")
+        r = G.star(p, ids[0], act == "star")
+        _done(a, r, msg=f"{r['id']} {'is now an important result' if r['starred'] else 'is no longer starred'}"
+                        + (f"; logged into results.qmd" if (r.get("logged") or {}).get("logged") else ""))
+    elif act == "log":
+        r = G.log(p, ids or None)
+        _done(a, r, msg=("logged " + ", ".join(r["logged"]) + f" into {r.get('chapter')}") if r.get("logged") else "nothing new to log")
+    elif act == "cite":
+        verb = ids[0] if ids else "list"
+        if verb == "add":
+            r = G.cite_add(p, a.bibtex, a.key, a.title, a.authors, a.year, a.doi, a.journal, a.url)
+            _done(a, r, msg=f"added to {r['file']}: cite as {r['cite_as']}")
+        elif verb in ("list", "check"):
+            r = G.cite_list(p)
+            if a.json:
+                out_json(r)
+            else:
+                for e in r["entries"]:
+                    print(f"  {e['key']:28} {e.get('year') or '':5} {(e.get('title') or '')[:60]}  " + dim(("cited in " + ", ".join(e["cited_in"])) if e["cited_in"] else "not cited yet"))
+                for k, where in r["missing"].items():
+                    print(red(f"  ✗ [@{k}] is cited in {', '.join(where)} but is not in {r['file']}"))
+                if not r["entries"] and not r["missing"]:
+                    print(dim(f"  no references yet: `research guide cite add --bibtex '@article{{…}}'` or paste into {r['file']}"))
+            return 1 if verb == "check" and r["missing"] else 0
+        else:
+            raise ResearchError("usage: research guide cite list|check|add [--bibtex TEXT | --title … --authors … --year … --doi …]")
+    elif act in ("draft", "refresh"):
+        verb = ids[0] if ids and ids[0] in ("done", "check") else None
+        if verb == "done":
+            r = G.draft_done(p, ids[1:])
+            _done(a, r, msg=f"recorded: {', '.join(r['drafted'])}" + ("" if r["check"]["ok"] else "; limits exceeded, see `research guide draft check`"))
+        elif verb == "check":
+            r = G.draft_check(p)
+            if a.json:
+                out_json(r)
+            elif not r["prepared"]:
+                print(dim(r["note"]))
+            else:
+                print((green("✓ ") if r["ok"] else red("✗ ")) + ("draft is within the limits" if r["ok"] else "draft exceeds the limits")
+                      + dim(f"  ({r['limits']['max_words']} words/section, {r['limits']['max_sections']} section(s), {r['limits']['max_figures']} figure(s))"))
+                for k, x in r["per_chapter"].items():
+                    print(dim(f"    {k}: +{x['words_added']} words, +{x['images_added']} figure(s)"))
+                for x in r["problems"]:
+                    print(red("  ✗ ") + x)
+            return 0 if r["ok"] else 1
+        else:
+            r = G.draft(p, a.profile, getattr(a, "model", None), getattr(a, "strategy", None), ids or None, [a.section] if a.section else None)
+            if a.json:
+                out_json(r)
+            elif r.get("nothing_to_draft"):
+                print(green("✓ ") + r["message"])
+            elif a.run:
+                print(f"running {r['profile']}/{r['role']} (model {r['model']}) to draft {', '.join(r['targets']) or ', '.join(r['sections'])} "
+                      f"within {r['limits']['max_words']} words/section", file=sys.stderr)
+                import subprocess
+                root = p.root
+                p.close()
+                return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
+            else:
+                print(f"draft prepared for {', '.join(r['targets']) or ', '.join(r['sections'])} (≤ {r['limits']['max_words']} words per section). "
+                      "Nothing is written until the agent runs; start it with:")
+                print(r["shell"])
+    elif act == "publish":
+        r = G.publishing(p)
+        if a.json:
+            out_json(r)
+        else:
+            print((green("✓ ") if r["workflow"] else yellow("✗ ")) + r["path"] + ("" if r["workflow"] else "  (missing: `research guide init` adds it)"))
+            print(dim("  " + r["site"]))
     else:
         r = G.status(p)
         if a.json:
             out_json(r)
+        elif not r["exists"]:
+            print(yellow("No Scientist Guide yet. ") + "`research guide init` creates it in " + r["path"] + ".")
         else:
-            print(f"{r['path']}  " + ("exists" if r["exists"] else "missing (research guide init)")
-                  + ("" if r["enabled"] else "  [disabled]"))
-            for s in r["pending"]:
-                print(yellow(f"  pending {s['id']}") + dim("  findings: " + (", ".join(f"{f['id']}[{f['status']}, numbers {f['numerical']}]" for f in s["findings"]) or "none")))
-            if r["up_to_date"]:
-                print(green("✓ ") + "all syntheses reflected")
-            pv = r.get("provenance")
-            if pv:
-                for k, s in pv["sections"].items():
-                    col = green if s["state"] == "fresh" else red if s["state"] == "invalid" else yellow
-                    print(col(f"  {s['state']:8}") + f" {k} [{s['owner']}]" + "".join(dim("\n      " + w) for w in s["why"]))
-                if pv["uncited_experiments"] or pv["uncited_findings"]:
-                    print(yellow("  not yet in the guide: ") + ", ".join(pv["uncited_experiments"] + pv["uncited_findings"]))
-                print(f"  provenance: {pv['errors']} error(s), {pv['warnings']} warning(s)  (research guide validate)")
+            print(f"{r['path']}  " + ("" if r["enabled"] else "[disabled]"))
+            for h in r["highlights"]:
+                print((yellow if not h["drafted"] else green)(f"  {h['id']:6}") + f" {h['status']} {'★ ' if h['starred'] else ''}{h['title']}  "
+                      + dim(("in guide" if h["in_guide"] else "not in guide") + (", drafted" if h["drafted"] else ", no draft")))
+            pv = r["provenance"]
+            for k, s in pv["sections"].items():
+                col = green if s["state"] == "fresh" else red if s["state"] == "invalid" else yellow
+                print(col(f"  {s['state']:8}") + f" {k} [{s['owner']}]" + "".join(dim("\n      " + w) for w in s["why"]))
+            c = r["citations"]
+            print(f"  references: {c['entries']} entr{'y' if c['entries'] == 1 else 'ies'}" + (red(f", {len(c['missing'])} cited but missing") if c["missing"] else ""))
+            print(f"  provenance: {pv['errors']} error(s), {pv['warnings']} warning(s)  (research guide validate)")
+            if not r["draft"]["ok"]:
+                print(red("  last draft exceeds its limits: ") + "; ".join(r["draft"]["problems"][:2]))
     return 0
 
 
@@ -3122,12 +3189,19 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(_hpc_parser=x)
 
 
-    x = add(sub, "guide", cmd_guide, "Scientist Guide: init | status | refresh [--run] | done [SYN-ID…] | claim | figure | section | "
-                                     "validate | coverage | quarto init|prepare|build|preview|doctor | chapter add | review status|request|record|approve")
-    x.add_argument("action", nargs="?", default="status", choices=["init", "status", "refresh", "done", "claim", "figure",
-                                                                    "section", "validate", "coverage", "quarto", "chapter", "review"])
-    x.add_argument("ids", nargs="*", help="synthesis ids for `done` (default: all pending); or the verb and arguments of "
-                                          "claim/figure/section (add|list|show|retire|pin|set)")
+    x = add(sub, "guide", cmd_guide, "Scientist Guide (Quarto book on main): init | status | highlights | star F-… | log | cite list|add|check | "
+                                     "draft [done|check] | publish | claim | figure | section | validate | coverage | quarto … | chapter add | review …")
+    x.add_argument("action", nargs="?", default="status", choices=["init", "status", "highlights", "star", "unstar", "log", "cite", "draft",
+                                                                    "refresh", "publish", "claim", "figure", "section", "validate",
+                                                                    "coverage", "quarto", "chapter", "review"])
+    x.add_argument("ids", nargs="*", help="verb and arguments (cite add|list|check · draft done|check · star F-001 · claim/figure/section add|list|show|retire|pin|set)")
+    x.add_argument("--bibtex", help="cite add: pasted BibTeX entry")
+    x.add_argument("--key", help="cite add: citation key (made from author, year and title if omitted)")
+    x.add_argument("--authors", help="cite add: 'Last, First and Last, First'")
+    x.add_argument("--year")
+    x.add_argument("--doi")
+    x.add_argument("--journal")
+    x.add_argument("--url")
     x.add_argument("--kind", help="claim kind: observation|derivation|interpretation|hypothesis|speculation|proposed")
     x.add_argument("--section", help="chapter file (relative to the guide directory)")
     x.add_argument("--source", action="append", metavar="[ROLE:]REF", help="cited record (repeatable); ROLE = supports|challenges|context")
@@ -3143,7 +3217,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--pdf", action="store_true", help="quarto build: also try a PDF (Typst); failure never affects the HTML")
     x.add_argument("--allow-invalid", action="store_true", help="quarto build: publish the scientific edition despite provenance errors")
     x.add_argument("--dry-run", action="store_true", help="quarto init: show what would be created")
-    x.add_argument("--run", action="store_true", help="refresh: start the agent now instead of printing the command")
+    x.add_argument("--run", action="store_true", help="draft: start the agent now instead of printing the command")
     x.add_argument("--profile")
     x.add_argument("--strategy", help="refresh: use this allocation strategy for this call only")
     x.add_argument("--verdict", choices=["sound", "concerns", "unsound"], help="review record")

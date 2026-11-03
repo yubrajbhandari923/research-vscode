@@ -105,17 +105,17 @@ def test_review_request_requires_and_injects_the_briefing_skill(proj, story):
     assert "RULE-BRIEF" in text and "evidence_fidelity" in text and "not approval" in text.lower()
 
 
-def test_guide_refresh_requires_briefing_skill_only_for_quarto_guides(proj, story, monkeypatch):
+def test_guide_draft_requires_the_briefing_skill(proj, story, monkeypatch):
     proj.config.setdefault("guide", {})["model"] = "opus"
-    # v1.0-style project (no provenance files) is unaffected
-    assert agents.dispatch(proj, "analyst", None, "x")["skills"]["required"] == []
-    d0 = G.refresh(proj, model="opus")  # a fresh project ships the skill: it is injected
+    GQ.init_quarto(proj)
+    assert agents.dispatch(proj, "analyst", None, "x")["skills"]["required"] == []  # an ordinary dispatch is unaffected
+    d0 = G.draft(proj, model="opus")  # a fresh project ships the skill: it is injected
     assert [r["name"] for r in d0["skills"]["required"]] == ["scientific-briefing"]
     drop_skill(proj)
     with pytest.raises(PolicyBlocked):
-        G.refresh(proj, model="opus")  # Quarto guide adopted but the skill is missing: blocked
+        G.draft(proj, model="opus")  # the skill is missing: blocked
     S.create_skill(proj, "scientific-briefing", description="x", body="BRIEF-RULE")
-    d = G.refresh(proj, model="opus")
+    d = G.draft(proj, model="opus")
     assert [r["name"] for r in d["skills"]["required"]] == ["scientific-briefing"]
     assert "BRIEF-RULE" in open(proj.abspath(d["brief"]), encoding="utf-8").read()
 

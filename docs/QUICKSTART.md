@@ -22,6 +22,7 @@ Nothing is pushed for you; add a remote in the wizard (or later) and push from `
 6. Open a task → **Dispatch**: choose Agent (Claude Code, Codex, Antigravity), Model, Mode (Interactive or Headless), then *Preview* or *Start*. Routed tasks that a cheaper model implements need **frozen acceptance tests** first: dispatch offers *Freeze test files…* (or a logged *Dispatch without frozen tests…*). Plans, tasks and Dispatch are also on the **Work** tab. The agent runs inside that experiment's worktree. Watch it under the **Agents** tab.
 7. When it completes, run **Verify**. Completed is not verified.
 8. Want a different agent for the next step? Dispatch the same task with another provider; the history carries over.
+9. **Guide** tab: tell the science. Results an independent review marked *supported* (or that you star) are logged into your Scientist Guide, a Quarto book on `main`; ask an agent for a short draft (within your word limits), add citations in `references.bib`, then push to publish it as a website. Details: `docs/GUIDE.md`.
 
 CLI equivalents: `research project-init FOLDER --agents claude,codex --apply`, `research dispatch implementer T-001 --profile codex`,
 `research execution list`, `research provider list`. Details: `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`.

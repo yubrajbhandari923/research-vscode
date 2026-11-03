@@ -51,7 +51,7 @@ REFERENCE_KEYS = (
     "resume.stale_checkpoint_days",
     "verification.require_review_for_supported", "verification.independent_reviewer",
     "verification.checks_gate_task_completion", "verification.check_timeout_seconds",
-    "guide.enabled", "guide.path",
+    "guide.enabled", "guide.auto_log", "guide.highlights", "guide.draft.trigger", "guide.draft.max_words",
     "git.commit_checkpoints",
     "artifacts.hash_max_bytes",
     "hpc.default_cluster",

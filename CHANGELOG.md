@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.2.0
+
+**The Scientist Guide is Quarto-only, created by default, and built for communicating results** (`docs/GUIDE.md`).
+
+- **v1 guide removed.** `docs/SCIENTIST_GUIDE.md`, `research guide done|refresh`, `.research/guide.json`, the `scientist-guide` skill and the `guide.path` setting are gone. An existing Markdown guide is left untouched but no longer read; `research guide init` creates the book.
+- **A Quarto book on the main branch, in every new project.** The Initialize wizard has a Guide step (what it is, how citations work, when an agent writes, the limits). The book has Key results, Notes and ideas (yours alone) and References chapters, `references.bib`, and `theme.scss` (a per-project theme). It always lives on the primary checkout, whichever experiment worktree the project is opened from.
+- **Publish on every push.** `.github/workflows/publish-guide.yml` builds the scientific edition and deploys it with GitHub Pages (one-time: Settings → Pages → Source: GitHub Actions). Written once; never overwritten or deleted.
+- **Important results are logged automatically.** `guide.highlights` (`supported` · `starred` · `all`) plus starred findings; a short entry (claim registered against the finding, its plot, a DRAFT slot) is added to `results.qmd` when a finding is reviewed as supported or starred. Entries are never rewritten. `research guide highlights|star|unstar|log`.
+- **Bounded agent drafts.** `research guide draft` prepares (never starts) a session whose brief carries `guide.draft.max_words/max_sections/max_figures`; `guide draft check` compares the files with a baseline and reports overruns, human-owned edits and added figures; `guide draft done` records what was drafted. `guide.draft.trigger` (`result` · `checkpoint` · `manual`) only controls the Home reminder.
+- **Citations.** `research guide cite add|list|check` (pasted BibTeX is validated; keys must be new); a cited key missing from `references.bib` is a validation error.
+- **Guide page in the Control Center** (Create, important results with Star/Log/Draft, chapters with owner and evidence state, limits, references with an Add dialog, publishing, build result with leak and provenance problems), commands *Open Scientist Guide*, *Draft … with an Agent…*, *Preview … Website*, and RPC/MCP `guide_*` methods.
+- **Reports.** `research report` HTML/Markdown: at-a-glance tiles, contents with anchors, status badges, tinted verification cells, sticky contents on wide screens, print styles, figure alt text. `report --full` adds a contents list and an at-a-glance line (still byte-deterministic; coverage verification unchanged). New MCP tool `report`.
+- **Agents → Skills, hooks and MCP** (docs/AGENT_TOOLS.md): what each is for, what is loaded, one-click *Link skills now*, *Add starter hooks*, approve/disable/run, MCP command. New projects link the shipped skills into `main/.claude/skills` and `main/.agents/skills` (git-ignored, machine-local) and add and approve two non-blocking starter hooks (Python syntax check, `git diff --check`); `tools: {link_skills, starter_hooks}` in the wizard spec turns either off.
+- **Reports in the UI:** Research tab → Reports (write the project report, the complete export, open written files); also on the Guide page. `research report` HTML/Markdown readability as above.
+- **Settings shows the Research OS version** (and the core's interpreter) so you can confirm which build is running.
+- **Quarto section** on the Guide page (version, path, PDF availability, how to install or update on macOS, Windows and Linux); docs/GUIDE.md#updating-quarto.
+- Fixes: a command that navigates the Control Center while it is still loading is no longer lost; Guide status computes validation once and caches the Quarto check.
+- Tests: guide core, citations, triggers, draft limits, report HTML escaping, init defaults, and the Guide page and wizard against the real core.
+- **Upgrading from 2.1:** `docs/SCIENTIST_GUIDE.md` and `.research/guide.json` are no longer read (nothing is deleted); run `research guide init` to create the book, commit `docs/scientist-guide` and `.github` on main. A 2.1 guide keeps its `_quarto.yml`: `research guide log` adds `results.qmd`, and `research guide chapter add ideas.qmd --owner human` / `references.qmd --owner human` list the new chapters (add `bibliography: references.bib` if missing). For skills: Agents → *Link skills now* in an existing project.
+- Known limits: Quarto-dependent tests (real HTML/PDF builds, the Lua filter, leak check on real output) are skipped where Quarto is not installed; draft limits are checked after the fact, not enforced.
+
 ## 2.1.0
 
 **Persistent supervisor** (YAML plans, supervisor process, agent reporting, proposals, Plans tab; see docs/SUPERVISOR.md) plus:
@@ -79,7 +100,7 @@ Fixes from an end-to-end test on a real Slurm cluster:
 - `guide refresh` targets only stale or uncovered sections; RPC `guide_status`/`guide_validate` and MCP `guide_status`/`guide_validate` (read-only); `research upgrade` reports the optional guide and adds the new skill without touching records. Schema stays at 3.
 - `guide figure refresh` re-pins a deliberately regenerated figure (history kept); PDF is scientific-edition only and no longer removes the HTML output; the researcher HTML links claims to evidence panels.
 - `research dispatch --require-skill NAME` (repeatable) makes a skill mandatory for one dispatch; claim status "established" renamed "traceable" (provenance only).
-- Docs: `docs/SCIENTIST_GUIDE_V2.md`. Known limits: no dedicated VS Code Guide view; independent reviewer routing does not know who authored a chapter.
+- Docs: `docs/GUIDE.md`. Known limits: no dedicated VS Code Guide view; independent reviewer routing does not know who authored a chapter.
 
 ## 1.0.0 — 2026-10-12
 

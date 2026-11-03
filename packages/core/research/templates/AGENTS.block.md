@@ -48,8 +48,9 @@ the human to open the project in VS Code with the Research Panel extension, or t
   A mismatch blocks `supported`; correct it by superseding the binding, never by explanation. Verified numbers are not a reviewed interpretation.
 - Preserve the user's files, data, notebooks and unsaved work. Project-specific numerical/scientific rules belong in the
   user-authored part of this file, outside the markers.
-- Unfamiliar with the science? Read `docs/SCIENTIST_GUIDE.md` (`research skill show scientist-guide`). After synthesizing
-  an experiment, refresh it or leave it marked pending: `research guide status`. Hand-offs: `research skill show scientific-handoff`.
+- Unfamiliar with the science? Read the researcher's Scientist Guide (`docs/scientist-guide/`, a Quarto book): `research guide status`.
+  It is the researcher's writing: edit it only when dispatched with `research guide draft`, within its limits
+  (`research skill show scientific-briefing`). Hand-offs: `research skill show scientific-handoff`.
 
 ### Remote execution (optional; only when `hpc.clusters` is configured)
 - `research hpc doctor` first: it says whether SSH/Slurm works and which modes are usable, and every failing

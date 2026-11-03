@@ -18,7 +18,7 @@ from .util import ResearchError
 
 MARK = "research:managed"
 PONYTAIL = "https://github.com/DietrichGebert/ponytail"
-FIRST_PARTY = ["engineering-loop", "parameter-tuning", "scientist-guide", "scientific-briefing", "scientific-handoff", "synthesize-experiment", "run-experiment"]
+FIRST_PARTY = ["engineering-loop", "parameter-tuning", "scientific-briefing", "scientific-handoff", "synthesize-experiment", "run-experiment"]
 OPTIONAL_MCP = {"literature": "Crossref / OpenAlex / Semantic Scholar MCP (network; not installed automatically)"}
 
 

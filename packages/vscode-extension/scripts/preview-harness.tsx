@@ -19,7 +19,7 @@ const host = {
     if (method === 'promotion_diff') return F.promotion_diff;
     return {};
   },
-  openEntity() {}, openDoc() {}, openFile() {}, getState: () => state, setState: (s: any) => (state = s),
+  openEntity() {}, openDoc() {}, openFile() {}, openGuide() {}, openReport() {}, getState: () => state, setState: (s: any) => (state = s),
 };
 createRoot(document.getElementById('root')!).render(<App host={host as any} initial={__SCENARIO__.initial} />);
 

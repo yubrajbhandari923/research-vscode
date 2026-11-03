@@ -821,6 +821,40 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
   });
   reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
 
+  // ------------------------------------------------------------------ Scientist Guide
+  // An agent drafts only from here: the core prepares a bounded brief (limits, targets, baseline), you preview it, and only Start runs it.
+  reg('research.guide.draft', async (result?: string) => {
+    let d: any;
+    try { d = await rpc('guide_draft', typeof result === 'string' && result ? { results: [result] } : {}); } catch (e: any) {
+      return void vscode.window.showErrorMessage(e.message + (e.hint ? `\n\n${e.hint}` : ''), { modal: true });
+    }
+    if (d.nothing_to_draft) return void vscode.window.showInformationMessage(d.message);
+    const al = d.allocation || {};
+    const lim = d.limits;
+    for (;;) {
+      const pick: any = await vscode.window.showQuickPick([
+        { label: '$(play) Start', description: 'open a terminal and let the agent write the draft', act: 'Start' },
+        { label: '$(eye) Preview brief', description: 'read exactly what the agent is told', act: 'Preview' },
+        { label: '$(clock) Not now', description: 'nothing is written', act: undefined }],
+        { placeHolder: `Draft ${d.targets.join(', ') || d.sections.join(', ')} · ≤ ${lim.max_words} words/section, ${lim.max_sections} section(s), ${lim.max_figures} figure(s) · ${al.provider}/${al.model || 'default model'}`, ignoreFocusOut: true });
+      if (pick?.act === 'Preview') { await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(d.env.RESEARCH_BRIEF)); continue; }
+      if (pick?.act !== 'Start') return;
+      break;
+    }
+    if (d.problem) return void vscode.window.showErrorMessage(d.problem);
+    const term = vscode.window.createTerminal({ name: `🤖 guide draft`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
+    term.show(); term.sendText(d.argv.map((x: string, i: number, all: string[]) => (all[i - 1] === '--output-format' && x === 'json' ? 'text' : x)).map(shq).join(' '), true);
+    done('Guide draft: command sent to a terminal. When it finishes, the Guide page shows whether it stayed within your limits.');
+  });
+  reg('research.guide.preview', async () => {
+    try {
+      const r = await rpc('guide_preview', {});
+      const term = vscode.window.createTerminal({ name: 'Guide preview', cwd: r.cwd, env: shim.env() });
+      term.show(); term.sendText(r.argv.map(shq).join(' '), true);
+    } catch (e: any) { vscode.window.showErrorMessage(e.message + (e.hint ? `\n\n${e.hint}` : ''), { modal: true }); }
+  });
+  reg('research.guide.open', async () => panels.openControlCenter('guide'));
+
   // ------------------------------------------------------------------ retrieval: search, report, brief
   reg('research.search', async () => {
     const qp = vscode.window.createQuickPick<any>();

@@ -459,8 +459,8 @@ _PROTOCOL = {
                "(`research orchestrate delegate`/`dispatch`) or do it yourself. Review integration; escalate scientific "
                "ambiguity to Opus. Follow the `engineering-loop` skill. Never rewrite the Scientist Guide."),
     "opus": ("You are the OPUS-tier scientist. Own the scientific design, ambiguities, delegation, interpretation and "
-             "synthesis. Rarely write ordinary code. After each synthesis, update the Scientist Guide "
-             "(`scientist-guide` skill) and run `research guide done`. Propose next questions; do not launch them."),
+             "synthesis. Rarely write ordinary code. Important results reach the Scientist Guide "
+             "only through `research guide draft` (a short draft the researcher edits). Propose next questions; do not launch them."),
 }
 
 
@@ -476,8 +476,8 @@ _STRAT_PROTOCOL = {
                     "orchestrate delegate` (the active strategy picks the worker) or do it yourself. Review integration. Follow "
                     "the `engineering-loop` skill. Never rewrite the Scientist Guide."),
     "scientist": ("You are the SCIENTIST ({level}). Own the scientific design, ambiguities, interpretation and synthesis. "
-                  "Rarely write ordinary code. After each synthesis, update the Scientist Guide (`scientist-guide` skill) "
-                  "and run `research guide done`. Propose next questions; do not launch them."),
+                  "Rarely write ordinary code. Important results reach the Scientist Guide "
+                  "only through `research guide draft` (a short draft the researcher edits). Propose next questions; do not launch them."),
     "verifier": ("You are an independent VERIFIER ({level}). Judge the work against the task's acceptance criteria and its "
                  "frozen tests; do not edit what you review."),
 }

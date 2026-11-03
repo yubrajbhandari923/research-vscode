@@ -5,7 +5,7 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 2.0.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
+**Version 2.2.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
 (see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
@@ -22,29 +22,63 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> **New:** run a whole research plan from YAML with the persistent supervisor: [docs/SUPERVISOR.md](docs/SUPERVISOR.md) · [end-to-end report](docs/SUPERVISOR_E2E_REPORT.md).
+> **New in 2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
+> and skills, hooks and the MCP server loaded by default. [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
+> [Supervisor](docs/SUPERVISOR.md) · [Changelog](CHANGELOG.md).
 
 ## First run
 
 Open an empty folder in VS Code and run **Research: Initialize Project**. See [docs/QUICKSTART.md](docs/QUICKSTART.md); agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
+The wizard creates `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each), links the shipped
+skills for your agents, registers the MCP server, approves two starter hooks and creates the Scientist Guide: nothing is pushed.
 
 ## Control Center
 
-`Research: Open Control Center` opens one panel with four areas:
+`Research: Open Control Center` opens one panel with seven areas:
 
 | Area | What it is for |
 |---|---|
 | **Home** | Project goal, current focus, items that need you (syntheses, reviews, blocked tasks, promotions), active experiments, running jobs, recent findings and activity |
 | **Work** | Plans and tasks, experiment branches (git worktrees), jobs, promotion candidates with their gates, optional job isolation |
-| **Research** | Experiments with run progress and latest result, findings, questions, decisions |
-| **Settings** | Every configurable setting with `?` help, its origin (default, machine or project file), file and key; project health |
+| **Research** | **Reports** (write the project report or the complete export, open them), experiments with run progress and latest result, findings, questions, decisions |
+| **Plans** | YAML plans run by the persistent supervisor: phases, attempts, approvals, proposals |
+| **Guide** | The Scientist Guide: important results, chapters and their owners, what an agent may write, references, publishing, Quarto, build and preview |
+| **Agents** | Providers (Claude Code, Codex, Antigravity), and **Skills, hooks and MCP**: what is loaded, one-click fixes |
+| **Settings** | Every configurable setting with `?` help, its origin (default, machine or project file), file and key; **the Research OS version**; project health |
 
-| Work | Settings |
+| Guide | Research and reports |
 |---|---|
-| ![Work](docs/screens/control-center-v2/work-dark.png) | ![Settings](docs/screens/control-center-v2/settings-dark.png) |
+| ![Guide](docs/screens/control-center-v2/guide-dark.png) | ![Research](docs/screens/control-center-v2/research-dark.png) |
 
-Light-theme, empty-project and narrow-window screenshots are in [`docs/screens/control-center-v2/`](docs/screens/control-center-v2/).
+| Skills, hooks and MCP | Plans |
+|---|---|
+| ![Agents: skills, hooks and MCP](docs/screens/control-center-v2/agents-tools-dark.png) | ![Plans](docs/screens/control-center-v2/plans-dark.png) |
+
+| Home | Work | Settings |
+|---|---|---|
+| ![Home](docs/screens/control-center-v2/home-dark.png) | ![Work](docs/screens/control-center-v2/work-dark.png) | ![Settings](docs/screens/control-center-v2/settings-dark.png) |
+
+Light-theme versions of every screen are in [`docs/screens/control-center-v2/`](docs/screens/control-center-v2/) (`*-light.png`), and the Guide page after a build is `guide-built-*.png`.
 First run in an empty folder opens a short setup wizard; **New experiment** is a guided form that never runs anything.
+
+## The Scientist Guide
+
+`research report` records **everything**; the guide is the **short story you tell**. It is a [Quarto](https://quarto.org) book in
+`docs/scientist-guide/` on the main branch that builds to a website (and a PDF), with your own theme, citations and notes:
+
+- **Important results are logged for you.** A finding an independent review marks supported (or that you star) gets a short entry with its claim and plot in *Key results*. No agent is involved and entries are never rewritten.
+- **An agent drafts only when you ask**, within limits you set (words per section, sections, figures); `research guide draft check` reports any overrun. You edit, add context, cite, and approve.
+- **References from day one:** `references.bib`, `research guide cite add --bibtex …`, `[@key]` in the text; a cited key that is missing is an error.
+- **Publish on every push:** `.github/workflows/publish-guide.yml` deploys the scientific edition with GitHub Pages (one-time: Settings → Pages → Source: GitHub Actions).
+- **Two editions, one text:** the website is clean prose; the researcher edition adds an evidence panel per chapter. Claims and figures carry provenance; review and approval are separate steps.
+
+Quarto is needed only to build ([install or update it](docs/GUIDE.md#updating-quarto)). Full guide: [docs/GUIDE.md](docs/GUIDE.md).
+
+## Skills, hooks and MCP
+
+Skills tell an agent *how* to work, hooks are programs *you approve* that check its work, and the MCP server lets it read and write the
+records instead of guessing. New projects get all three: skills linked for Claude Code and Codex, two starter hooks, and the MCP server registered.
+Agents → **Skills, hooks and MCP** shows what is loaded and fixes it in one click. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
 
 **Files are authoritative.** The Control Center edits the same YAML the CLI and agents read, keeps your comments, refuses to
 overwrite a file that changed underneath it, and shows a reviewable diff before every save. See [Configuration](docs/CONFIGURATION.md).
@@ -53,14 +87,14 @@ overwrite a file that changed underneath it, and shows a reviewable diff before 
 
 Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
 
-- `research-panel-2.0.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
-- `research_panel-2.0.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
+- `research-panel-2.2.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
+- `research_panel-2.2.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
 - `SHA256SUMS` — checksums for the files above
 
 ```bash
-code --install-extension research-panel-2.0.0.vsix
+code --install-extension research-panel-2.2.0.vsix
 # optional, CLI outside VS Code:
-python3 -m pip install research_panel-2.0.0-py3-none-any.whl
+python3 -m pip install research_panel-2.2.0-py3-none-any.whl
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.
@@ -153,10 +187,11 @@ historical context.
 
 `research evidence` binds numerical claims to recorded metrics or supported calculations.
 Numerical consistency is distinct from scientific validity: software cannot establish that the
-experiment, metric or interpretation is appropriate. `research guide refresh` prepares a brief
-for maintaining the Scientist Guide; it does not run a model or write a verified narrative. From 1.1 the guide can be
-a Quarto book with claim and figure provenance, scientific and researcher editions, and separate review and approval
-(`docs/SCIENTIST_GUIDE_V2.md`).
+experiment, metric or interpretation is appropriate. The **Scientist Guide** is the curated counterpart of `research report`: a Quarto book on the main branch
+(`docs/scientist-guide/`) with your key results, citations (`references.bib`) and a theme, published as a website on every push.
+Important results are logged into it automatically, an agent writes a short first draft only when you ask (within word, section
+and figure limits you set), and you finish it. Claims and figures carry provenance; review and approval are separate steps
+(`docs/GUIDE.md`).
 
 In VS Code, open **Research Home** with `Ctrl/Cmd+Alt+R`. Questions, experiments, findings,
 decisions, checkpoints and plans also have sidebar views. Experiment pages expose runs, logs,
@@ -345,7 +380,8 @@ SQLite journal files blindly.
 ## Documentation
 
 [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md) · [Configuration](docs/CONFIGURATION.md) ·
-[Technical specification](docs/SPEC.md) · [Scientist Guide](docs/SCIENTIST_GUIDE_V2.md) ·
+[Technical specification](docs/SPEC.md) · [Scientist Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
+[Quick start](docs/QUICKSTART.md) · [Providers](docs/PROVIDERS.md) · [Supervisor](docs/SUPERVISOR.md) · [Setup](docs/SETUP.md) ·
 [Changelog](CHANGELOG.md).
 
 ## Development

@@ -189,10 +189,12 @@ def test_guide_status_exposes_numerical_state(proj, exp):
     S.synthesize(proj, exp, what_happened="ran")
     f = finding(proj, [exp, run])
     E.bind(proj, f, run=run, metric="rmse", claim="9")
-    fs = G.status(proj)["pending"][0]["findings"]
-    assert fs[0]["status"] == "preliminary" and fs[0]["numerical"] == "mismatch"
+    proj.save_config({"guide.highlights": "all"})
+    proj.config = proj.load_config()
+    hl = lambda: [h for h in G.highlights(proj) if h["id"] == f][0]  # noqa: E731
+    assert hl()["status"] == "preliminary" and hl()["numbers"] == "mismatch"
     E.bind(proj, f, run=run, metric="rmse", claim="12.8", supersedes=f"{f}/B1")
-    assert G.status(proj)["pending"][0]["findings"][0]["numerical"] == "verified"
+    assert hl()["numbers"] == "verified"
 
 
 def test_sources_keep_identity_examination_and_support_separate(proj, exp):

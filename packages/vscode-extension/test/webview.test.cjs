@@ -32,7 +32,7 @@ function startCore(root) {
 }
 function hostFor(core) {
   const log = { entities: [], docs: [] }; let state = {};
-  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
+  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), openReport: (f) => (log.reports = log.reports || []).push(f), openGuide: (d, f) => (log.guide = log.guide || []).push([d, f]), getState: () => state, setState: (s) => (state = s) };
 }
 
 before(async () => {
@@ -159,7 +159,7 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   try {
     await ready(el);
     const tabs = qa(el, '[role=tab]');
-    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Plans', 'Agents', 'Settings']);
+    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Plans', 'Guide', 'Agents', 'Settings']);
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
@@ -268,12 +268,22 @@ test('Initialize Project: teaches first, previews the layout, creates main/ledge
     assert.match(el.textContent, /sonnet_first/);
     await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
     await click(byText(el, 'button', 'Next'));
+    // the Guide step teaches what the guide is, how citations work, and when an agent writes
+    assert.match(el.textContent, /Scientist Guide: where you explain the science/); assert.match(el.textContent, /references\.bib/);
+    assert.match(el.textContent, /Quarto/); assert.match(el.textContent, /never writes into the guide until you press/);
+    assert.equal(q(el, 'input[type=checkbox]').checked, true, 'the guide is created by default');
+    await lib.act(async () => { const s = q(el, '#g-tr'); Object.getOwnPropertyDescriptor(dom.window.HTMLSelectElement.prototype, 'value').set.call(s, 'checkpoint'); s.dispatchEvent(new dom.window.Event('change', { bubbles: true })); });
+    await type(q(el, '#g-w'), '120');
+    await click(byText(el, 'button', 'Next'));
     await waitFor(() => /do exactly this/.test(el.textContent));
+    assert.match(el.textContent, /Scientist Guide \(a Quarto book/); assert.match(el.textContent, /at most 120 words per section/); assert.match(el.textContent, /publishes it as a website on every push/);
     assert.ok(!fs.existsSync(path.join(dir, 'main')), 'nothing is written before Create');
     await click(byText(el, 'button', 'Create project'));
     await waitFor(() => /Project created/.test(el.textContent), 30000);
-    assert.match(el.textContent, /Your first 5 minutes/);
-    for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments']) assert.ok(fs.existsSync(path.join(dir, d)), d);
+    assert.match(el.textContent, /Your first 5 minutes/); assert.match(el.textContent, /Scientist Guide created/);
+    for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments', 'main/docs/scientist-guide/_quarto.yml', 'main/docs/scientist-guide/references.bib', 'main/.github/workflows/publish-guide.yml']) assert.ok(fs.existsSync(path.join(dir, d)), d);
+    const cfg = fs.readFileSync(path.join(dir, 'ledger/.research/config.yaml'), 'utf8');
+    assert.match(cfg, /max_words: 120/); assert.match(cfg, /trigger: checkpoint/);
     assert.deepEqual(fs.readdirSync(path.join(dir, 'experiments')), []);
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -411,4 +421,138 @@ plans:
       assert.match(s2.textContent, /supervisor\.max_attempts_per_task/);
     } finally { await u2(); }
   } finally { core.stop(); }
+});
+
+async function clickText(el, text, sel = 'button') { const b = await waitFor(() => byText(el, sel, text), 8000); assert.ok(b, `button ${text}`); await click(b); }
+test('guide page: create, important results, star, limits, references and publishing, against the real core', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-guide-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync(PY, ['-c', `
+from research.store import Project
+from research import services as S, runs as R
+p = Project.init(${JSON.stringify(dir)}, name="guide-ui", goal="Does alpha matter?")
+e = S.create_experiment(p, "alpha sweep")["id"]
+r = R.create_run(p, e, command="x", status="completed")["id"]
+S.create_finding(p, "Alpha 0.5 minimises error", statement="Error is lowest at alpha 0.5", supports=[r])
+p.save_config({"guide.highlights": "all"})
+p.close()`], { env: { ...process.env, PYTHONPATH: PYPATH } });
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host, { page: 'guide' });
+  try {
+    await ready(el);
+    // no guide yet: an explanation and one clear action, nothing is written until it is pressed
+    await waitFor(() => /no Scientist Guide yet/.test(el.textContent), 8000);
+    assert.match(el.textContent, /Quarto book/); assert.ok(!fs.existsSync(path.join(dir, 'docs/scientist-guide')));
+    await clickText(el, 'Create the guide');
+    await waitFor(() => q(el, '#results'), 8000);
+    for (const f of ['_quarto.yml', 'theme.scss', 'references.bib', 'ideas.qmd', 'results.qmd']) assert.ok(fs.existsSync(path.join(dir, 'docs/scientist-guide', f)), f);
+    assert.ok(fs.existsSync(path.join(dir, '.github/workflows/publish-guide.yml')));
+    // important results: the finding is listed, needs a draft, and can be logged, drafted and starred
+    await waitFor(() => /Alpha 0\.5 minimises error/.test(el.textContent), 8000);
+    assert.match(el.textContent, /Chosen by.*every live finding/);
+    assert.ok(byText(el, 'button', 'Log now'));
+    await clickText(el, 'Log now');
+    await waitFor(() => /Logged F-001/.test(el.textContent), 8000);
+    assert.match(fs.readFileSync(path.join(dir, 'docs/scientist-guide/results.qmd'), 'utf8'), /research:result F-001/);
+    await waitFor(() => /entry, needs a draft/.test(el.textContent), 8000);
+    await clickText(el, 'Draft…');
+    assert.deepEqual(host.log.runs.pop(), ['research.guide.draft', 'F-001']);
+    await clickText(el, 'Open entry');
+    assert.deepEqual(host.log.guide.pop(), [path.join(dir, 'docs/scientist-guide'), 'results.qmd']);
+    await clickText(el, 'Star');
+    await waitFor(() => /marked important/.test(el.textContent), 8000);
+    await waitFor(() => byText(el, 'button', 'Unstar'), 8000); assert.ok(q(el, '[aria-label=starred]'));
+    // chapters: ownership and evidence state, human-owned chapters are named
+    assert.match(q(el, '#chapters').closest('section').textContent, /ideas\.qmd[\s\S]*human/);
+    assert.match(q(el, '#chapters').closest('section').textContent, /results\.qmd[\s\S]*agent may draft/);
+    // limits are stated plainly and link to Settings
+    const lim = q(el, '#limits').closest('section').textContent;
+    assert.match(lim, /150 words/); assert.match(lim, /never edits human-owned chapters/); assert.match(lim, /remind me when an important result has no draft/);
+    // references: an invalid entry is explained, a good one is added and the count updates
+    await clickText(el, 'Add a reference');
+    await waitFor(() => q(el, '[role=dialog]'));
+    const add = () => byText(q(el, '[role=dialog]'), 'button', 'Add');
+    assert.equal(add().disabled, true);
+    await type(q(el, '#rf-bib'), 'just words');
+    await lib.act(async () => { add().click(); await lib.tick(30); });
+    await waitFor(() => /does not look like BibTeX/.test(q(el, '[role=dialog]').textContent), 8000);
+    await type(q(el, '#rf-bib'), '@article{lee2021alpha, author = {Lee, Wei}, title = {Alpha in CT}, year = {2021}}');
+    await lib.act(async () => { add().click(); await lib.tick(30); });
+    await waitFor(() => /cite it as \[@lee2021alpha\]/.test(el.textContent), 8000);
+    await waitFor(() => /References1/.test(q(el, '#refs').closest('section').textContent), 8000);
+    // a citation that is not in references.bib is called out
+    fs.appendFileSync(path.join(dir, 'docs/scientist-guide/ideas.qmd'), '\nSee [@ghost2000].\n');
+    await click(q(el, 'button[aria-label=Refresh]'));
+    await waitFor(() => /Cited but not in references\.bib/.test(el.textContent), 8000);
+    assert.match(q(el, '#refs').closest('section').textContent, /@ghost2000/);
+    // publishing: the workflow is shown with the one-time GitHub step
+    const pub = q(el, '#publish').closest('section').textContent;
+    assert.match(pub, /workflow present/); assert.match(pub, /Source: GitHub Actions/); assert.match(pub, /never shows Research OS identifiers/);
+    assert.ok(byText(el, 'button', 'Edit the theme'));
+    await clickText(el, 'Edit the theme');
+    assert.deepEqual(host.log.guide.pop(), [path.join(dir, 'docs/scientist-guide'), 'theme.scss']);
+    // Quarto is only needed to build: without it the button explains why
+    const st = await core.call('guide_status');
+    const build = byText(el, 'button', 'Build site');
+    if (!st.quarto.ok) { assert.equal(build.disabled, true); assert.match(el.textContent, /Quarto is not installed/); } else assert.equal(build.disabled, false);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+function freshProject(name) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-' + name + '-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync(PY, ['-c', `from research.store import Project; Project.init(${JSON.stringify(dir)}, name=${JSON.stringify(name)}, goal="g").close()`], { env: { ...process.env, PYTHONPATH: PYPATH } });
+  return dir;
+}
+
+test('agents page: skills, hooks and MCP are explained, loaded, and fixable in one click', async () => {
+  const dir = freshProject('tools'); const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host, { page: 'agents' });
+  try {
+    await waitFor(() => q(el, '#tools'), 15000);
+    const sec = () => q(el, '#tools').closest('section');
+    assert.match(sec().textContent, /Skills tell it how to work, hooks are programs that check its work/);
+    await waitFor(() => /run-experiment/.test(sec().textContent), 15000);
+    assert.match(sec().textContent, /scientific-briefing/);
+    // a classic project that never linked its skills is told, and fixed with one button
+    assert.match(sec().textContent, /claude: 0 of \d+ linked/);
+    await clickText(el, 'Link skills now');
+    await waitFor(() => /claude: (\d+) of \1 linked/.test(sec().textContent), 15000);
+    assert.ok(fs.existsSync(path.join(dir, '.claude/skills/run-experiment/SKILL.md')));
+    // hooks: none yet; starters are added and approved by the human pressing the button, then can be disabled and run
+    assert.match(sec().textContent, /No hooks yet/);
+    await clickText(el, 'Add starter hooks');
+    await waitFor(() => !/No hooks yet/.test(sec().textContent) && q(sec(), 'table + p, tbody td .badge.k-ok'), 15000);
+    assert.match(sec().textContent, /never blocks/); assert.match(sec().textContent, /git diff --check/);
+    await clickText(el, 'Run now');
+    await waitFor(() => /syntax-check: true|whitespace-check: true/.test(sec().textContent), 20000);
+    await clickText(el, 'Disable');
+    await waitFor(() => /disabled/.test(sec().textContent), 15000);
+    assert.match(sec().textContent, /MCP server/); assert.match(sec().textContent, /research_current/);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('settings shows the Research OS version, and the Research page writes and opens reports', async () => {
+  const dir = freshProject('reports'); const core = startCore(dir); const host = hostFor(core);
+  const ver = (await core.call('ping')).version;
+  assert.match(ver, /^\d+\.\d+\.\d+/);
+  const { el, unmount } = await lib.mount(host, { page: 'settings' });
+  try {
+    await waitFor(() => q(el, '[data-testid=about]') && q(el, '[data-testid=about]').textContent.includes(ver), 15000);
+    assert.match(q(el, '[data-testid=about]').textContent, new RegExp(`Research OS\\s*${ver.replace(/\./g, '\\.')}`));
+  } finally { await unmount(); }
+  const r = await lib.mount(host, { page: 'research' });
+  try {
+    await waitFor(() => q(r.el, '#reports'), 15000);
+    await waitFor(() => /No report written yet/.test(q(r.el, '#reports').closest('section').textContent), 15000);
+    assert.match(q(r.el, '#reports').closest('section').textContent, /It is not the story you tell/);
+    await clickText(r.el, 'Write project report');
+    await waitFor(() => /Report written: .*project\.html/.test(r.el.textContent), 20000);
+    await waitFor(() => host.log.reports && host.log.reports.length === 1, 5000);
+    assert.match(host.log.reports[0], /\.research\/reports\/project\.html$/); assert.ok(fs.existsSync(host.log.reports[0]));
+    await waitFor(() => byText(r.el, 'button', 'Open in browser'), 15000);
+    await clickText(r.el, 'Full export');
+    await waitFor(() => /every record accounted for/.test(r.el.textContent), 30000);
+    assert.match(host.log.reports.at(-1), /project-full\.md$/);
+  } finally { await r.unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

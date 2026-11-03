@@ -134,7 +134,7 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | **Project harness and hooks** | `harness:` references (skills, context, instructions, checks) in every brief; executable hooks at preflight / post-implementation / pre- and post-experiment, run only after human approval, with timeouts and a results ledger | 10.x, 16 |
 | **Usage accounting** | `--headless` runs record provider-reported tokens/cost to `.research/usage.jsonl`; `research usage`; a missing value is never zero | 10.x |
 | **Experiment check** | `research experiment check`: deterministic validation of runs, metrics, artifacts and hooks, separated from what needs human interpretation; can prepare a synthesis session | 10.x |
-| **Scientist Guide** | Optional agent-maintained narrative; freshness derived from syntheses, cleared only by `guide done` | 10.x |
+| **Scientist Guide** | Quarto book on main (`docs/scientist-guide/`); important results logged automatically; agent drafts bounded by `guide.draft.*` and only on request; `references.bib`; GitHub Pages workflow | 10.x, `docs/GUIDE.md` |
 | **Numerical evidence** | Findings bind numbers to recorded metrics; a failing binding blocks `supported`; artifact integrity, run provenance, offline literature records | 10.x |
 | **Tiered context** | AGENTS.md (bootstrap) → `research current` (bounded state) → `research task context` (one task) → `research search` / `show` (retrieval) | 9.3–9.6 |
 
@@ -1545,7 +1545,7 @@ are not counted as mutating.)
 
 | Command | Purpose |
 |---|---|
-| `guide init\|status\|refresh [--run]\|done [SYN-ID…]` | Scientist Guide. Pending = syntheses not in `.research/guide.json`; `done` is the only way to clear them; `refresh` prepares the `guide.model` agent and never marks anything. |
+| `guide init [--dry-run]\|status\|highlights\|star F-…\|unstar F-…\|log [F-…]\|cite list\|check\|add\|draft [F-…] [--run]\|draft done [F-…]\|draft check\|publish` | Scientist Guide (see `docs/GUIDE.md`). `init` scaffolds the book on the main checkout (never overwrites) and the publish workflow. Important results = `guide.highlights` (supported · starred · all) plus every starred finding (`highlight` tag); `log` adds one entry per result to `results.qmd` (never rewritten; a deleted entry stays deleted). `draft` prepares a bounded agent session (limits in the brief, baseline in `provenance/draft.json`) and never runs it without `--run`; `draft check` reports overruns; `draft done` records what was drafted. `cite add` appends validated BibTeX; a cited key missing from `references.bib` is a validation error. `claim\|figure\|section\|validate\|coverage\|quarto …\|chapter add\|review …` are the provenance, build and review commands. |
 | `setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe] [--strategy NAME]` | Dry run by default. Writes managed `.claude/agents/research-*.md` (per strategy level when a strategy is active; managed legacy tier files are moved to `.research/cache/removed-agents/`), copies first-party skills, enables `orchestration`. Never installs MCP servers, plugins or hooks. |
 | `orchestrate route T-… [--tier LEVEL] [--strategy S] [--profile P] [--agent-model M] [--available M…]` | Legacy (no strategy): tier/model by verifiability, with fallback (never silently below Opus for Opus work). With a strategy: the resolver's decision (level, profile, model, reason, overrides). |
 | `orchestrate freeze T-… FILES` / `correct-test T-… FILE --reason … --tier L` | Hash the acceptance tests; `task done` is blocked if they differ. A correction needs a logged reason and is refused for any level that implemented (or is the strategy's checked-work level for) the task, and for legacy `haiku`. |
@@ -2473,7 +2473,8 @@ skills:
   link: [claude, agents]      # .claude/skills and .agents/skills; [] disables (§7.9)
 git:
   commit_checkpoints: false   # true → every checkpoint commits .research/ (§9.2)
-guide: {enabled: true, path: docs/SCIENTIST_GUIDE.md, profile: null, model: claude-opus-5-5}
+guide: {enabled: true, dir: docs/scientist-guide, profile: null, model: claude-opus-5-5, auto_log: true, highlights: supported,
+         draft: {trigger: result, max_words: 150, max_sections: 3, max_figures: 1}, publish: {workflow: true}}
 orchestration:                # opt-in via `research setup agents --apply`
   enabled: false
   tiers: {opus: {model: claude-opus-5-5, fallback: [opus]}, sonnet: {...}, haiku: {...}}
@@ -2765,7 +2766,7 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 - **Leakage protection is structural, not semantic.** Held-out test values are refused when the experiment has a `research tuning` plan with no frozen selection or recorded test. Without that structured metadata, the check can only warn. It cannot detect leakage you did not declare.
 - **The numerical gate also applies to humans.** Unlike other review gates, `supported` is refused for anyone when a bound number fails. Correct by superseding the binding or finding; a history of earlier bindings (including loose ones created before the tolerance cap) is preserved.
 - **Literature sources are offline records.** `research source` validates identifier format only. It never resolves a DOI or fetches a paper; identity, examination and per-finding support are three separate human/agent assertions.
-- **Scientist Guide prose is not machine-verified.** The guide status shows whether each finding's numbers verify, but nothing checks that the narrative quotes them correctly. Review it like any scientific text. Writing and freshness depend on an Opus agent actually being run; `guide refresh` only prepares it.
+- **Scientist Guide prose is not machine-verified.** The guide status shows whether each finding's numbers verify, but nothing checks that the narrative quotes them correctly. Draft limits are checked after the fact by comparing files, not enforced. Review it like any scientific text. Writing depends on an agent actually being run; `guide draft` only prepares it.
 - **Orchestration is launched by people or sessions, not a scheduler.** Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier unless an allocation strategy is active, in which case it uses the same resolver as `orchestrate`. The shipped model IDs are configuration defaults, not a current provider-availability guarantee. This review did not exercise a live provider or generated subagent model frontmatter.
 - **Usage is captured only for headless runs** (`--headless`) and manual records; interactive sessions expose none. Hooks execute shell commands only after human approval (see README, Hooks and task contracts).
 - **No MCP tools yet for the guide, strategies, orchestration, hooks, usage, tuning, evidence or sources** (CLI and RPC only), and no VS Code UI for tuning, evidence or sources. Strategies, hooks, task pins, usage, experiment validation, skills and MCP registration have the Agent setup page (§13.5); contracts are shown there but are edited with `research orchestrate contract`; strategy definitions, models, limits and hook commands are edited in `config.yaml` / `research hook add`.
