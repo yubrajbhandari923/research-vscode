@@ -272,21 +272,48 @@ def native_resume_supported(kind: str, command: str) -> bool:
 
 
 def resume_argv(kind: str, argv: List[str], session_id: str) -> Optional[List[str]]:
-    """The provider command line that continues a native session, or None when this adapter has no verified resume shape."""
+    """The provider command line that continues a native session, or None when this adapter has no verified resume shape.
+
+    claude: `claude -p --resume ID …`. codex (verified against codex-cli 0.163): `codex exec resume --json [-m M] [-c k=v …] ID PROMPT`;
+    resume accepts neither -s, -C nor --add-dir, so the sandbox and writable roots go through -c and the working directory is the
+    process's own."""
     if kind == "claude" and "-p" in argv:
         i = argv.index("-p")
         return argv[:i + 1] + ["--resume", session_id] + argv[i + 1:]
+    if kind == "codex" and "exec" in argv:
+        i = argv.index("exec")
+        rest, prompt = argv[i + 1:-1], argv[-1]
+        out = [argv[0], "exec", "resume", "--json"]
+        extra_dirs: List[str] = []
+        j = 0
+        while j < len(rest):
+            a = rest[j]
+            if a == "-s" and j + 1 < len(rest):
+                out += ["-c", f'sandbox_mode="{rest[j + 1]}"']
+                j += 2
+            elif a == "--add-dir" and j + 1 < len(rest):
+                extra_dirs.append(rest[j + 1])
+                j += 2
+            elif a in ("-m", "-c") and j + 1 < len(rest):
+                out += [a, rest[j + 1]]
+                j += 2
+            else:                        # --json, -C (the process cwd already is the workspace) and anything resume does not take
+                j += 2 if a == "-C" else 1
+        if extra_dirs:
+            out += ["-c", "sandbox_workspace_write.writable_roots=" + json.dumps(extra_dirs)]
+        return out + [session_id, prompt]
     return None
 
 
 def session_id_of(kind: str, output: str) -> Optional[str]:
     """The provider's own session id from headless output, if the format reports one (claude --output-format json does)."""
-    if kind == "claude":
-        for line in reversed((output or "").strip().splitlines()):
+    if kind in ("claude", "codex"):
+        key = "session_id" if kind == "claude" else "thread_id"      # codex --json: {"type":"thread.started","thread_id":…}
+        for line in (reversed((output or "").strip().splitlines()) if kind == "claude" else (output or "").strip().splitlines()):
             try:
                 d = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(d, dict) and d.get("session_id"):
-                return str(d["session_id"])
+            if isinstance(d, dict) and d.get(key):
+                return str(d[key])
     return None

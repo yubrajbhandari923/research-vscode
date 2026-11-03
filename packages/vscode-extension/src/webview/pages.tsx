@@ -298,7 +298,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
   const needCmd = /No test command configured/.test(err);
   const act = async (action: string, extra: any = {}) => {
     setBusy(true); setErr('');
-    try { setC(await host.call('promotion_action', { id: c.id, action, ...extra })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    try { const r = await host.call('promotion_action', { id: c.id, action, ...extra }); const all = await host.call('promotions', {}).catch(() => []); setC(all.find((x: any) => x.id === c.id) || r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   const g = c.gates;
   const row = (label: string, gate: any, children?: any) => <tr><th scope="row">{label}</th><td><Badge kind={['passed', 'approved'].includes(gate.state) ? 'ok' : ['failed', 'blocked', 'stale'].includes(gate.state) ? 'warn' : ''}>{gate.state.replace('_', ' ')}</Badge></td><td className="muted">{gate.detail || gate.note || ''}{children}</td></tr>;

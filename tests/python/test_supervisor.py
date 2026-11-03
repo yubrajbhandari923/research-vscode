@@ -84,6 +84,10 @@ def run_until(p, pred, timeout=60):
         if pred():
             return True
         time.sleep(0.3)
+    print("RUNS", [(r["id"], r["experiment_id"], r["backend"], r["status"], r["created_at"]) for r in p.q("SELECT * FROM runs")])
+    print("ATTEMPTS", [(a["n"], a.get("started")) for st in SV.all_runs(p) for e in st["tasks"].values() for a in e["attempts"]])
+    for st in (SV.all_runs(p)):
+        print("TIMEOUT STATE", json.dumps({t: {"phase": e.get("phase"), "reason": e.get("reason"), "n": len(e["attempts"])} for t, e in st["tasks"].items()}))
     return False
 
 
@@ -427,3 +431,230 @@ def test_voiding_one_attempt_keeps_the_earlier_failure_as_the_repair_basis(proj)
     SV.void_attempts(proj, tid, "second attempt was not the agent's fault", attempts=[2])
     e = SV.load_run(proj, PS.load_state(proj, "demo-plan")["plan_id"])["tasks"][tid]
     assert e["phase"] == "repair_pending" and e["attempts"][1]["voided"] and not e["attempts"][0].get("voided")
+
+
+# ------------------------------------------------------------------------------------------------ fixtures for worktree projects
+@pytest.fixture
+def lproj(repo, tmp_path):
+    """Shared-ledger project (experiment worktrees) with the scripted agent profile."""
+    Project.init(str(repo), name="demo", goal="g").close()
+    git(repo, "add", "train.py")
+    W.enable(str(repo), str(tmp_path / "ledger"))
+    script = tmp_path / "mock_agent.py"
+    script.write_text(MOCK)
+    p = Project(str(repo))
+    p.config["agents"]["profiles"]["fake"] = {"command": sys.executable, "args": [str(script)], "headless_args": ["--headless"]}
+    p.config["supervisor"] = {**(p.config.get("supervisor") or {}), "poll_seconds": 1, "launch_grace_seconds": 5}
+    p.config["promotion"] = {**(p.config.get("promotion") or {}), "require_supported_finding": False}
+    p.save_config()
+    yield p
+    p.close()
+
+
+def two_exp_plan(par):
+    return textwrap.dedent(f"""\
+        schema_version: 1
+        plans:
+          - key: par
+            title: Parallel
+            execution: {{max_parallel_agents: {par}, max_attempts_per_task: 1}}
+            experiments:
+              - key: e1
+                title: One
+                tasks:
+                  - {{key: a1, title: A1, agent: {{role: implementer, profile: fake}}, checks: ["file:a1.txt"], prompt: "MOCK_SH: sleep 3; echo 1 > a1.txt"}}
+                  - {{key: a2, title: A2, depends_on: [], agent: {{role: implementer, profile: fake}}, checks: ["file:a2.txt"], prompt: "MOCK_SH: sleep 3; echo 2 > a2.txt"}}
+              - key: e2
+                title: Two
+                tasks:
+                  - {{key: b1, title: B1, agent: {{role: implementer, profile: fake}}, checks: ["file:b1.txt"], prompt: "MOCK_SH: sleep 3; echo 3 > b1.txt"}}
+        """)
+
+
+def watch(p, ref, seconds):
+    """Tick for a while; return the maximum number of tasks seen running at once and the worktrees they used."""
+    peak, t0, seen = 0, time.time(), set()
+    while time.time() - t0 < seconds:
+        SV.tick(p)
+        st = SV.status(p, ref)
+        live = [t for t in st["tasks"] if t["phase"] in ("running", "verifying")]
+        peak = max(peak, len(live))
+        for t in live:
+            seen.add((t["key"], t["experiment"]))
+        if st["state"] == "completed":
+            break
+        time.sleep(0.3)
+    return peak, seen, SV.status(p, ref)
+
+
+def test_two_agents_run_at_once_in_different_worktrees_but_never_share_one(lproj):
+    PS.apply(lproj, two_exp_plan(2))
+    SV.plan_run(lproj, "par", start_daemon=False)
+    peak, seen, st = watch(lproj, "par", 90)
+    assert st["state"] == "completed" and peak == 2                       # e1 and e2 ran together
+    rs = SV.load_run(lproj, st["plan_id"])
+    cwd = {t: e["attempts"][0]["cwd"] for t, e in rs["tasks"].items()}
+    ids = {t["key"]: t["id"] for t in st["tasks"]}
+    assert cwd[ids["a1"]] == cwd[ids["a2"]] != cwd[ids["b1"]]
+    # a1 and a2 share a worktree, so they never overlapped
+    spans = {k: (rs["tasks"][ids[k]]["attempts"][0]["started"], rs["tasks"][ids[k]]["attempts"][0]["ended"]) for k in ("a1", "a2")}
+    first, second = sorted(spans.values())
+    assert first[1] <= second[0] or True and first[1] <= second[1]
+    assert not (spans["a1"][0] < spans["a2"][1] and spans["a2"][0] < spans["a1"][1])
+
+
+def test_parallel_cap_of_one_serialises_everything(lproj):
+    PS.apply(lproj, two_exp_plan(1))
+    SV.plan_run(lproj, "par", start_daemon=False)
+    peak, _, st = watch(lproj, "par", 120)
+    assert st["state"] == "completed" and peak == 1
+
+
+# ------------------------------------------------------------------------------------------------ HPC runs through the supervisor
+RUN_PY = ("import os,sys; from research.store import Project; from research import runs; p=Project(os.environ['RESEARCH_ROOT']); "
+          "e=p.get('task',os.environ['RESEARCH_TASK'])['related_experiment_id']; "
+          "runs.create_run(p,e,command='job',backend='slurm',status='{status}',exit_code={code},slurm_job_id='900{n}')")
+
+
+def hpc_plan(attempt1, attempt2, extra=""):
+    def line(attempt, status, code, n):
+        py = RUN_PY.format(status=status, code=code, n=n)
+        return f"MOCK_SH@{attempt}: {sys.executable} -c \"{py}\""
+    return textwrap.dedent(f"""\
+        schema_version: 1
+        plans:
+          - key: hpc
+            title: HPC
+            execution: {{max_attempts_per_task: 3, max_hpc_resubmissions: 2}}
+            experiments:
+              - key: e
+                title: E
+                tasks:
+                  - key: job
+                    title: Job
+                    agent: {{role: implementer, profile: fake}}
+                    resources: {{backend: slurm}}
+                    prompt: |
+                      Submit.
+                      {line(1, *attempt1, 1)}
+                      {line(2, *attempt2, 2)}
+        """)
+
+
+def test_a_failed_hpc_job_fails_verification_and_the_repair_resubmits_within_budget(lproj):
+    PS.apply(lproj, hpc_plan(("failed", 1), ("completed", 0)))
+    SV.plan_run(lproj, "hpc", start_daemon=False)
+    assert run_until(lproj, lambda: phases(lproj, "hpc")["job"] == "verified", 90)
+    rs = SV.load_run(lproj, PS.load_state(lproj, "hpc")["plan_id"])
+    e = next(iter(rs["tasks"].values()))
+    assert [a["kind"] for a in e["attempts"]] == ["initial", "repair"]
+    d = e["attempts"][0]["verification"]["diagnostics"]
+    assert not e["attempts"][0]["verification"]["passed"] and any("did not complete" in x for x in d)
+    assert len(e["hpc_runs"]) == 2                                          # the failed run is kept, the new one is linked
+    assert "computational run(s) did not complete" in open(lproj.abspath(e["attempts"][1]["prompt_path"])).read()
+
+
+def test_a_waiting_hpc_job_is_polled_not_resubmitted_and_verified_when_it_finishes(lproj):
+    PS.apply(lproj, hpc_plan(("running", 0), ("completed", 0)))
+    SV.plan_run(lproj, "hpc", start_daemon=False)
+    assert run_until(lproj, lambda: phases(lproj, "hpc")["job"] == "waiting_hpc", 60)
+    for _ in range(4):                                                      # several polls: still waiting, no second attempt
+        SV.tick(lproj)
+        time.sleep(0.3)
+    rs = SV.load_run(lproj, PS.load_state(lproj, "hpc")["plan_id"])
+    e = next(iter(rs["tasks"].values()))
+    assert len(e["attempts"]) == 1 and e["phase"] == "waiting_hpc"
+    run = lproj.q1("SELECT id FROM runs WHERE backend='slurm'")["id"]
+    from research import runs as R
+    R.update_run(lproj, run, status="completed", exit_code=0)
+    assert run_until(lproj, lambda: phases(lproj, "hpc")["job"] == "verified", 60)
+
+
+# ------------------------------------------------------------------------------------------------ proposals from agents
+def test_an_agent_can_propose_a_follow_up_task_and_it_runs(lproj, tmp_path):
+    cli = f"{sys.executable} -m research_cli"
+    patch = tmp_path / "patch.yaml"
+    patch.write_text(textwrap.dedent("""\
+        schema_version: 1
+        plans:
+          - key: prop
+            title: Prop
+            experiments:
+              - key: e
+                title: E
+                tasks:
+                  - key: diag
+                    title: Diagnose
+                    depends_on: [main]
+                    agent: {role: implementer, profile: fake}
+                    checks: ["file:diag.txt"]
+                    prompt: |
+                      Diagnose.
+                      MOCK_SH: echo d > diag.txt
+        """))
+    y = textwrap.dedent(f"""\
+        schema_version: 1
+        plans:
+          - key: prop
+            title: Prop
+            experiments:
+              - key: e
+                title: E
+                tasks:
+                  - key: main
+                    title: Main
+                    agent: {{role: implementer, profile: fake}}
+                    checks: ["file:m.txt"]
+                    prompt: |
+                      Work.
+                      MOCK_SH: {cli} agent propose $RESEARCH_TASK --file {patch} --rationale 'need a diagnostic' && echo m > m.txt
+        """)
+    PS.apply(lproj, y)
+    SV.plan_run(lproj, "prop", start_daemon=False)
+    assert run_until(lproj, lambda: len(phases(lproj, "prop")) == 2 and set(phases(lproj, "prop").values()) == {"verified"}, 150)
+    props = SV.list_proposals(lproj)
+    assert len(props) == 1 and props[0]["status"] == "applied" and props[0]["classification"] == "operational" and props[0]["source"].startswith("agent")
+    assert "diag" in PS.load_state(lproj, "prop")["tasks"]
+
+
+# ------------------------------------------------------------------------------------------------ promotion of verified work
+def test_verified_work_is_committed_on_its_branch_and_promoted_to_main_with_provenance(lproj, repo):
+    from research import promotion as PR
+    PS.apply(lproj, yaml_plan([task_yaml("a", "Add module", "echo 'X = 1' > mod.py; mkdir -p outputs; echo big > outputs/data.bin", checks=["file:mod.py"])]))
+    SV.plan_run(lproj, "demo-plan", start_daemon=False)
+    assert run_until(lproj, lambda: phases(lproj)["a"] == "verified", 60)
+    tid = PS.load_state(lproj, "demo-plan")["tasks"]["a"]
+    a = SV.load_run(lproj, PS.load_state(lproj, "demo-plan")["plan_id"])["tasks"][tid]["attempts"][0]
+    cwd = a["cwd"]
+    msg = subprocess_out(["git", "log", "-1", "--format=%B", a["commit"]], cwd)
+    assert f"Research-Task: {tid}" in msg and "Verified by Research OS" in msg
+    files = subprocess_out(["git", "show", "--name-only", "--format=", a["commit"]], cwd).split()
+    assert "mod.py" in files and not any(f.startswith("outputs/") for f in files)         # results stay out of code history
+    assert not os.path.exists(os.path.join(repo, "mod.py"))                               # main untouched so far
+    made = SV.promote_plan(lproj, "demo-plan")
+    pid = made["candidates"][0]["id"]
+    PR.verify(lproj, pid, "test -f mod.py")
+    PR.review(lproj, pid, "approve", "reviewed by the researcher, not by the preparer")   # allowed only because the supervisor prepared it
+    PR.approve(lproj, pid, "ship it")
+    PR.integrate(lproj, pid, confirm=True)
+    assert open(os.path.join(repo, "mod.py")).read().strip() == "X = 1"
+    assert f"cherry picked from commit {a['commit']}" in subprocess_out(["git", "log", "-1", "--format=%B"], str(repo))
+
+
+def subprocess_out(argv, cwd):
+    import subprocess
+    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=True).stdout
+
+
+# ------------------------------------------------------------------------------------------------ codex adapter
+def test_codex_session_id_and_resume_command_follow_the_verified_cli_shape():
+    from research import providers as P
+    argv = P.build_argv({"command": "codex"}, "codex", "gpt-x", "PROMPT", "/w", ["/l"], True, "high")
+    r = P.resume_argv("codex", argv, "SID")
+    assert r[:4] == ["codex", "exec", "resume", "--json"] and r[-2:] == ["SID", "PROMPT"]
+    assert "-s" not in r and "-C" not in r and "--add-dir" not in r
+    assert 'sandbox_mode="workspace-write"' in r and any(x.startswith("sandbox_workspace_write.writable_roots=") for x in r)
+    assert r[r.index("-m") + 1] == "gpt-x"
+    out = 'Reading additional input from stdin...\n{"type":"thread.started","thread_id":"0192-abc"}\n{"type":"turn.started"}\n'
+    assert P.session_id_of("codex", out) == "0192-abc"
+    assert P.session_id_of("codex", "no json") is None

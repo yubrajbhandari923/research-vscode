@@ -126,11 +126,16 @@ def cmd_plan_stop(a, p) -> int:
     return _emit(a, SV.plan_stop(p, a.id, cancel_agents=a.cancel_agents), _status_lines)
 
 
+def cmd_plan_promote(a, p) -> int:
+    r = SV.promote_plan(p, a.id, a.experiment, a.title)
+    return _emit(a, r, lambda d: [M.green("✓ ") + f"{x['id']}: {len(x['commits'])} verified commit(s) from {x['workspace']} (continue with `research promote show {x['id']}`)" for x in d["candidates"]])
+
+
 def cmd_plan_status(a, p) -> int:
     return _emit(a, SV.status(p, a.id), _status_lines)
 
 
-for _f in (cmd_plan_run, cmd_plan_pause, cmd_plan_resume, cmd_plan_stop):
+for _f in (cmd_plan_run, cmd_plan_pause, cmd_plan_resume, cmd_plan_stop, cmd_plan_promote):
     M.mut(_f)
 
 
@@ -224,6 +229,8 @@ def attach_plan(g, add) -> None:
     x.add_argument("--experiment", help="export: only this experiment key (implies partial)")
     x.add_argument("--task", help="export: only this task key (implies partial)")
     x.add_argument("--dry-run", action="store_true", help="apply: preview only")
+    x = add(g, "promote", cmd_plan_promote, "prepare promotion candidates from verified, committed work (nothing merges)")
+    x.add_argument("id"); x.add_argument("--experiment"); x.add_argument("--title")
     for name, fn, h in (("run", cmd_plan_run, "let the supervisor execute a plan"), ("pause", cmd_plan_pause, "pause scheduling for a plan"),
                         ("resume", cmd_plan_resume, "resume a paused or blocked plan"), ("stop", cmd_plan_stop, "stop a plan run (history is kept)"),
                         ("status", cmd_plan_status, "supervised status: phases, attempts, budgets")):

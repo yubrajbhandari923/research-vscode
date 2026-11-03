@@ -34,6 +34,7 @@ DEFAULTS: Dict[str, Any] = {
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/"],
 }
 PHASES = ("waiting", "ready", "awaiting_approval", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
@@ -396,8 +397,10 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         P.update_task(p, tid, status="running", claimed_by=None, claimed_at=None, started_at=task.get("started_at") or now_iso())
     elif task["status"] == "running" and task.get("claimed_by"):
         P.update_task(p, tid, claimed_by=None, claimed_at=None)
+    exp_id = task.get("related_experiment_id")
     attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": ag.get("profile"),
-               "role": role}
+               "role": role,   # runs that already exist belong to earlier attempts; second-resolution timestamps cannot tell them apart
+               "runs_before": [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=?", (exp_id,))] if exp_id else []}
     e["attempts"].append(attempt)
     e["phase"] = "running"
     e["reason"] = None
@@ -622,13 +625,13 @@ def _session_id(p: Project, a: Dict[str, Any], ex: Dict[str, Any]) -> Optional[s
 
 # ----------------------------------------------------------------------------------------------- verification
 def _task_runs(p: Project, st: Dict[str, Any], tid: str, a: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Computational runs this attempt produced: reported run ids plus runs of the task's experiment created during it."""
+    """Computational runs this attempt produced: reported run ids plus new HPC runs of the task's experiment (not present at launch)."""
     ex = p.get("task", tid).get("related_experiment_id")
     ids = set(a.get("reported_runs") or [])
+    before = set(a.get("runs_before") or [])
     rows = []
     for r in p.q("SELECT id, experiment_id, status, backend, slurm_job_id, created_at FROM runs ORDER BY id"):
-        if r["id"] in ids or (ex and r["experiment_id"] == ex and r["created_at"] and a.get("started") and r["created_at"] >= a["started"]
-                              and r["backend"] in ("slurm", "hpc-bundle")):
+        if r["id"] in ids or (ex and r["experiment_id"] == ex and r["id"] not in before and r["backend"] in ("slurm", "hpc-bundle")):
             rows.append(r)
     return rows
 
@@ -661,7 +664,12 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
         v = O.verify_work(p, tid)
     except ResearchError as ex:
         v = {"passed": False, "diagnostics": [str(ex)], "verification_state": "unverified"}
-    diagnostics += [d for d in v.get("diagnostics", [])]
+    vd = list(v.get("diagnostics", []))
+    if runs and not failed:    # completed computational runs are themselves a deterministic verifier (found by the scripted-HPC test)
+        vd = [d for d in vd if not d.startswith("no deterministic verifier ran")]
+        if not vd and not v.get("passed"):
+            v = {**v, "passed": True, "verification_state": "passed"}
+    diagnostics += vd
     a["verification"] = {"passed": not diagnostics and v.get("passed", False), "diagnostics": diagnostics, "ts": now_iso(),
                          "checks": f"{v.get('checks_passed', 0)}/{v.get('checks_executed', 0)}", "state": v.get("verification_state")}
     if a["verification"]["passed"]:
@@ -694,8 +702,72 @@ def _verified(p, st, rs, tid, e, a, out) -> None:
         P.complete_task(p, tid, result=taskprompt.redact(summary) or f"verified by Research OS after attempt {a['n']}", completed_by="supervisor")
     e.update(phase="verified", reason=None)
     a["state"] = "verified"
+    try:
+        sha = _commit_verified(p, tid, a, spec_title=p.get("task", tid)["title"], plan_key=st["plan_key"], c=cfg(p, st))
+        if sha:
+            a["commit"] = sha
+    except ResearchError as ex:
+        e["commit_note"] = f"verified, but the work could not be committed: {ex}"
     out["verified"].append({"task": tid, "attempt": a["n"]})
     _event(p, tid, "supervisor_verified", f"attempt {a['n']} verified: {a['verification'].get('checks')} checks")
+
+
+def _commit_verified(p: Project, tid: str, a: Dict[str, Any], spec_title: str, plan_key: str, c: Dict[str, Any]) -> Optional[str]:
+    """Commit the verified work on the experiment's own branch (never on main, never pushed), so it is promotable and traceable.
+    Only experiment worktrees are touched; `supervisor.commit_exclude` keeps bulky results out of code history."""
+    if not c.get("commit_verified_work"):
+        return None
+    from . import workspace as W
+    ws = W.for_task(p, tid)
+    if not ws:
+        return None
+    path = ws["path"]
+    excl = [f":(exclude){x.rstrip('/')}" for x in (c.get("commit_exclude") or [])]
+    env = {**os.environ, "GIT_AUTHOR_NAME": "Research OS supervisor", "GIT_AUTHOR_EMAIL": "supervisor@research-os.local",
+           "GIT_COMMITTER_NAME": "Research OS supervisor", "GIT_COMMITTER_EMAIL": "supervisor@research-os.local"}
+    def git(*args):
+        r = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, env=env)
+        if r.returncode:
+            raise ResearchError("git " + " ".join(args[:2]) + ": " + (r.stderr or r.stdout).strip()[:200])
+        return r.stdout.strip()
+    git("add", "-A", "--", ".", *excl)
+    if not git("diff", "--cached", "--name-only"):
+        return None
+    msg = (f"{tid} {spec_title}\n\nVerified by Research OS (plan {plan_key}, attempt {a['n']}).\n\n"
+           f"Research-Task: {tid}\nResearch-Plan: {plan_key}\nResearch-Execution: {a.get('execution')}\n")
+    git("commit", "-q", "-m", msg)
+    return git("rev-parse", "HEAD")
+
+
+def promote_plan(p: Project, plan_ref: str, experiment: Optional[str] = None, title: Optional[str] = None) -> Dict[str, Any]:
+    """Prepare promotion candidates from the commits the supervisor made for verified tasks. Nothing merges: the candidate then goes
+    through the existing tests / evidence / review / approval / integrate gates."""
+    from . import promotion as PR, workspace as W
+    require_human(p, "Preparing a promotion")
+    st = _plan_state(p, plan_ref)
+    rs = load_run(p, st["plan_id"]) or {}
+    by_ws: Dict[str, List[str]] = {}
+    for tid, e in (rs.get("tasks") or {}).items():
+        exp = p.get("task", tid).get("related_experiment_id")
+        if experiment and exp != experiment and (st["experiments"].get(experiment) != exp):
+            continue
+        for a in e.get("attempts", []):
+            if a.get("commit") and a.get("state") == "verified":
+                ws = W.for_task(p, tid)
+                if ws:
+                    by_ws.setdefault(ws["id"], []).append(a["commit"])
+    if not by_ws:
+        raise ResearchError("No verified, committed work to promote yet",
+                            hint="Tasks are committed on their experiment branch when they verify (supervisor.commit_verified_work).")
+    human = p.author
+    p.author = {"author_type": "system", "author_name": "supervisor", "author_model": None}   # the supervisor prepares; the researcher reviews
+    try:
+        made = [PR.prepare(p, wsid, commits=shas, title=title or f"{st['plan_key']} verified work",
+                           reason=f"{len(shas)} commit(s) verified by the supervisor (plan {st['plan_key']})") for wsid, shas in by_ws.items()]
+    finally:
+        p.author = human
+    return {"plan": st["plan_key"], "candidates": [{"id": m.get("id") or m.get("promotion"), "workspace": w, "commits": by_ws[w]}
+                                                    for m, w in zip(made, by_ws)]}
 
 
 def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:

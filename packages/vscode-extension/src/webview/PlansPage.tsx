@@ -98,19 +98,20 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
               <button type="button" onClick={() => act(() => host.call('proposal_decide', { id: pr.id, approve: false }), `${pr.id} rejected`)}>Reject</button></div>
           </div>))}
       </Section>}
-      <Promotion host={host} plan={plan} />
+      <Promotion host={host} plan={plan} act={act} />
       {detail && <AttemptDialog host={host} task={detail} onClose={() => setDetail(null)} tick={now} />}
     </>}</State>
   );
 }
 
-function Promotion({ host, plan }: { host: Host; plan: string }) {
+function Promotion({ host, plan, act }: { host: Host; plan: string; act: (fn: () => Promise<any>, ok: string) => Promise<void> }) {
   const a = useAsync<any>(() => host.call('promotion_hint', { plan }), [plan]);
   return <State a={a}>{(d) => d.workspaces.length === 0 ? null : (
     <Section title="Code worktrees" hint="Validated code reaches main only through the existing promotion review; nothing merges automatically.">
       {d.workspaces.map((w: any) => <p key={w.workspace}><b>{w.experiment}</b> on <code>{w.branch}</code>{w.ahead ? ` · ${w.ahead} commit(s) ahead` : ''}{w.uncommitted ? ' · uncommitted changes' : ''}{' '}
         <button type="button" className="link" onClick={() => host.run('research.workspace.open', w.path || '')}>open</button></p>)}
-      <p className="muted small">Prepare a promotion from the Work tab once the agent's changes are committed.</p>
+      <p className="muted small">Verified tasks are committed on their experiment branch. Prepare candidates from those commits, then review them in the Work tab (tests, review, approval, then merge).</p>
+      <button type="button" onClick={() => act(async () => { return host.call('plan_promote', { plan }); }, 'Promotion candidate(s) prepared: continue in the Work tab')}>Prepare promotion from verified work</button>
     </Section>)}</State>;
 }
 

@@ -640,6 +640,10 @@ class Server:
                 logs = None
         return {"task": task, "attempt": a, "attempts": len(atts), "prompt": prompt, "logs": logs, "reports": SV._reports(p, task, a.get("execution"))[-40:]}
 
+    def m_plan_promote(self, plan: str, experiment: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.promote_plan(self.project(), plan, experiment)
+
     def m_promotion_hint(self, plan: str) -> Dict[str, Any]:
         from . import planspec as PS, workspace as W
         p = self.project(sync=False)
@@ -889,7 +893,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

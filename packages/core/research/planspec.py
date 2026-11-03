@@ -573,9 +573,22 @@ def apply(p: Project, text: str, dry_run: bool = False, source: str = "yaml", au
                 cur = p.get("task", tid)
                 if (cur.get("depends_on") or []) != want and cur["status"] not in ("done",) and t["key"] not in st["deferred"]:
                     P._update_task(p, tid, depends_on=want or None)
-        st["spec"] = {k: v for k, v in pl.items() if k not in ("revision", "id")}
-        st["spec"]["tasks_flat"] = pl["tasks"]
-        st["spec_tasks"] = {t["key"]: t for t in pl["tasks"]}
+        # A partial document (an agent's patch, a scoped export) adds to what is registered; only a full-scope one replaces it.
+        old_spec = st.get("spec") or {}
+        old_flat = {t["key"]: t for t in old_spec.get("tasks_flat", [])}
+        old_exps = {e["key"]: e for e in old_spec.get("experiments", [])}
+        full = pl.get("scope") == "full"
+        keep_t = {k: v for k, v in old_flat.items() if k in (st.get("retired") or {})} if full else old_flat
+        keep_e = {} if full else old_exps
+        spec = {k: v for k, v in pl.items() if k not in ("revision", "id")}
+        if not full:
+            spec = {**old_spec, **{k: v for k, v in spec.items() if v not in (None, [], {})}}
+        merged_t = {**keep_t, **{t["key"]: t for t in pl["tasks"]}}
+        spec["experiments"] = list({**keep_e, **{e["key"]: e for e in pl["experiments"]}}.values())
+        spec["tasks_flat"] = list(merged_t.values())
+        spec["tasks"] = []
+        st["spec"] = spec
+        st["spec_tasks"] = merged_t
         st["project_context"] = doc["project"]["context"]
         st["revision"] += 1
         st["history"].append({"revision": st["revision"], "ts": now_iso(), "hash": _hash(pl), "source": source, "operations": len(ch["ops"])})
@@ -586,7 +599,8 @@ def apply(p: Project, text: str, dry_run: bool = False, source: str = "yaml", au
         p.event("plan", st["plan_id"], "plan_yaml_applied", f"{pl['key']} revision {st['revision']}: {len(ch['ops'])} operation(s) ({source})")
         result["plans"].append({"plan": pl["key"], "id": st["plan_id"], "revision": st["revision"], "changed": True,
                                 "operations": len(ch["ops"]), "tasks": st["tasks"], "experiments": st["experiments"], "warnings": ch["warnings"]})
-    _write_context_template(p)
+    if source in ("yaml", "ui"):      # not for agent proposals: their project root is an experiment worktree
+        _write_context_template(p)
     return result
 
 

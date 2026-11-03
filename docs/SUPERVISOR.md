@@ -143,9 +143,11 @@ You can void attempts that were not the agent's fault (UI: Details → *Void thi
   instructions. Sections are capped (`supervisor.context_max_chars`) and tagged with their source. The exact text and a hash are stored
   per attempt (`.research/supervisor/prompts/`) and shown in the UI. Credentials are redacted.
 * **Native resumption**: a repair continues the provider's own session only if the installed CLI proves it (`claude --help` lists
-  `--resume`; the session id is read from the agent's JSON output) and the role and profile match. **Context hand-off** (a fresh agent
-  with the persisted history) is used otherwise, and always works. Codex reports `exec resume`, but its session id is not parsed, so Codex
-  uses hand-offs. Verifier tasks never resume an implementer's session.
+  `--resume`; the session id is read from the agent's JSON output) and the role and profile match. **Codex** works the same way: the
+  `thread_id` from `codex exec --json` is stored and a repair runs `codex exec resume --json … <id> <prompt>` (verified against
+  codex-cli 0.163; resume takes no `-s/-C/--add-dir`, so the sandbox and writable roots are passed with `-c`). **Context hand-off**
+  (a fresh agent with the persisted history) is used when native resume is unavailable, and always works. Verifier tasks never resume an
+  implementer's session. Codex's workspace-write sandbox has no network, so a Codex task cannot itself run `research hpc submit`.
 * `session_group` marks tasks meant to share a session; the supervisor only continues a session for repairs of the same task.
 
 ## 8. HPC
@@ -156,6 +158,14 @@ logs and outputs, and verifies. An agent that merely submits jobs does not compl
 failure and the supervisor itself never submits. **Result contract** (also in every implementer brief): write outputs under
 `$RESEARCH_RUN_DIR/outputs/`, metrics to `$RESEARCH_RUN_DIR/metrics.jsonl`, and register each file in `$RESEARCH_RUN_DIR/artifacts.jsonl`,
 otherwise they stay on the cluster. Job environment (modules, venv) goes in `hpc.clusters.<name>.slurm.setup`.
+
+### Parallel agents and promotion
+
+`max_parallel_agents` (plan or project) lets agents of *different* experiments work at the same time, including different providers;
+tasks of one experiment never share a worktree concurrently. When a task verifies, its changes are committed on the experiment branch
+(never `main`, never pushed; `supervisor.commit_verified_work`, `commit_exclude`). **Plans → Prepare promotion from verified work**
+(or `research plan promote PLAN-001`) turns those commits into promotion candidates *prepared by the supervisor*, so you can review them
+yourself; tests, review, approval and the explicit merge confirmation then follow the existing Work-tab flow.
 
 ## 9. Plan changes proposed by agents
 

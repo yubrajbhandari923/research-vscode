@@ -89,26 +89,53 @@ Also fixed along the way: UI table overflow from very long reasons; missing **Re
 | Retire unstarted, protect done/running, stale revision, partial scope | PASS | unit tests; not exercised in the real runs |
 | Interrupted apply recovers | PASS (observed) | a CLI apply stopped by a policy gate resumed in the UI without duplicates |
 | Dependency ordering, parallel cap, one active attempt per task/workspace | PASS | tests + real run (sequential) |
-| Parallel agents > 1 | NOT TESTED | only logic-tested with mocks |
+| Parallel agents > 1 | PASS | real: three agents (Codex + two Claude, three experiments) ran at once (§4a); mock tests: cap 2 overlaps, cap 1 serialises, one worktree never shared |
 | Verification only by supervisor; bypass via CLI/update/file edit | PASS | tests (CLI update, `complete_task`, hand-edited mirror) |
 | Same bypass via MCP/RPC | PARTIAL | same core function; not separately attacked |
 | Agent reports validated against active execution | PASS | tests; used by real agents (progress/artifact/report/finish/problem) |
 | Daemon survives UI close, restart reconciles | PASS | daemon outlived VS Code restarts during the run |
 | Unknown execution state never retried | PASS | test only |
 | Claude dispatch in the experiment worktree | PASS | real run; cwd check |
-| Codex dispatch / resume | NOT TESTED | probed `codex exec resume`; no run; session id not parsed (hand-off fallback) |
+| Codex dispatch / native resume | PASS | real (§4a): thread id parsed from `codex exec --json`, repair ran `codex exec resume` on the same thread and verified |
 | Native Claude session resume | PASS | real (see §2) |
 | Context hand-off | PARTIAL | used (attempt 3 `session: handoff`); not compared against resume |
 | Bounded repair with diagnostics | PASS (real) | caveat in §2 |
 | Provider-limit handling | PASS | found live, fixed, unit-tested; recovery after reset verified live |
 | Scientific change needs approval; operational auto-applies | PASS | unit tests; approval live (injected patch) |
-| Agent-proposed change end to end | NOT TESTED | no real agent proposed anything |
+| Agent-proposed change end to end | PASS | real (§4a): a Claude agent proposed a follow-up task, it auto-applied as operational and ran |
 | Real Slurm submit by agent, wait, collect, verify | PASS | jobs 203905–7 |
-| Mock Slurm state transitions / failed job / unknown job handling | PARTIAL | existing HPC tests; supervisor path for a *failed* job only reasoned, not run |
+| Failed / waiting HPC job through the supervisor | PASS | real Slurm (§4a) and mock tests; unknown job status still only reasoned |
 | Duplicate-submission protection | PARTIAL | by design (supervisor never submits; waits for non-terminal runs); no adversarial test |
-| Promotion candidate from supervised work | NOT TESTED | the Plans page shows worktree/commit state and links to the existing promotion flow; no agent commits happened |
+| Promotion of supervised work into `main` | PASS | real (§4a): verified work committed on its branch, candidate prepared by the supervisor, tests/review/approval/merge in the UI, `main` has the file with provenance |
 | VS Code: import/preview/apply, run/pause/resume/stop, status refresh, details, approvals, settings | PASS (live) | screenshots; pause/resume/stop only unit/RPC-tested |
 | Security: sandbox enforcement | NOT IMPLEMENTED | restrictions are advisory unless a sandbox profile is used (SUPERVISOR.md §11) |
+
+## 4a. Follow-up real runs (closing the gaps)
+
+Plan `real-more` (one YAML, imported and run from the UI; `examples/supervisor-e2e/plans/more.yaml`, timeline in `evidence/status-timeline-more.txt`):
+
+| Gap | What happened (all real: Claude + Codex CLIs, real Slurm) |
+|---|---|
+| **More than one agent at once** | `max_parallel_agents: 3`. Codex (T-006), Claude (T-007) and Claude (T-008) were all `running` together at 19:26:27, in three experiment worktrees; T-009 (HPC) started as slots freed. |
+| **Failed HPC job through the supervisor** | T-009 attempt 1 submitted a deliberately failing job (RUN-0011, exit 3). Verification failed: "computational run(s) did not complete: RUN-0011 [failed]". Attempt 2 (native Claude resume) submitted RUN-0012 (completed) and verified; both runs are linked, the failed one is kept. |
+| **Agent-originated proposal** | T-008's agent wrote a patch and ran `research agent propose`; PROP-0002 (`source: agent …`, operational) applied through the plan engine, creating T-010 which ran and verified. |
+| **Codex session ids / resume** | Observed first-hand: `codex exec --json` emits `{"type":"thread.started","thread_id":…}`; `codex exec resume --json <id> "<prompt>"` continued the conversation. Plan `codex-resume`: Codex attempt 1 printed `Lab status: ready`, the held-out check wanted another banner; attempt 2 ran `codex exec resume` on the same thread (`01a19ed0…`) with the diagnostics and verified. (In `real-more` the Codex agent guessed its held-out greeting on the first try, so that run shows dispatch and parallelism, not resume.) |
+| **Promotion of supervised work** | Verified tasks were committed on their experiment branches (`Research-Task:` trailers; `outputs/` excluded). *Prepare promotion from verified work* created candidates; for PROMO-006 I ran the tests, approved the review and the promotion, and merged from the UI. `main` now has `a.txt` in commit `T-007 Write a.txt … (cherry picked from commit 47d0b5a…)`. |
+
+![PROMO-006 merged](screens/supervisor/37-promo-merged.png)
+![before merge](screens/supervisor/36b-promo-ready-to-merge.png)
+
+Defects found by this round (fixed, with tests): partial YAML patches (agent proposals) replaced the stored plan spec and dropped the existing
+tasks from the supervisor's view; a repair attempt could be blamed for the previous attempt's failed run (second-resolution timestamps; runs
+are now attributed by id snapshot at launch); completed computational runs alone were rejected as "no verifier"; the promotion
+candidate was prepared under the researcher's identity, so the "preparer cannot review" rule blocked them (the supervisor now prepares);
+an agent's proposal wrote a `RESEARCH.md` template into its worktree and committed it; and the promotion dialog did not enable
+*Approve code review* after tests passed until reopened. The `repair-hidden` plan in the demo project still shows no tasks because it
+was patched before the merge fix; new projects are not affected.
+
+Caveats: Codex's sandbox has no network, so a Codex task cannot submit Slurm jobs itself; commit trailers and `patch.yaml` scratch files
+the agents left in their worktrees were committed (`patch.yaml` appears in PROMO-007); I edited the demo project's config to
+`promotion.require_supported_finding: false` because those toy experiments have no findings.
 
 ## 5. UX assessment (first-time researcher)  **6 / 10**
 
@@ -125,9 +152,11 @@ Friction:
 * An agent that cannot run Python (headless allowlist) writes untested code unless the plan tells it to use `research run exec`.
 * Humans are identified by self-declaration, so "human-only" is not authentication.
 
-## 6. Verdict
+## 6. Verdict (updated after §4a)
 
-**Experimental use only.** The supervisor core, YAML round trip, verification gates, repair, native resume and the Slurm round trip
-work against real systems, and four real defects were found and fixed along the way, which is precisely why it is not yet "daily use":
-it has had a handful of real runs, one provider, one cluster, sequential tasks, no failed-HPC-job run and no agent-originated proposal.
-Implementation is broad and tested (17 supervisor tests, webview tests); integration confidence is limited to what is in §2 and §4.
+**Experimental use only, but the gaps listed earlier are closed.** The supervisor core, YAML round trip, verification gates, repair with
+native session resume (Claude **and** Codex), parallel agents across experiments, a failed and a succeeding Slurm job, an agent-originated
+plan change, and promotion of verified work into `main` have each been exercised against real systems. Every one of those rounds also found
+real defects (§3, §4a), which is the reason for the cautious verdict: roughly a dozen supervised tasks in total, one cluster, two providers,
+toy-sized work, no long-running or interrupted-and-recovered plan under real load, and security that is advisory without a sandbox.
+Implementation is broad and tested (24 supervisor tests, webview tests); integration confidence is limited to §2, §4 and §4a.
