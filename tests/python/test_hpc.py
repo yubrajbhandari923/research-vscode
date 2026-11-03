@@ -1050,3 +1050,11 @@ def test_the_skill_forbids_quietly_raising_resources():
     assert "Never raise `cpus`, `gpus`, `mem` or `time` on your own initiative" in s
     assert "blanket permission" in s                # auto_submit is not a loophole
     assert "partition" in s and "account" in s      # ask before the first submission
+
+
+def test_hpc_command_words_are_shell_quoted():
+    """`hpc submit E -- python -c 'print("x")'` must reach the cluster as one valid shell command line."""
+    import argparse
+    from research_cli.main import _shell_cmd
+    assert _shell_cmd(argparse.Namespace(cmd=["--", "python3", "-c", 'print("hi there")'], command=None)) == "python3 -c 'print(\"hi there\")'"
+    assert _shell_cmd(argparse.Namespace(cmd=["--", "python a.py --x 1"], command=None)) == "python a.py --x 1"   # already a command line

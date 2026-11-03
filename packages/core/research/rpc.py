@@ -94,12 +94,12 @@ class Server:
         return promotion.diff(self.project(sync=False), id)
 
     def m_promotion_action(self, id: str, action: str, note: Optional[str] = None, confirm: bool = False,
-                           verdict: Optional[str] = None) -> Dict[str, Any]:
+                           verdict: Optional[str] = None, command: Optional[str] = None) -> Dict[str, Any]:
         """verify | review | approve | integrate | abandon. The core refuses agents and unconfirmed integration."""
         from . import promotion as PR
         p = self.project()
         if action == "verify":
-            return PR.verify(p, id)
+            return PR.verify(p, id, command)
         if action == "review":
             return PR.review(p, id, verdict or "comment", note)
         if action == "approve":
@@ -500,9 +500,176 @@ class Server:
         return {"clusters": HC.names(p), "default_cluster": HC.default_name(p), "runs": runs,
                 "enabled": bool(HC.names(p))}
 
+    def _exp_project(self, experiment: str):
+        """The Project rooted at the experiment's worktree: a bundle must ship the experiment's code, not main's."""
+        from . import workspace as W
+        from .schema import normalize_id
+        p = self.project()
+        exp = normalize_id(experiment, "EXP")
+        for rec in W._fold(W._records(p)).values():
+            if rec["status"] == "active" and rec.get("experiment") == exp:
+                s = W.show(p, rec["id"])
+                if s["present"]:
+                    return Project(s["path"], author=self.author, sync=False)
+        return p
+
+    def m_hpc_init(self, cluster: Optional[str] = None, dry_run: bool = True) -> Dict[str, Any]:
+        """Create the remote project directories (the preview is the default)."""
+        from .hpc import remote as HR
+        return HR.init_workspace(self.project(), cluster, dry_run=dry_run)
+
+    def m_hpc_submit(self, experiment: str, command: str, cluster: Optional[str] = None, dry_run: bool = True,
+                     approve: bool = False, resources: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Submit one run of EXPERIMENT's worktree code to the cluster. Preview first; `approve` is the explicit go-ahead."""
+        from .hpc import remote as HR
+        if not command or not command.strip():
+            raise ResearchError("A command to run is required")
+        p = self._exp_project(experiment)
+        try:
+            return HR.submit(p, experiment, cluster_name=cluster, command=command.strip(), dry_run=dry_run,
+                             approve=approve and not dry_run, resources=resources or {})
+        finally:
+            if p is not self.p:
+                p.close()
+
     def m_hpc_sync(self, cluster: Optional[str] = None) -> Dict[str, Any]:
         from .hpc import remote as HR
         return HR.sync(self.project(), cluster_name=cluster)
+
+    # supervisor ----------------------------------------------------------------------------
+    def m_env_check(self, packages: Optional[List[str]] = None, python: Optional[str] = None) -> Dict[str, Any]:
+        from . import envcheck
+        p = self.project(sync=False)
+        if python:                                   # test a candidate before it is saved
+            saved = p.config.get("environment")
+            p.config["environment"] = {"python": python, "packages": packages or []}
+            try:
+                return envcheck.check(p, packages)
+            finally:
+                p.config["environment"] = saved
+        return envcheck.check(p, packages)
+
+    def m_plan_yaml_template(self) -> Dict[str, Any]:
+        from . import planspec as PS
+        return {"text": PS.TEMPLATE}
+
+    def m_plan_yaml_validate(self, text: str) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.validate(text, self.project())
+
+    def m_plan_yaml_diff(self, text: str) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.diff(self.project(), text)
+
+    def m_plan_yaml_apply(self, text: str, dry_run: bool = False) -> Dict[str, Any]:
+        from . import planspec as PS
+        return PS.apply(self.project(), text, dry_run=dry_run, source="ui")
+
+    def m_plan_yaml_export(self, plan: str, experiment: Optional[str] = None, task: Optional[str] = None,
+                           partial: bool = False) -> Dict[str, Any]:
+        from . import planspec as PS
+        return {"text": PS.export(self.project(), plan, scope="partial" if partial else "full", experiment=experiment, task=task)}
+
+    def m_managed_plans(self) -> List[Dict[str, Any]]:
+        """Plans that came through YAML, with their run state: the Control Center's Plans page."""
+        from . import planspec as PS, supervisor as SV
+        p = self.project(sync=False)
+        out = []
+        for st in PS.all_states(p):
+            try:
+                s = SV.status(p, st["plan_key"])
+                out.append({"key": st["plan_key"], "id": st["plan_id"], "revision": st["revision"], "title": (st.get("spec") or {}).get("title"),
+                            "state": s["state"], "progress": s["progress"], "counts": s["counts"], "pending_proposals": len(s["proposals"])})
+            except ResearchError:
+                continue
+        return out
+
+    def m_supervisor_status(self, plan: str) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.status(self.project(sync=False), plan)
+
+    def m_supervisor_daemon(self, action: str = "status") -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project(sync=False)
+        if action == "start":
+            return SV.daemon_start(p, detach=True)
+        if action == "stop":
+            return SV.daemon_stop(p)
+        return SV.daemon_status(p)
+
+    def m_plan_control(self, plan: str, action: str, cancel_agents: bool = False) -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project()
+        fn = {"run": lambda: SV.plan_run(p, plan), "pause": lambda: SV.plan_pause(p, plan), "resume": lambda: SV.plan_resume(p, plan),
+              "stop": lambda: SV.plan_stop(p, plan, cancel_agents)}.get(action)
+        if not fn:
+            raise ResearchError(f"unknown plan action {action!r}")
+        return fn()
+
+    def m_supervisor_task(self, task: str, action: str, note: Optional[str] = None, reason: Optional[str] = None,
+                          attempts: Optional[List[int]] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        p = self.project()
+        if action == "approve":
+            return SV.approve_task(p, task, note)
+        if action == "accept":
+            return SV.accept(p, task, reason or "")
+        if action == "void":
+            return SV.void_attempts(p, task, note or reason or "attempts voided by a human", attempts)
+        if action in ("failed", "completed", "retry", "unblock"):
+            return SV.resolve(p, task, action, note)
+        raise ResearchError(f"unknown task action {action!r}")
+
+    def m_proposals(self) -> List[Dict[str, Any]]:
+        from . import supervisor as SV
+        return SV.list_proposals(self.project(sync=False))
+
+    def m_proposal_decide(self, id: str, approve: bool, note: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.decide_proposal(self.project(), id, approve, note)
+
+    def m_attempt_detail(self, task: str, attempt: int = 0) -> Dict[str, Any]:
+        """One attempt: its exact prompt, context sources, verification, reports and log tails."""
+        from . import execution as E, planspec as PS, supervisor as SV
+        p = self.project(sync=False)
+        hit = PS.find_task_key(p, task)
+        rs = hit and SV.load_run(p, hit[0]["plan_id"])
+        atts = ((rs or {}).get("tasks", {}).get(task) or {}).get("attempts") or []
+        if not atts:
+            return {"task": task, "attempts": []}
+        a = atts[attempt - 1] if attempt else atts[-1]
+        prompt = None
+        if a.get("prompt_path"):
+            try:
+                prompt = open(p.abspath(a["prompt_path"]), encoding="utf-8").read()
+            except OSError:
+                prompt = None
+        logs = None
+        if a.get("execution"):
+            try:
+                logs = E.logs(p, a["execution"], 6000)
+            except (OSError, ResearchError):
+                logs = None
+        return {"task": task, "attempt": a, "attempts": len(atts), "prompt": prompt, "logs": logs, "reports": SV._reports(p, task, a.get("execution"))[-40:]}
+
+    def m_plan_promote(self, plan: str, experiment: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.promote_plan(self.project(), plan, experiment)
+
+    def m_promotion_hint(self, plan: str) -> Dict[str, Any]:
+        from . import planspec as PS, workspace as W
+        p = self.project(sync=False)
+        st = PS._state_for(p, plan)
+        out = []
+        for ek, eid in (st.get("experiments") or {}).items():
+            try:
+                for ws in W.list_workspaces(p):
+                    if ws.get("experiment") == eid:
+                        out.append({"experiment": eid, "workspace": ws["id"], "path": ws.get("path"), "branch": ws.get("branch"), "ahead": ws.get("commits_ahead"),
+                                    "uncommitted": ws.get("dirty") or ws.get("untracked")})
+            except ResearchError:
+                continue
+        return {"plan": plan, "workspaces": out}
 
     # agents ------------------------------------------------------------------------------------
     def m_agents(self) -> Dict[str, Any]:
@@ -511,9 +678,128 @@ class Server:
 
     def m_dispatch(self, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,
                    profile: Optional[str] = None, model: Optional[str] = None,
-                   instructions: Optional[str] = None) -> Dict[str, Any]:
+                   instructions: Optional[str] = None, headless: bool = False, effort: Optional[str] = None,
+                   strategy: Optional[str] = None, level: Optional[str] = None,
+                   create_workspace: bool = False, allow_unfrozen: Optional[str] = None) -> Dict[str, Any]:
+        """PREPARE only: resolves everything and writes the brief. Nothing runs until `execution_start` / the wrapper is run."""
         from . import agents as AG
-        return AG.dispatch(self.project(), role, target, objective, profile, model, instructions)
+        d = AG.dispatch(self.project(), role, target, objective, profile, model, instructions, headless=headless, effort=effort,
+                        strategy=strategy, level=level, create_workspace=create_workspace, allow_unfrozen=allow_unfrozen)
+        d["shell"] = None      # never ship a copy-pasteable string built from task text
+        return d
+
+    def m_freeze_tests(self, task: str, paths: Any) -> Dict[str, Any]:
+        from . import orchestrate as O
+        return O.freeze(self.project(), task, paths)
+
+    def m_execution_start(self, id: str) -> Dict[str, Any]:
+        """Start a prepared headless execution detached from the UI. Returns at once; poll `execution_show` for `running`."""
+        import subprocess
+        from . import execution as EX
+        r = EX.show(self.project(sync=False), id)
+        if r["state"] != "prepared" or r.get("mode") != "headless":
+            raise ResearchError(f"Only a prepared headless execution can be started here (this one is {r['state']}/{r.get('mode')})")
+        subprocess.Popen([sys.executable, os.path.abspath(EX.__file__), self.root, id], cwd=r.get("cwd") or self.root,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        return {"id": id, "state": "starting"}
+
+    def m_executions(self, task: Optional[str] = None) -> List[Dict[str, Any]]:
+        from . import execution as EX
+        return EX.list_all(self.project(sync=False), task)
+
+    def m_execution_show(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.show(self.project(sync=False), id)
+
+    def m_execution_logs(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.logs(self.project(sync=False), id)
+
+    def m_execution_stop(self, id: str) -> Dict[str, Any]:
+        from . import execution as EX
+        return EX.stop(self.project(), id)
+
+    def m_execution_retry(self, id: str, profile: Optional[str] = None, model: Optional[str] = None) -> Dict[str, Any]:
+        from . import agents as AG
+        d = AG.redispatch(self.project(), id, profile, model)
+        d["shell"] = None
+        return d
+
+    def m_providers(self) -> Dict[str, Any]:
+        """Agent providers for the Control Center: readiness, models, MCP, default, strategy, recent executions."""
+        from . import execution as EX, providers as PR, strategy as S
+        p = self.project(sync=False)
+        p.config = p.load_config()
+        profs = (p.config.get("agents") or {}).get("profiles") or {}
+        rows = []
+        for name, prof in profs.items():
+            if name in ("claude", "codex", "agy") or prof.get("provider"):
+                r = PR.readiness(prof, name, p.root)
+                r["models"] = PR.available_models(r["provider"], r["command"], profs)
+                r["profiles"] = sorted(n for n, x in profs.items() if PR.provider_of(x, n) == r["provider"] and n != name)
+                rows.append(r)
+        return {"default": (p.config.get("agents") or {}).get("default_profile"), "strategy": S.active_name(p),
+                "providers": rows, "recent": [{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")} | {
+                    "profile": (e.get("request") or {}).get("profile"), "model": (e.get("request") or {}).get("model")} for e in EX.list_all(p)[:15]],
+                "instructions": PR.instruction_files(p.root)}
+
+    def m_provider_default(self, name: str) -> Dict[str, Any]:
+        """Change the project default agent (same setting as the YAML key agents.default_profile). Future dispatches only."""
+        from . import registry
+        return registry.apply(self.project(), {"agents.default_profile": name}, reason="provider default")
+
+    def m_provider_mcp(self, name: str, apply: bool = False) -> Dict[str, Any]:
+        from . import providers as PR, workspace as W
+        p = self.project(sync=False)
+        prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(name) or {}
+        kind = PR.provider_of(prof, name)
+        done = PR.mcp_install(kind, p.root) if apply else None
+        ws = W.list_workspaces(p)
+        return {"installed": done, "verify": PR.mcp_verify(p.root, ws[0]["path"] if ws else p.root)}
+
+    def m_init_environment(self) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.environment(self.root)
+
+    def m_init_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.plan(self.root, spec)
+
+    def m_init_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
+        from . import initproject
+        return initproject.apply(self.root, spec)
+
+    def m_hpc_discover(self) -> Dict[str, Any]:
+        """SSH aliases from ~/.ssh/config. Reads a local file; contacts nothing."""
+        from . import initproject
+        return {"hosts": initproject.ssh_hosts()}
+
+    def m_env_probe(self, python: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Test an existing interpreter or venv before any project exists (the wizard's *Use an existing environment*)."""
+        from types import SimpleNamespace
+        from . import envcheck
+        fake = SimpleNamespace(config={"environment": {"python": python, "packages": packages or []}}, root=self.root, rdir=self.root)
+        return envcheck.check(fake, packages)
+
+    def m_hpc_test(self, ssh_host: str, workspace_root: str = "", python: str = "", required_packages: Any = None, setup: Any = None,
+                   partition: str = "", compute: bool = False) -> Dict[str, Any]:
+        """Explicit, read-only connection test (the existing `hpc doctor` checks) before any project exists. With `compute`, also one
+        one-minute srun to prove the job environment on a compute node."""
+        from types import SimpleNamespace
+        from .hpc import remote as HR
+        if not ssh_host or any(c.isspace() for c in ssh_host) or ssh_host.startswith("-"):
+            raise ResearchError("Invalid SSH host alias")
+        lines = lambda v: [x.strip() for x in (v.splitlines() if isinstance(v, str) else (v or [])) if str(x).strip()]
+        cl: Dict[str, Any] = {"ssh_host": ssh_host, "paths": {"workspace_root": workspace_root or "~/research-os-probe"}}
+        if python:
+            cl["python"] = python
+        if required_packages:
+            cl["required_packages"] = [x.strip() for x in (required_packages.split(",") if isinstance(required_packages, str) else required_packages) if str(x).strip()]
+        sl = {k: v for k, v in (("setup", lines(setup)), ("partition", partition or None)) if v}
+        if sl:
+            cl["slurm"] = sl
+        fake = SimpleNamespace(config={"hpc": {"clusters": {"probe": cl}}}, name="probe", root=self.root)
+        return HR.doctor(fake, "probe", compute=compute)
 
     def m_mcp_install(self, clients: Any = None) -> Dict[str, Any]:
         from . import mcp as MCP
@@ -636,7 +922,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
@@ -683,7 +969,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor") and not srv.initialized():
+            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)
             if method in MUTATING and srv.p is not None:
@@ -693,7 +979,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                     pass
             send({"id": rid, "result": result})
         except ResearchError as e:
-            send({"id": rid, "error": {"message": str(e), "hint": e.hint, "code": e.exit_code,
+            send({"id": rid, "error": {"message": str(e), "hint": e.hint, "code": e.exit_code, "data": e.data,
                                        "kind": type(e).__name__}})
         except TypeError as e:
             send({"id": rid, "error": {"message": f"bad parameters for {method}: {e}", "code": -32602}})

@@ -1,0 +1,23 @@
+schema_version: 1
+project:
+  context: [RESEARCH.md]
+plans:
+  - key: repair-hidden
+    title: Recoverable failure with a held-out oracle
+    objective: Show detection of a failed attempt, a repair dispatch carrying the diagnostics, and re-verification.
+    execution: {max_attempts_per_task: 3, max_total_attempts: 4}
+    experiments:
+      - key: smoothing2
+        title: Moving average for the lab pipeline
+        hypothesis: A correct implementation satisfies the lab's held-out acceptance check.
+        tasks:
+          - key: smooth3
+            title: Write smooth3.py
+            agent: {role: implementer, profile: claude-balanced, session_group: smooth}
+            prompt: |
+              Write `smooth3.py` with `moving_average(x, w)`: a centered moving average over an odd window `w`, returning a list of floats
+              the same length as `x`. Edges are padded with the convention appropriate for this lab's pipeline. Standard library only.
+              Do not run Python in this task (Research OS verifies with the lab's own acceptance check and reports exactly what is wrong).
+            checks:
+              - "cmd:/tmp/e2e-venv/bin/python /tmp/sup/hidden/check_smooth3.py"
+            expected_artifacts: [smooth3.py]

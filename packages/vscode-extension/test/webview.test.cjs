@@ -32,7 +32,7 @@ function startCore(root) {
 }
 function hostFor(core) {
   const log = { entities: [], docs: [] }; let state = {};
-  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
+  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), getState: () => state, setState: (s) => (state = s) };
 }
 
 before(async () => {
@@ -159,7 +159,7 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   try {
     await ready(el);
     const tabs = qa(el, '[role=tab]');
-    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Settings']);
+    assert.deepEqual(tabs.map((t) => t.textContent), ['Home', 'Work', 'Research', 'Plans', 'Agents', 'Settings']);
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
@@ -229,6 +229,8 @@ test('first run: two answers create a v2 project; advanced options stay folded a
   const core = startCore(dir); const host = hostFor(core);
   const { el, unmount } = await lib.mount(host);
   try {
+    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
+    await click(byText(el, 'button', 'Use a single folder instead'));
     await waitFor(() => /Set up Research OS/.test(el.textContent), 8000);
     assert.equal(q(el, '#su-name').value, path.basename(dir), 'the folder name is the default project name');
     assert.equal(q(el, '[role=tab]'), null, 'no navigation until a project exists');
@@ -248,6 +250,44 @@ test('first run: two answers create a v2 project; advanced options stay folded a
     assert.match(fs.readFileSync(path.join(dir, '.research', 'config.yaml'), 'utf8'), /Learn the effect of alpha/);
     assert.ok(!fs.existsSync(path.join(dir, '.git')), 'no git repository was created behind your back');
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Initialize Project: teaches first, previews the layout, creates main/ledger/experiments and shows the Agents page', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-init-'));
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
+    assert.match(el.textContent, /How Research OS works/); assert.match(el.textContent, /Switch agents any time/);
+    assert.match(el.textContent, /belong to one git repository/);
+    await click(byText(el, 'button', 'Next'));
+    await type(q(el, '#ip-goal'), 'Find alpha');
+    await click(byText(el, 'button', 'Next'));
+    assert.match(el.textContent, /top level/); await click(byText(el, 'button', 'Next'));
+    assert.match(el.textContent, /Claude Code/); assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Google Antigravity/);
+    assert.match(el.textContent, /sonnet_first/);
+    await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
+    await click(byText(el, 'button', 'Next'));
+    await waitFor(() => /do exactly this/.test(el.textContent));
+    assert.ok(!fs.existsSync(path.join(dir, 'main')), 'nothing is written before Create');
+    await click(byText(el, 'button', 'Create project'));
+    await waitFor(() => /Project created/.test(el.textContent), 30000);
+    assert.match(el.textContent, /Your first 5 minutes/);
+    for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments']) assert.ok(fs.existsSync(path.join(dir, d)), d);
+    assert.deepEqual(fs.readdirSync(path.join(dir, 'experiments')), []);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Agents & Providers page lists the three providers with readiness and capabilities', async () => {
+  const core = startCore(proj);
+  const { el, unmount } = await lib.mount(hostFor(core));
+  try {
+    await waitFor(() => q(el, '[role=tab]'), 12000);
+    await click(byText(el, '[role=tab]', 'Agents'));
+    await waitFor(() => /Agents & Providers/.test(el.textContent) && /Google Antigravity/.test(el.textContent), 15000);
+    assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Claude Code/);
+    assert.match(el.textContent, /Completed = the agent process exited successfully/);
+  } finally { await unmount(); core.stop(); }
 });
 
 test('a v1 project is shown a clear explanation and nothing is changed', async () => {
@@ -331,4 +371,44 @@ test('files are authoritative: origin file and key are shown, manual edits appea
     assert.match(m.el.textContent, /could not be read/); assert.ok(byText(m.el, 'button', 'Open configuration file'));
     assert.equal(fs.readFileSync(cfg, 'utf8'), broken);
   } finally { await m.unmount(); core.stop(); fs.writeFileSync(cfg, original); }
+});
+
+
+test('plans page: import YAML through the core, run state and phases are shown, settings expose the supervisor', async () => {
+  const core = startCore(proj); const host = hostFor(core);
+  const yaml = `schema_version: 1
+plans:
+  - key: ui-plan
+    title: UI plan
+    objective: show phases
+    experiments:
+      - key: e1
+        title: Experiment one
+        tasks:
+          - {key: first, title: First task, prompt: do it, checks: ["cmd:true"]}
+          - {key: second, title: Second task, prompt: then this, depends_on: [first], execution: {requires_approval: true}}
+`;
+  try {
+    const bad = await core.call('plan_yaml_validate', { text: 'schema_version: 7\nplans: []\n' }).then(() => null, (e) => e.message);
+    assert.match(bad, /not supported|non-empty/);
+    const d = await core.call('plan_yaml_diff', { text: yaml });
+    assert.equal(d.operations > 0, true);
+    await core.call('plan_yaml_apply', { text: yaml });
+    const again = await core.call('plan_yaml_apply', { text: yaml });
+    assert.equal(again.plans[0].changed, false, 'applying twice changes nothing');
+    const { el, unmount } = await lib.mount(host, { page: 'plans' });
+    try {
+      await waitFor(() => /UI plan/.test(el.textContent), 8000);
+      assert.match(el.textContent, /not run|Run plan/);
+      await click(byText(el, 'button', 'Show tasks'));
+      await waitFor(() => /First task/.test(el.textContent), 8000);
+      assert.match(el.textContent, /waiting|ready/);
+      assert.ok(byText(el, 'button', 'Details'));
+    } finally { await unmount(); }
+    const { el: s2, unmount: u2 } = await lib.mount(host, { page: 'settings', target: 'supervisor' });
+    try {
+      await waitFor(() => /Agents at once|Attempts per task/.test(s2.textContent), 8000);
+      assert.match(s2.textContent, /supervisor\.max_attempts_per_task/);
+    } finally { await u2(); }
+  } finally { core.stop(); }
 });

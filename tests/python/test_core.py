@@ -202,8 +202,10 @@ def test_failed_run_budget(proj):
     _agent(proj)
     R.attach_run(proj, e["id"], command="x", status="failed", exit_code=1)
     R.attach_run(proj, e["id"], command="x", status="failed", exit_code=1)
-    with pytest.raises(BudgetExceeded):
+    with pytest.raises(BudgetExceeded) as ex:
         R.attach_run(proj, e["id"], command="x")
+    h = ex.value.hint        # every gate says exactly how to proceed
+    assert "run update RUN-… --reviewed" in h and "experiment synthesize" in h and '--override' in h
 
 
 def test_synthesis_required_before_new_experiment(proj):

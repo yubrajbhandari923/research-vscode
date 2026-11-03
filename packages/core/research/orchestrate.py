@@ -22,7 +22,7 @@ from . import plans
 from . import strategy as S
 from .schema import normalize_id
 from .store import Project, _atomic_write
-from .util import NotFound, PolicyBlocked, ResearchError, as_list, now_iso
+from .util import NoFrozenTests, NotFound, PolicyBlocked, ResearchError, as_list, now_iso
 
 TIERS = ["haiku", "sonnet", "opus"]
 CATEGORIES = ["incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle",
@@ -116,12 +116,28 @@ def record_dispatch(p: Project, tid: str, snap: Dict[str, Any]) -> None:
     _save(p, tid, led)
 
 
-def _hash(p: Project, path: str) -> str:
-    try:
-        with open(os.path.join(p.root, path), "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except OSError:
-        raise NotFound(f"Cannot freeze {path}: file not found")
+def _bases(p: Project, tid: Optional[str]) -> List[str]:
+    """Where relative frozen-test paths live: the task's workspace first (agents freeze from inside it), then the project root."""
+    out = []
+    if tid:
+        try:
+            from . import workspace as W
+            ws = W.for_task(p, tid)
+            if ws:
+                out.append(ws["path"])
+        except ResearchError:
+            pass
+    return out + [p.root]
+
+
+def _hash(p: Project, path: str, tid: Optional[str] = None) -> str:
+    for base in _bases(p, tid):
+        try:
+            with open(os.path.join(base, path), "rb") as f:
+                return hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            continue
+    raise NotFound(f"Cannot freeze {path}: file not found")
 
 
 def _tid(p: Project, tid: str) -> str:
@@ -136,8 +152,9 @@ def freeze(p: Project, tid: str, paths: Any) -> Dict[str, Any]:
     tid = _tid(p, tid)
     led = ledger(p, tid)
     for path in as_list(paths):
-        rel = p.rel(os.path.join(p.root, path))
-        digest = _hash(p, rel)
+        base = _bases(p, tid)[0]
+        rel = os.path.relpath(os.path.join(base, path), base) if not os.path.isabs(path) else path
+        digest = _hash(p, rel, tid)
         if rel in led["frozen"] and led["frozen"][rel] != digest:
             raise PolicyBlocked(f"{tid}: {rel} is already frozen and has changed",
                                 hint="Restore it or use `research orchestrate correct-test` with a reason.")
@@ -152,7 +169,7 @@ def tampered(p: Project, tid: str) -> List[str]:
     out = []
     for path, h in ledger(p, tid)["frozen"].items():
         try:
-            if _hash(p, path) != h:
+            if _hash(p, path, tid) != h:
                 out.append(path)
         except NotFound:
             out.append(path)
@@ -487,9 +504,12 @@ def preparation(p, tid, role, policy=None, allow_unfrozen=None):
         raise PolicyBlocked("Unfinished dependencies: " + ", ".join(unmet))
     if policy and S.requires_frozen(policy, task) and not led["frozen"]:
         if not allow_unfrozen:
-            raise PolicyBlocked(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
+            err = NoFrozenTests(f"{tid}: no frozen acceptance tests; the coordinator ({policy['coordinator']}) must write and "
                                 f"freeze them before {policy['level']} implements",
-                                hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
+                                hint=f"Dispatch the coordinator level ({policy['coordinator']}) first so it writes them, or "
+                                     f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
+            err.data = {"coordinator_level": policy["coordinator"]}
+            raise err
         plans.add_task_note(p, tid, f"{policy['level']} dispatched WITHOUT frozen tests: {allow_unfrozen}")
     ins = []
     if policy:
@@ -534,7 +554,7 @@ def dispatch_task(p: Project, target: str, tier: Optional[str] = None, available
             raise ResearchError(r["note"], hint="Set orchestration.tiers / orchestration.available in .research/config.yaml.")
         if r["tier"] == "haiku" and task.get("task_type") in (None, "implementation", "debug") and not ledger(p, tid)["frozen"]:
             if not allow_unfrozen:
-                raise PolicyBlocked(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
+                raise NoFrozenTests(f"{tid}: no frozen acceptance tests; Sonnet must write and freeze them before Haiku implements",
                                     hint=f"`research orchestrate freeze {tid} <tests>`, or --allow-unfrozen \"<reason>\" (logged).")
             plans.add_task_note(p, tid, f"haiku dispatched WITHOUT frozen tests: {allow_unfrozen}")
         lim = {"haiku_attempts": 3, **limits(p)}

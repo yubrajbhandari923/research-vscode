@@ -4,6 +4,8 @@ export interface Host {
   call<T = any>(method: string, params?: Record<string, any>): Promise<T>;
   /** Open a record (Q-, EXP-, RUN-, F-, D-, T-, …) in the host's detail view. */
   openEntity(id: string): void;
+  /** Run one of the few editor commands the Control Center may trigger (new plan, add task, dispatch). */
+  run(command: 'research.plan.create' | 'research.task.create' | 'research.dispatch' | 'research.workspace.open' | 'research.hpc.submit' | 'research.plan.yaml.import' | 'research.plan.yaml.new' | 'research.plan.yaml.apply' | 'research.plan.yaml.open' | 'research.plan.run', arg?: string): void;
   /** Open a configuration file in the editor (project-relative path, or the machine config path the core reported). */
   openFile(path: string): void;
   /** Open documentation (a repo-relative path with optional #anchor). */
@@ -31,6 +33,7 @@ export function vscodeHost(api: { postMessage(m: any): void; getState(): any; se
       api.postMessage({ type: 'rpc', id, method, params: params || {} });
     }),
     openEntity: (id) => api.postMessage({ type: 'open-entity', id }),
+    run: (command, arg) => api.postMessage({ type: 'run', command, arg }),
     openDoc: (path) => api.postMessage({ type: 'open-doc', path }),
     openFile: (path) => api.postMessage({ type: 'open-file', path }),
     getState: () => api.getState() || {},

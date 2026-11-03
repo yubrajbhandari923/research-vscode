@@ -9,8 +9,8 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['ping', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
-const MUTATING_RPC = new Set(['setup_apply', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
+const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action']);
+const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'setup_apply', 'init_apply', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
@@ -129,6 +129,7 @@ export class Panels implements vscode.Disposable {
 <body><div id="root"></div><script nonce="${n}">window.__RESEARCH_INITIAL__=${initial};</script><script nonce="${n}" src="${media('app.js')}"></script></body></html>`;
     w.onDidReceiveMessage(async (m) => {
       if (m.type === 'open-entity') return this.openEntity(String(m.id));
+      if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open', 'research.hpc.submit', 'research.plan.yaml.import', 'research.plan.yaml.new', 'research.plan.yaml.apply', 'research.plan.yaml.open', 'research.plan.run'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
       if (m.type === 'open-doc') return this.openDoc(String(m.path));
       if (m.type === 'open-file') return this.openConfigFile(String(m.path));
       if (m.type !== 'rpc') return;
@@ -137,6 +138,10 @@ export class Panels implements vscode.Disposable {
         const result = await this.model.client.request(m.method, m.params || {});
         if (m.method === 'settings') for (const f of [result?.machine_config, result?.project_config]) if (f) this.configFiles.add(path.resolve(String(f)));
         if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
+        if (m.method === 'init_apply' && result?.workspace_file) {   // the user approved the reviewed plan; open the new multi-root workspace
+          await this.ctx.globalState.update('research.justInitialized', result.main);
+          setTimeout(() => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(result.workspace_file)), 4000);
+        }
         w.postMessage({ type: 'rpc-result', id: m.id, result });
       } catch (e: any) {
         w.postMessage({ type: 'rpc-result', id: m.id, error: String(e?.message || e) });

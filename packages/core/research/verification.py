@@ -104,14 +104,18 @@ def _metric_value(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> (Optio
 def run_check(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, Any]:
     t0 = time.time()
     out: Dict[str, Any] = {"check": describe_check(c), "type": c["type"]}
+    from . import workspace as W   # checks judge the work, which lives in the task's worktree when it has one
+    ws = W.for_task(p, task["id"]) if task.get("id") else None
+    base = ws["path"] if ws else None
     if c["type"] == "command":
         timeout = float(_policy(p).get("check_timeout_seconds") or 600)
-        r = shell_check(c["run"], cwd=p.root, timeout=timeout, output_limit=2000,
-                        env={**os.environ, "RESEARCH_ROOT": p.root})
+        from . import envcheck
+        r = shell_check(envcheck.expand(p, c["run"]), cwd=base or p.root, timeout=timeout, output_limit=2000,
+                        env={**os.environ, "RESEARCH_ROOT": p.root, "PATH": envcheck.path_with_python(p)})
         out.update(ok=r["ok"], output=r["output"],
                    detail=f"timed out after {timeout:g}s" if r["timed_out"] else f"exit {r['exit_code']}")
     elif c["type"] == "file":
-        ap = p.abspath(c["path"])
+        ap = os.path.join(base, c["path"]) if base and not os.path.isabs(c["path"]) else p.abspath(c["path"])
         ok = bool(ap and os.path.exists(ap))
         if ok and os.path.isfile(ap) and os.path.getsize(ap) == 0:
             out.update(ok=False, detail="exists but is empty")

@@ -62,7 +62,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     await rpc('run_refresh', {});
     await model.refresh();
   });
-  reg('research.resume', () => panels.openResume());
+  reg('research.resume', () => panels.openControlCenter('home')); // status bar and sidebar go to the Control Center (Home, Work, Research, Agents, Settings)
   reg('research.openControlCenter', (page?: string, target?: string) => panels.openControlCenter(page, target));
   reg('research.openSettings', () => panels.openControlCenter('settings'));
   reg('research.open', async (a: any, side?: boolean) => {
@@ -616,7 +616,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       kind: 'task', title: `Add task to ${planId}`, icon: 'list-ordered', submit: 'Add task',
       subtitle: `<b>${escapeHtml(plan.title)}</b> — ${existingTasks.length} tasks so far`,
       context: { plan_id: planId },
-      groups: taskGroups({ task_type: 'research' }),
+      groups: taskGroups({ task_type: 'implementation', assigned_role: 'implementer', related_experiment_id: existingTasks.map((t: any) => t.related_experiment_id).find(Boolean) }),
     }, async (v, c) => (await rpc('create', { type: 'task', plan_id: c.plan_id, ...taskValues(v), status: 'todo' })).id);
   });
 
@@ -721,24 +721,103 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       target = await pickEntity(ROLE_TARGET[role], `Which ${ROLE_TARGET[role]} should the ${role} work on?`);
       if (!target) return;
     }
-    let d = await rpc('dispatch', { role, target, objective });
-    const choice = await vscode.window.showInformationMessage(
-      `${d.model || d.profile} · ${d.policy?.strategy || 'project profiles'} · ${d.policy?.why || 'configured role'}`,
-      'Start', 'Advanced model override');
-    if (!choice) return;
-    if (choice === 'Advanced model override') {
-      const ag = await rpc('agents');
-      const prof: any = await vscode.window.showQuickPick((ag.profiles || []).map((x: any) => ({
-        label: x.name, description: x.model || x.command, name: x.name,
-      })), { placeHolder: 'Explicit override of project strategy and task pin' });
-      if (!prof) return;
-      d = await rpc('dispatch', { role, target, objective, profile: prof.name });
+    // Agent -> Model -> Mode -> Preview | Start. Choices come from detected capabilities; nothing is substituted silently.
+    const pv = await rpc('providers');
+    const agentPick: any = await vscode.window.showQuickPick([
+      { label: '$(sparkle) Project routing', description: `default agent ${pv.default}${pv.strategy ? ' · ' + pv.strategy : ''}`, profile: undefined, prov: undefined },
+      ...pv.providers.map((p: any) => ({ label: p.name, description: p.installed ? `installed ${p.version || ''}` : 'NOT INSTALLED', detail: p.problem, profile: p.name, prov: p })),
+    ], { placeHolder: 'Agent' });
+    if (!agentPick) return;
+    if (agentPick.prov && !agentPick.prov.installed) return void vscode.window.showErrorMessage(agentPick.prov.problem);
+    let chosen: string | undefined;
+    if (agentPick.prov?.models.models.length) {
+      const m: any = await vscode.window.showQuickPick([{ label: 'Default for this agent', id: undefined }, ...agentPick.prov.models.models.map((x: any) => ({ label: x.id, description: x.label, id: x.id }))], { placeHolder: 'Model' });
+      if (!m) return;
+      chosen = m.id;
     }
-    const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: model.root, env: { ...shim.env(), ...d.env } });
-    term.show();
-    term.sendText(d.argv.map(shq).join(' '), true);
-    done(`${d.profile}/${d.role}: launch command sent; execution not yet confirmed`);
-    if (!d.available) vscode.window.showWarningMessage(`\`${d.provider_argv[0]}\` was not found on PATH. Install it, or point the "${d.profile}" profile at the right command in .research/config.yaml.`);
+    const caps = agentPick.prov?.capabilities;
+    const modes = [{ label: 'Interactive', description: 'opens a terminal you can talk to', headless: false },
+      ...(!caps || caps.headless ? [{ label: 'Headless', description: 'runs in the background; logs and exit status are captured', headless: true }] : [])];
+    const mode: any = await vscode.window.showQuickPick(modes, { placeHolder: 'Mode' });
+    if (!mode) return;
+    const args: any = { role, target, objective, profile: agentPick.profile, model: chosen, headless: mode.headless };
+    let d: any;
+    for (;;) {  // gates that the user can resolve right here are offered as actions, with the full message
+      try { d = await rpc('dispatch', args); break; } catch (e: any) {
+        const full = e.message + (e.hint ? `\n\n${e.hint}` : '');
+        if (e.kind === 'NoWorkspace') {
+          const b = await vscode.window.showWarningMessage(full, { modal: true }, 'Create worktree and continue');
+          if (!b) return;
+          args.create_workspace = true;
+        } else if (e.kind === 'NoFrozenTests') {
+          const lvl = e.data?.coordinator_level;
+          const b = await vscode.window.showWarningMessage(`${e.message}\n\nFrozen tests are the oracle the agent must pass; it cannot weaken them. The coordinator can write them for you, or you can pick tests you already wrote.`, { modal: true },
+            ...(lvl ? [`Have the ${lvl} agent write the tests first`] : []), 'Freeze test files…', 'Dispatch without frozen tests…');
+          if (!b) return;
+          if (b.startsWith('Have the')) {
+            args.level = lvl;   // the coordinator level is exempt from the gate; its brief says: write failing tests, freeze them, then implement or delegate
+          } else if (b.startsWith('Freeze')) {
+            const files = await vscode.window.showOpenDialog({ canSelectMany: true, defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri, openLabel: 'Freeze' });
+            if (!files?.length) return;
+            await rpc('freeze_tests', { task: target, paths: files.map((f) => f.fsPath) });
+          } else {
+            const why = await vscode.window.showInputBox({ prompt: 'Why dispatch without frozen tests? (logged on the task)', ignoreFocusOut: true });
+            if (!why) return;
+            args.allow_unfrozen = why;
+          }
+        } else throw e;
+      }
+    }
+    const al = d.allocation || {};
+    let act: string | undefined;
+    for (;;) {   // a QuickPick, not a toast: it does not vanish, and Preview returns here so Start stays available
+      const pick: any = await vscode.window.showQuickPick([
+        { label: '$(play) Start', description: 'launch the agent now', act: 'Start' },
+        { label: '$(eye) Preview brief', description: 'read exactly what the agent is told', act: 'Preview' },
+        { label: '$(clock) Not now', description: 'keep it prepared; start it later from the Agents tab', act: undefined }],
+        { placeHolder: `${al.provider}/${al.model || 'default model'} · ${al.execution_mode} · runs in ${al.workspace?.path || d.cwd}` + (d.problem ? ` · ${d.problem}` : ''), ignoreFocusOut: true });
+      act = pick?.act;
+      if (act !== 'Preview') break;
+      await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(d.env.RESEARCH_BRIEF));
+    }
+    if (act !== 'Start') return;
+    if (d.problem) return void vscode.window.showErrorMessage(d.problem);
+    if (!d.execution_id) {  // not tied to a task (planner/analyst on a plan, finding review): no launch tracking is possible
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
+      term.show(); term.sendText(d.argv.map((x: string, i: number, all: string[]) => (all[i - 1] === '--output-format' && x === 'json' ? 'text' : x)).map(shq).join(' '), true);   // readable output in a terminal
+      return void done(`${d.profile}/${d.role}: command sent to a terminal; Research OS cannot confirm it is running`);
+    }
+    if (mode.headless) await rpc('execution_start', { id: d.execution_id });
+    else {
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role} · ${target}`, cwd: d.cwd, env: { ...shim.env(), ...d.env } });
+      term.show(); term.sendText(d.argv.map(shq).join(' '), true);
+    }
+    // "Running" is only reported once the launcher has recorded a live process; "completed" only once it exited 0.
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `${d.profile}/${d.role} on ${target}: starting…`, cancellable: false }, async (prog) => {
+      let last = '';
+      for (let i = 0; i < 1800; i++) {
+        await new Promise((r) => setTimeout(r, i < 60 ? 500 : 2000));
+        const r = await rpc('execution_show', { id: d.execution_id }).catch(() => null);
+        if (!r) continue;
+        if (r.state !== last) { last = r.state; prog.report({ message: r.state === 'running' ? `running (pid ${r.pid}) in ${d.cwd}` : r.state }); }
+        if (['completed', 'failed', 'cancelled', 'unknown'].includes(r.state)) {
+          const msg = r.state === 'completed' ? `${d.profile} exited successfully. That is not verification: run the task's checks.`
+            : `${d.profile} ${r.state}${r.exit_code != null ? ` (exit ${r.exit_code})` : ''}${r.error ? ': ' + r.error : ''}`;
+          return void (r.state === 'completed' ? vscode.window.showInformationMessage(msg) : vscode.window.showWarningMessage(msg));
+        }
+        if (!['prepared', 'launched', 'running'].includes(r.state)) return;
+        if (i === 60 && r.state === 'prepared') { vscode.window.showWarningMessage('The launch command was sent but no process has been confirmed yet. Check the terminal.'); }
+        if (mode.headless === false && r.state === 'running' && i > 4) return;  // interactive: confirmed running; the terminal owns it from here
+      }
+    });
+    done();
+  });
+  reg('research.workspace.open', async (p?: string) => {   // show an experiment worktree in the Explorer
+    if (!p) return;
+    const uri = vscode.Uri.file(p);
+    if (!vscode.workspace.workspaceFolders?.some((f) => f.uri.fsPath === uri.fsPath))
+      vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length || 0, 0, { uri, name: `${path.basename(p)} (experiment code)` });
+    await vscode.commands.executeCommand('revealInExplorer', uri);
   });
   reg('research.plan.withAgent', async () => vscode.commands.executeCommand('research.dispatch', undefined, 'planner'));
 
@@ -834,6 +913,87 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       const applied = await rpc('agents_md_apply', {});
       done(applied.changed ? 'AGENTS.md managed block updated' : 'already up to date');
     }
+  });
+  // ---------------------------------------------------------------- plan YAML (import / open / apply) and plan runs
+  const planDir = () => path.join(path.dirname(model.root) === model.root ? model.root : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || model.root), 'plans');
+  const previewAndApply = async (text: string, label: string) => {
+    const v = await rpc('plan_yaml_validate', { text });
+    const d = await rpc('plan_yaml_diff', { text });
+    if (!d.ok) return void vscode.window.showErrorMessage(`${label}: ${d.conflicts.join(' · ')}`, { modal: true });
+    const lines = d.plans.flatMap((pl: any) => [`Plan ${pl.plan}${pl.revision ? ` (ledger revision ${pl.revision})` : ' (new)'}`, ...pl.ops.map((o: any) => `   ${o.op.replace('_', ' ')}: ${o.key}${o.fields ? ' [' + Object.keys(o.fields).join(', ') + ']' : ''}`), ...(pl.ops.length ? [] : ['   no changes'])]);
+    if (!d.operations) return void vscode.window.showInformationMessage(`${label}: nothing to change (${v.tasks} task(s), already in sync).`);
+    const ok = await vscode.window.showWarningMessage(`Apply ${label}?\n\n${lines.join('\n')}${d.warnings.length ? '\n\n' + d.warnings.join('\n') : ''}\n\nCompleted and running work is never removed or rewritten.`, { modal: true }, 'Apply');
+    if (!ok) return;
+    const r = await rpc('plan_yaml_apply', { text });
+    done(`Plan YAML applied: ${r.plans.map((x: any) => `${x.plan} rev ${x.revision}`).join(', ')}`);
+    await vscode.commands.executeCommand('research.openControlCenter', 'plans');
+  };
+  reg('research.plan.yaml.import', async () => {
+    const f = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { 'Research plan (YAML)': ['yaml', 'yml'] }, openLabel: 'Import plan' });
+    if (!f?.length) return;
+    await previewAndApply(fs.readFileSync(f[0].fsPath, 'utf8'), path.basename(f[0].fsPath));
+  });
+  reg('research.plan.yaml.new', async () => {
+    const t = await rpc('plan_yaml_template', {});
+    fs.mkdirSync(planDir(), { recursive: true });
+    let file = path.join(planDir(), 'research.yaml');
+    for (let i = 2; fs.existsSync(file); i++) file = path.join(planDir(), `research-${i}.yaml`);
+    fs.writeFileSync(file, t.text);
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+    vscode.window.showInformationMessage('Edit the plan, then run "Research: Apply Plan YAML from Editor".');
+  });
+  reg('research.plan.yaml.apply', async () => {
+    const ed = vscode.window.activeTextEditor;
+    if (!ed || !/ya?ml$/.test(ed.document.fileName)) return void vscode.window.showInformationMessage('Open a plan YAML file in the editor first.');
+    if (ed.document.isDirty) await ed.document.save();
+    await previewAndApply(ed.document.getText(), path.basename(ed.document.fileName));
+  });
+  reg('research.plan.yaml.open', async (key?: string) => {
+    key = typeof key === 'string' ? key : await pickEntity('plan', 'Which plan should open as YAML?');
+    if (!key) return;
+    const r = await rpc('plan_yaml_export', { plan: key });
+    fs.mkdirSync(planDir(), { recursive: true });
+    const m = /^# Research OS plan (\S+)/.exec(r.text);
+    const file = path.join(planDir(), `${m ? m[1] : key}.yaml`);
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') !== r.text) {
+      const c = await vscode.window.showWarningMessage(`${path.basename(file)} differs from the ledger. Overwrite it with the current ledger plan, or open the file as it is?`, { modal: true }, 'Overwrite with ledger', 'Open as is');
+      if (!c) return;
+      if (c === 'Overwrite with ledger') fs.writeFileSync(file, r.text);
+    } else fs.writeFileSync(file, r.text);
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(file));
+  });
+  reg('research.plan.run', async (a?: any) => {
+    const key = typeof a === 'string' ? a : await pickEntity('plan', 'Which plan should the supervisor run?');
+    if (!key) return;
+    const r = await rpc('plan_control', { plan: key, action: 'run' });
+    done(`${r.plan} running (${r.progress} verified)`);
+  });
+
+  reg('research.hpc.submit', async (a?: any) => {   // preview -> explicit approval -> submit; creates the remote folders first if needed
+    const st = await rpc('hpc_status', {});
+    if (!st.enabled) return void vscode.window.showInformationMessage('No HPC cluster is configured. Add one in the Initialize Project wizard (Execution step) or under hpc.clusters in .research/config.yaml.');
+    const experiment = idArg(a)?.startsWith('EXP-') ? idArg(a) : await pickEntity('experiment', 'Which experiment should run on the cluster?');
+    if (!experiment) return;
+    const command = await vscode.window.showInputBox({ prompt: `Command to run on the cluster for ${experiment}`, value: 'python3 ', placeHolder: 'python3 train.py --lr 0.01 --out outputs/run1', ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() && v.trim() !== 'python3' ? undefined : 'Enter the full command') });
+    if (!command) return;
+    const init = await rpc('hpc_init', { dry_run: true });
+    if (init.would_create?.length) {
+      const c = await vscode.window.showWarningMessage(`The cluster folders for this project do not exist yet. Create them?\n\n${init.would_create.join('\n')}`, { modal: true }, 'Create folders');
+      if (!c) return;
+      await rpc('hpc_init', { dry_run: false });
+    }
+    const pv = await rpc('hpc_submit', { experiment, command, dry_run: true });
+    const res = pv.reservation || {};
+    const ok = await vscode.window.showWarningMessage(
+      `Submit ${experiment} to ${pv.cluster}?\n\nCommand: ${pv.command}\nReserves: ${res.summary || 'cluster defaults'}${res.worst_case ? ` (worst case ${res.worst_case})` : ''}\nPartition: ${res.partition || 'cluster default'}\n\nThe code of the experiment's worktree (including uncommitted files) is bundled, uploaded and submitted with sbatch. Slurm bills what you reserve.`,
+      { modal: true }, 'Submit');
+    if (!ok) return;
+    const r = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Submitting ${experiment}…` },
+      () => rpc('hpc_submit', { experiment, command, dry_run: false, approve: true }));
+    done(`${r.run} submitted as slurm job ${r.slurm_job_id}`);
+    const next = await vscode.window.showInformationMessage(`${r.run} submitted to ${r.cluster} as slurm job ${r.slurm_job_id}.`, 'Check status and fetch results');
+    if (next) await vscode.commands.executeCommand('research.hpcSync');
   });
   reg('research.hpcSync', async () => {
     const st = await rpc('hpc_status', {});

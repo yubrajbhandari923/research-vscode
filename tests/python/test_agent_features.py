@@ -264,3 +264,15 @@ def test_rpc_agent_setup_has_new_sections(proj, plan, repo):
     assert d["experiments"][0]["id"] == e["id"]
     assert s.m_hook_toggle("h1", False)["enabled"] is False
     assert s.m_task_pin(t["id"], clear=True)["override"] is None
+
+
+def test_unfrozen_gate_offers_the_coordinator_and_that_dispatch_is_allowed(proj, plan, repo):
+    from research.util import NoFrozenTests
+    use(proj)
+    a = mk(proj, plan, task_type="implementation")
+    O.set_override(proj, a["id"], level="fast")
+    with pytest.raises(NoFrozenTests) as e:
+        agents.dispatch(proj, "implementer", a["id"])
+    assert e.value.data == {"coordinator_level": "balanced"} and "coordinator" in e.value.hint
+    d = agents.dispatch(proj, "implementer", a["id"], level="balanced")      # the offered way out: no override, no bypass
+    assert d["model"] == "claude-sonnet-5-5"

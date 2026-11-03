@@ -122,7 +122,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
         return (
           <>
             <PageHeader title="Work" sub="Who is doing what, where it runs, and what is ready to move into main."
-              actions={d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New workspace</button>} />
+              actions={<><button type="button" onClick={() => host.run('research.plan.create')}><Icon name="tasks" /> New plan</button><button type="button" onClick={() => host.run('research.hpc.submit')}><Icon name="branch" /> Run on cluster</button>{d.layout.mode !== 'classic' && <button type="button" onClick={() => setCreating(true)}><Icon name="branch" /> New worktree</button>}</>} />
             <div className="kpis" role="list" aria-label="Operations at a glance">
               <Stat value={by('todo') + by('running') + by('in_progress')} sub={by('running') + by('in_progress') ? `${by('running') + by('in_progress')} in progress` : undefined} label="Open tasks" />
               <Stat value={by('blocked')} label="Blocked" warn={by('blocked') > 0} />
@@ -134,26 +134,26 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
             <div className="stack">
               <Section id="pl" title="Plans and tasks" count={d.plans.length || undefined}>
                 {d.plans.length === 0 ? <EmptyState icon="tasks" title="No plans yet.">A plan breaks an objective into tasks that agents or you can claim. Dependencies decide what is ready next.
-                  <br /><code>research plan create "Compare priors" --objective "…"</code></EmptyState> :
+                  <br /><button type="button" onClick={() => host.run('research.plan.create')}>New plan</button></EmptyState> :
                   <div className="grid-2">{d.plans.map((pl: any) => {
                     const done = pl.tasks.filter((t: any) => t.status === 'done').length;
                     return <div key={pl.id} className="card plan">
-                      <div className="plan-head"><div className="grow"><span><IdLink id={pl.id} host={host} /> <b>{pl.title}</b></span></div><Progress value={done} max={pl.tasks.length} ok={done === pl.tasks.length && done > 0} label={`${done} of ${pl.tasks.length} tasks done`} /></div>
+                      <div className="plan-head"><div className="grow"><span><IdLink id={pl.id} host={host} /> <b>{pl.title}</b></span></div><Progress value={done} max={pl.tasks.length} ok={done === pl.tasks.length && done > 0} label={`${done} of ${pl.tasks.length} tasks done`} /><button type="button" className="sm" onClick={() => host.run('research.task.create', pl.id)}>Add task</button></div>
                       {pl.tasks.length === 0 ? <EmptyState inline title="No tasks in this plan." /> : pl.tasks.map((t: any) => (
                         <div key={t.id} className={'task' + (t.status === 'done' ? ' done' : '')}>
                           <i className={'dot k-' + (TASK_KIND[t.status] || '')} aria-hidden /><IdLink id={t.id} host={host} /><span className="t">{t.title}</span>
                           {t.assigned_role && <span className="meta hide-narrow">{t.assigned_role}</span>}
-                          <Status value={t.status} /></div>))}
+                          <Status value={t.status} />{t.status !== 'done' && <button type="button" className="sm" aria-label={`Dispatch ${t.id} to an agent`} onClick={() => host.run('research.dispatch', t.id)}>Dispatch</button>}</div>))}
                     </div>;
                   })}</div>}
               </Section>
 
               <div className="grid-main">
                 <div className="col">
-                  <Section id="ws" title="Experiment branches" count={d.workspaces.length} boxed
+                  <Section id="ws" title="Experiment worktrees" count={d.workspaces.length} boxed
                     lead={d.layout.mode === 'classic' ? undefined : <>Each experiment can live on its own git branch and folder while sharing one research history. Ledger <code>{d.layout.ledger_root}</code></>}>
-                    {d.layout.mode === 'classic' ? <EmptyState icon="branch" title="Optional: try ideas on separate git branches.">Experiment branches and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</EmptyState> :
-                      d.workspaces.length === 0 ? <EmptyState inline icon="branch" title="No workspaces yet." actions={<button type="button" onClick={() => setCreating(true)}>New workspace</button>}>Create one to try an idea without touching your current branch.</EmptyState> :
+                    {d.layout.mode === 'classic' ? <EmptyState icon="branch" title="Optional: try ideas on separate git branches.">Experiment worktrees and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</EmptyState> :
+                      d.workspaces.length === 0 ? <EmptyState inline icon="branch" title="No experiment worktrees yet." actions={<button type="button" onClick={() => setCreating(true)}>New worktree</button>}>Create one to try an idea without touching your current branch.</EmptyState> :
                         <div className="tbl-wrap"><table><caption className="sr">Experiment workspaces</caption><thead><tr><th scope="col">Workspace</th><th scope="col">Branch</th><th scope="col" className="hide-narrow">Experiment</th><th scope="col">State</th><th scope="col" className="hide-narrow">Agent / tasks</th><th scope="col"><span className="sr">Actions</span></th></tr></thead><tbody>
                           {d.workspaces.map((w: any) => (
                             <tr key={w.id}><td className="min"><b>{w.id}</b></td>
@@ -161,7 +161,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
                               <td className="hide-narrow min">{w.experiment ? <IdLink id={w.experiment} host={host} /> : '—'}</td>
                               <td className="min">{!w.present ? <Badge kind="bad">missing</Badge> : w.dirty || w.untracked ? <Badge kind="warn">uncommitted</Badge> : <Badge kind="ok">clean</Badge>}{w.active_runs.length > 0 && <Badge kind="info" live>{w.active_runs.length} running</Badge>}</td>
                               <td className="hide-narrow dim">{[w.agent, w.tasks.length ? w.tasks.join(', ') : null].filter(Boolean).join(' · ') || '—'}</td>
-                              <td className="min"><button type="button" className="sm" onClick={async () => setImpact(await host.call('workspace_archive', { id: w.id, dry_run: true }))}>Archive…</button></td></tr>))}</tbody></table></div>}
+                              <td className="min"><button type="button" className="sm" onClick={() => host.run('research.workspace.open', w.path)}>Open</button> <button type="button" className="sm" onClick={async () => setImpact(await host.call('workspace_archive', { id: w.id, dry_run: true }))}>Archive…</button></td></tr>))}</tbody></table></div>}
                   </Section>
 
                   {d.layout.mode !== 'classic' && (
@@ -294,9 +294,11 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [sure, setSure] = useState(false);
+  const [cmd, setCmd] = useState('');
+  const needCmd = /No test command configured/.test(err);
   const act = async (action: string, extra: any = {}) => {
     setBusy(true); setErr('');
-    try { setC(await host.call('promotion_action', { id: c.id, action, ...extra })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    try { const r = await host.call('promotion_action', { id: c.id, action, ...extra }); const all = await host.call('promotions', {}).catch(() => []); setC(all.find((x: any) => x.id === c.id) || r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   const g = c.gates;
   const row = (label: string, gate: any, children?: any) => <tr><th scope="row">{label}</th><td><Badge kind={['passed', 'approved'].includes(gate.state) ? 'ok' : ['failed', 'blocked', 'stale'].includes(gate.state) ? 'warn' : ''}>{gate.state.replace('_', ' ')}</Badge></td><td className="muted">{gate.detail || gate.note || ''}{children}</td></tr>;
@@ -304,7 +306,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
     <Dialog title={`${c.id} · ${c.title}`} onClose={onClose} actions={<>
       <button type="button" onClick={onClose} data-autofocus>Close</button>
       {c.state !== 'promoted' && c.state !== 'abandoned' && <button type="button" disabled={busy} onClick={() => act('abandon')}>Abandon</button>}
-      <button type="button" disabled={busy || c.state === 'promoted'} onClick={() => act('verify')}>Run tests</button>
+      <button type="button" disabled={busy || c.state === 'promoted'} onClick={() => act('verify', cmd.trim() ? { command: cmd.trim() } : {})}>Run tests</button>
       <button type="button" disabled={busy || g.review.state === 'approved' || g.tests.state !== 'passed'} onClick={() => act('review', { verdict: 'approve' })}>Approve code review</button>
       <button type="button" className="primary" disabled={busy || c.state !== 'reviewed'} onClick={() => act('approve')}>Approve promotion</button>
       <button type="button" className="primary" disabled={busy || c.state !== 'approved' || !sure} onClick={() => act('integrate', { confirm: true })}>Merge into main</button></>}>
@@ -313,6 +315,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
         {row('Tests', g.tests)}{row('Scientific evidence', g.evidence)}{row('Implementation review', g.review)}{row('Human approval', g.approval)}</tbody></table>
       <p className="small muted">Scientifically successful: <b>{String(c.classification.scientifically_successful ?? 'not known')}</b> · technically correct: <b>{String(c.classification.technically_correct ?? 'not known')}</b> · integration-ready: <b>{String(c.classification.integration_ready)}</b> · promoted: <b>{String(c.classification.promoted)}</b></p>
       {err && <div className="field-error" role="alert">{err}</div>}
+      {needCmd && <div className="stack"><label htmlFor="pc-cmd">Test command to run in the candidate <span className="muted">(set promotion.test_command in Settings → Git &amp; workspaces to keep it)</span></label><input id="pc-cmd" type="text" value={cmd} placeholder="python test_diffuse.py" onChange={(e) => setCmd(e.target.value)} /></div>}
       <h3>Patch main would receive</h3>
       <State a={diff}>{(d) => <><p className="muted small">{d.stat}</p><pre className="diff" tabIndex={0} aria-label="Patch">{d.patch.split('\n').slice(0, 400).map((l: string, i: number) => <div key={i} className={l.startsWith('+') && !l.startsWith('+++') ? 'add' : l.startsWith('-') && !l.startsWith('---') ? 'del' : ''}>{l || ' '}</div>)}</pre></>}</State>
       {c.state === 'approved' && <label className="check"><input type="checkbox" checked={sure} onChange={(e) => setSure(e.target.checked)} /> I have read the patch. Moving <code>main</code> is a fast-forward merge; no history is rewritten and no branch is deleted.</label>}

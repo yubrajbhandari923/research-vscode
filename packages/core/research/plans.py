@@ -194,8 +194,9 @@ def update_task(project: Project, task_id: str, **fields) -> Dict[str, Any]:
     if fields.get("status") == "done" and any(k in fields for k in ("checks", "verification", "acceptance_criteria", "goal")):
         raise PolicyBlocked("Change task obligations separately before requesting completion")
     if fields.get("status") == "done":
-        from . import orchestrate, verification
+        from . import orchestrate, verification, supervisor
         tid = normalize_id(task_id, "T")
+        supervisor.guard_completion(project, tid)
         orchestrate.assert_frozen_intact(project, tid)
         warnings = verification.gate_task_completion(project, tid)
     out = _update_task(project, task_id, **fields)

@@ -1,5 +1,60 @@
 # Changelog
 
+## 2.1.0
+
+**Persistent supervisor** (YAML plans, supervisor process, agent reporting, proposals, Plans tab; see docs/SUPERVISOR.md) plus:
+
+- **Environment setup you do once** (docs/SETUP.md): `environment.python` (a uv-created or existing venv) is used by agents, task checks (`{python}`) and `research env check|create|install`; the Initialize wizard creates it with uv or tests an existing one, and collects the cluster's Python, job-environment lines and required packages. `research hpc doctor --compute` (and the wizard's compute-node test) proves the job environment where jobs really run.
+- **Codex native resume** (thread id parsed; `codex exec resume`), **parallel agents** across experiments, failed-HPC-job repair, agent-originated proposals, **commit-on-verify and promotion** of supervised work (the supervisor prepares candidates, the researcher reviews).
+- Fixes from real runs and stress tests: partial YAML patches no longer drop tasks, run attribution by id, daemon zombie detection, provider limits do not consume attempts, frozen tests inside worktrees, promotion dialog refresh, and the smaller items below.
+- Smaller: prompts no longer repeat the task text three times; agents' `patch*.yaml`, caches and venvs are never committed; voided attempts are shown separately; several plans can be expanded at once; supervisor start/stop is a button.
+
+## Earlier work in this release line
+
+- **YAML research plans** (`research plan yaml template|export|validate|diff|apply`): versioned schema, stable keys, revision-aware idempotent reconciliation, safe edits of unstarted work, protection of running/completed work.
+- **Supervisor** (`research plan run|pause|resume|stop|status`, `research supervisor …`): a persistent process that schedules ready tasks, launches agents in the right worktree with assembled context, verifies results itself, repairs within limits, waits for HPC runs, recovers after restarts. Only its verification (or a human `accept`) completes a supervised task, by any route, including hand-edited files.
+- **Agent reporting** (`research agent progress|artifact|report|problem|propose|finish`, MCP `agent_report`/`agent_propose`/`plan_status`), validated against the owning execution.
+- **Plan-change proposals** (operational vs scientific) with approval in the UI.
+- **Control Center → Plans** tab and YAML import/open/apply commands; **Settings → Supervisor**.
+- Fixes found by real runs: frozen tests inside worktrees, provider usage limits, claim handling. See docs/SUPERVISOR.md and docs/SUPERVISOR_E2E_REPORT.md.
+
+## 2.0.4
+
+- **Agent reviewers can actually record their verdict.** The headless allowlist now covers `.research/bin/research …` and `cd … && research …`; briefs tell agents to run `research` directly, one command per call. Terminal-run agents (finding reviews) print readable text instead of raw JSON.
+- **Policy gates say how to proceed.** The run-budget message lists the exact commands (`run update … --reviewed`, `experiment synthesize`, `--override "reason"`); `hpc submit` accepts `--override`.
+- **Promotion → Run tests** asks for the test command when none is configured (and points to `promotion.test_command`).
+- `hpc sync` prints the last stderr line of a failed job; `research run logs` reads logs that came home from the cluster.
+
+## 2.0.3
+
+- **First dispatch no longer dead-ends.** When frozen acceptance tests are required, the dialog offers *Have the balanced agent write the tests first* (dispatches the coordinator level, which is exempt from the gate and whose brief says to write and freeze tests), besides *Freeze test files…* and the logged override. Errors can now carry machine-readable `data`.
+- **HPC from the UI.** *Research: Run on HPC Cluster…* (palette and Work tab **Run on cluster**): pick experiment, enter the command, create the remote folders if missing, review the reservation, approve, submit; then *Check status and fetch results*. It bundles the experiment's worktree code, like the CLI does from inside the worktree. New RPC `hpc_init`, `hpc_submit`.
+- The Initialize wizard's HPC step asks for the **job environment** (module load / venv lines → `slurm.setup`), because compute nodes often lack packages the login node has.
+
+## 2.0.2
+
+Fixes from an end-to-end test on a real Slurm cluster:
+- New projects' workspace shows `experiments/` so the code of every experiment worktree is visible; the Work tab's worktree rows have **Open** (adds the folder to the workspace).
+- Dispatch's "prepared" step is a QuickPick (Start / Preview brief / Not now) instead of a toast that vanishes; Preview returns to it, so Start is never lost.
+- *Add task* on a plan pre-fills type, role and the plan's experiment.
+- Implementer briefs state the HPC result contract (`RESEARCH_RUN_DIR`, `metrics.jsonl`, `artifacts.jsonl`).
+- `research run logs` finds logs that came home from a cluster (`collected/logs`).
+
+## 2.0.1
+
+- **Dispatch gates are actionable.** "No frozen acceptance tests" and "no worktree" now open a modal with the full message and actions (Freeze test files…, Dispatch without frozen tests… with a logged reason, Create worktree and continue). The gates themselves are unchanged.
+- **Agents never silently edit `main/`.** In a shared-ledger project an implementer dispatch needs the experiment's worktree; an experiment's worktree serves all its tasks. New experiment creates a worktree by default.
+- **Headless Claude Code can actually work.** `claude -p` is started with `--permission-mode acceptEdits` and `--allowedTools` limited to the `research` CLI/MCP (override per profile with `allowed_tools`, `permission_mode`); the ledger's `research` shim is put on `PATH`. Previously a headless run could exit 0 having done nothing.
+- **Task checks run in the task's worktree** (command cwd and `file:` paths), not the ledger folder.
+- **HPC (verified on a real Slurm cluster):** fixed the bundle being looked up under `main/` instead of the ledger in shared-ledger projects (upload failed), and commands with quotes/spaces (`-- python -c 'print("x")'`) now reach the cluster shell-quoted. Containerised jobs: a sandbox profile on a remote `hpc submit` is still refused (fail closed); run Research OS on the cluster and use `research run submit` with an apptainer/singularity profile, which was verified end to end.
+- Work tab: New plan, Add task, Dispatch; "workspace" wording is now "worktree"; readable effective task spec; new projects do not badge Source Control for ledger records.
+
+## Unreleased
+
+- **Initialize Project** wizard: empty folder → `main/` + `ledger/` + `experiments/` + `.code-workspace`, one git repository, safe first commit, instructive steps, optional HPC discovery/test.
+- **Provider adapters** (Claude Code, Codex, Antigravity, custom) with explicit capabilities; `research provider|execution|project-init`; Agents tab; Agent/Model/Mode/Preview/Start dispatch.
+- **Fixes**: the execution wrapper and VS Code terminal now start the agent in the experiment worktree; briefs are referenced by absolute path; `running` is reported only for a confirmed live process.
+
 ## 2.0.0
 
 **Breaking release.** Project format 2; v1 projects are not upgraded or migrated (see `docs/GUIDE_V2_START_FRESH.md`). Storage schema stays at 3.

@@ -8,7 +8,7 @@ export function NewExperiment({ host, onClose, onCreated }: { host: Host; onClos
   const ctx = useAsync<any>(async () => ({ research: await host.call('control', { page: 'research' }), work: await host.call('control', { page: 'work' }) }), []);
   const questions: any[] = ctx.data?.research.questions || [];
   const plans: any[] = ctx.data?.work.plans || [];
-  const linked = ctx.data?.work.layout.mode !== 'classic';
+  const linked = !!ctx.data && ctx.data.work.layout.mode !== 'classic';
   const profiles: any[] = (ctx.data?.work.execution.profiles || []).filter((p: any) => p.runtime !== 'native');
 
   const [title, setTitle] = useState('');
@@ -16,7 +16,8 @@ export function NewExperiment({ host, onClose, onCreated }: { host: Host; onClos
   const [qSel, setQSel] = useState('');           // '' = none, 'new' = type one, else an id
   const [qTitle, setQTitle] = useState('');
   const [more, setMore] = useState(false);
-  const [worktree, setWorktree] = useState(false);
+  const [wtSel, setWorktree] = useState<boolean | null>(null);
+  const worktree = wtSel ?? linked;   // on by default: agents must not work in the main checkout
   const [task, setTask] = useState(false);
   const [planSel, setPlanSel] = useState('');
   const [profile, setProfile] = useState('');
@@ -71,10 +72,10 @@ export function NewExperiment({ host, onClose, onCreated }: { host: Host; onClos
           <select id="ne-q" value={qSel} onChange={(e) => setQSel(e.target.value)}>
             <option value="">None yet</option>{questions.map((q) => <option key={q.id} value={q.id}>{q.id} · {q.title}</option>)}<option value="new">A new question…</option></select>
           {qSel === 'new' && <input type="text" aria-label="New question" placeholder="The question this experiment helps answer" value={qTitle} onChange={(e) => setQTitle(e.target.value)} />}
+          <label className="check"><input type="checkbox" checked={worktree} disabled={!linked} onChange={(e) => setWorktree(e.target.checked)} /> Work on its own git branch and folder</label>
+          {!linked && <p className="muted small">Available after enabling the shared ledger (Settings → Git &amp; workspaces).</p>}
           <details open={more} onToggle={(e) => setMore((e.target as HTMLDetailsElement).open)}>
             <summary>More options</summary>
-            <label className="check"><input type="checkbox" checked={worktree} disabled={!linked} onChange={(e) => setWorktree(e.target.checked)} /> Work on its own git branch and folder</label>
-            {!linked && <p className="muted small">Available after enabling the shared ledger (Settings → Git &amp; workspaces).</p>}
             <label className="check"><input type="checkbox" checked={task || agent} disabled={agent} onChange={(e) => setTask(e.target.checked)} /> Track the work as a task</label>
             {(task || agent) && <select aria-label="Plan" value={planSel} onChange={(e) => setPlanSel(e.target.value)}><option value="">In a new plan</option>{plans.map((p) => <option key={p.id} value={p.id}>{p.id} · {p.title}</option>)}</select>}
             <label className="check"><input type="checkbox" checked={agent} onChange={(e) => setAgent(e.target.checked)} /> Prepare an agent to implement it <span className="muted">(prepares the brief only)</span></label>

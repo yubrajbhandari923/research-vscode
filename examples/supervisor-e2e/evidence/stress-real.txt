@@ -1,0 +1,9 @@
+applied sa PLAN-006
+applied sb PLAN-007
+daemon True 19188
+running together: ['T-012', 'T-014'] after 6 s
+SIGKILL daemon 19188
+daemon after kill: False
+restart: 20156
+sa completed 2/2 {'T-012': 1, 'T-013': 1}
+sb completed 2/2 {'T-014': 1, 'T-015': 1}

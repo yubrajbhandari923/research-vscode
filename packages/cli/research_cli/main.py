@@ -918,6 +918,10 @@ def cmd_run_cancel(a, p) -> int:
 def cmd_run_logs(a, p) -> int:
     r = R.get_run(p, a.id)
     path = p.abspath(r["stderr_path"] if a.stderr else r["stdout_path"])
+    if not path or not os.path.exists(path):   # HPC runs: logs come home under collected/logs
+        alt = os.path.join(p.abspath(r["run_dir"] if r.get("run_dir") else os.path.join(".research", "runs", r["id"])),
+                           "collected", "logs", "stderr.log" if a.stderr else "stdout.log")
+        path = alt if os.path.exists(alt) else path
     if not path or not os.path.exists(path):
         print(dim("(no log file yet)"))
         return 0
@@ -965,6 +969,12 @@ def cmd_metric_add(a, p) -> int:
 
 
 @mut
+def _shell_cmd(a) -> str:
+    """argv after `--` as one shell command line: words are quoted, a single argument is taken as already being a command line."""
+    c = _cmd_list(a)
+    return c[0] if len(c) == 1 else __import__("shlex").join(c)
+
+
 def cmd_artifact_add(a, p) -> int:
     res = []
     for path in a.paths:
@@ -2309,7 +2319,7 @@ def cmd_hpc(a, p) -> int:
         return 0
 
     if act == "doctor":
-        d = HR.doctor(p, cl)
+        d = HR.doctor(p, cl, compute=getattr(a, 'compute', False))
         if a.json:
             out_json(d)
             return 0
@@ -2375,7 +2385,7 @@ def cmd_hpc(a, p) -> int:
     if act == "bundle":
         cluster = HC.get(p, cl) if (cl or HC.names(p)) else None
         res = (HC.check_resources(cluster, _slurm_opts(a)) if cluster else _slurm_opts(a))
-        r = HB.build(p, a.id, command=" ".join(_cmd_list(a)) or None, fmt=a.format,
+        r = HB.build(p, a.id, command=_shell_cmd(a) or None, fmt=a.format,
                      cluster=cluster, resources=res)
         if a.json:
             out_json({k: v for k, v in r.items() if k != "manifest"})
@@ -2395,9 +2405,9 @@ def cmd_hpc(a, p) -> int:
         return 0
 
     if act == "submit":
-        r = HR.submit(p, a.id, cluster_name=cl, command=" ".join(_cmd_list(a)) or None,
+        r = HR.submit(p, a.id, cluster_name=cl, command=_shell_cmd(a) or None,
                       dry_run=a.dry_run, approve=a.yes, resources=_slurm_opts(a),
-                      stage_datasets=a.stage_datasets, deep_verify=a.deep)
+                      stage_datasets=a.stage_datasets, deep_verify=a.deep, override=a.override)
         if a.json:
             out_json(r)
             return 0
@@ -2458,6 +2468,8 @@ def cmd_hpc(a, p) -> int:
                                 f"{x['slurm_job_id']} (not resubmitted)")
         for x in r["updated"]:
             print(f"  {x['run']} → [{st(x['status'])}]" + dim(f"  job {x['slurm_job_id']}"))
+            if x.get("stderr_tail"):
+                print(yellow(f"      stderr: {x['stderr_tail']}") + dim(f"   (research run logs {x['run']} --stderr)"))
         for x in r["collected"]:
             print(green("  ↓ ") + f"{x['run']} results imported"
                   + dim(f"  {x['metrics_added']} new metric entries, {x['artifacts']} artifact(s)"))
@@ -2659,12 +2671,114 @@ def cmd_agents(a, p) -> int:
     return 0
 
 
+def cmd_execution(a, p) -> int:
+    """Observe and control launched agent sessions. `completed` = the provider exited 0; verification is separate."""
+    from research import agents as AG, execution as EX
+    act = a.action
+    if act == "list":
+        rows = [{k: r.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at")} | {"profile": (r.get("request") or {}).get("profile"),
+                 "model": (r.get("request") or {}).get("model")} for r in EX.list_all(p, getattr(a, "task", None))]
+        if a.json:
+            out_json(rows)
+        for r in ([] if a.json else rows):
+            print(f"  {r['id'][:8]}  {r['task']}  {bold(r['state'])}  {r['mode']}  {r['profile']}/{r['model'] or 'default'}")
+        return 0
+    ident = _exec_id(p, a.id)
+    if act == "show":
+        out_json(EX.show(p, ident))
+    elif act == "logs":
+        lg = EX.logs(p, ident)
+        out_json(lg) if a.json else print((lg["out"] or "(no captured stdout: interactive sessions write to their terminal)") + (("\n[stderr]\n" + lg["err"]) if lg["err"] else ""))
+    elif act == "stop":
+        out_json(EX.stop(p, ident)) if a.json else print(green("✓ ") + "stop requested; the state becomes `cancelled` when the process exits")
+    elif act == "retry":
+        d = AG.redispatch(p, ident, a.profile, a.agent_model, getattr(a, "headless", None) or None)
+        out_json(d) if a.json else print(green("✓ ") + f"prepared {d['execution_id'][:8]} ({d['profile']}); start it with: {d['shell']}")
+    return 0
+
+
+def _exec_id(p, prefix):
+    from research import execution as EX
+    m = [r["id"] for r in EX.list_all(p) if r["id"].startswith(prefix)]
+    if len(m) != 1:
+        raise ResearchError(f"{'No' if not m else 'Several'} executions match {prefix!r}", hint="`research execution list` shows ids.")
+    return m[0]
+
+
+def cmd_provider(a, p) -> int:
+    """Agent providers: readiness, default, MCP registration (verified from an experiment worktree)."""
+    from research import providers as PR, workspace as W
+    profs = (p.config.get("agents") or {}).get("profiles") or {}
+    if a.action == "list":
+        rows = [PR.readiness(prof, name, p.root) | {"models": PR.available_models(PR.provider_of(prof, name), prof.get("command") or name, profs)}
+                for name, prof in profs.items() if name in ("claude", "codex", "agy") or prof.get("provider")]
+        default = (p.config.get("agents") or {}).get("default_profile")
+        if a.json:
+            out_json({"default": default, "providers": rows})
+        for r in ([] if a.json else rows):
+            print(f"  {bold(r['name'])}{' (default)' if r['name'] == default else ''}  {r['version'] or red('not installed')}  "
+                  f"mcp={r['mcp_registered']}  headless={r['capabilities']['headless']}  effort={r['capabilities']['effort']}")
+    elif a.action == "set-default":
+        from research import registry
+        registry.apply(p, {"agents.default_profile": a.name}, reason="provider set-default")
+        print(green("✓ ") + f"default agent is now {a.name}; future dispatches only")
+    elif a.action == "mcp":
+        prof = profs.get(a.name) or {}
+        kind = PR.provider_of(prof, a.name)
+        if a.apply:
+            r = PR.mcp_install(kind, p.root)
+            print(green("✓ ") + f"registered for {kind}: {r['where']} ({r['scope']} scope)")
+        ws = W.list_workspaces(p)
+        cwd = a.cwd or (ws[0]["path"] if ws else p.root)
+        v = PR.mcp_verify(p.root, cwd)
+        out_json(v) if a.json else print((green("✓ ") if v["ok"] else red("✗ ")) + f"MCP from {cwd}: " + (f"{v['tools']} tools" if v["ok"] else v["problem"]))
+        return 0 if v["ok"] else 1
+    return 0
+
+
+def cmd_project_init(a) -> int:
+    """Initialize an empty folder as main/ + ledger/ + experiments/ + .code-workspace (preview unless --apply)."""
+    from research import initproject as IP
+    root = os.path.abspath(a.folder or os.getcwd())
+    spec = json.loads(open(a.spec).read()) if a.spec else {"name": a.name or os.path.basename(root), "goal": a.goal or "",
+           "agents": {"enabled": a.agents.split(","), "default": a.agents.split(",")[0]}}
+    pl = IP.plan(root, spec)
+    if not a.apply or not pl["ok"]:
+        out_json({k: pl[k] for k in ("ok", "problems", "actions", "notes", "tree")}) if a.json else (
+            [print(("  • " if pl["ok"] else red("  ✗ ")) + x) for x in (pl["actions"] if pl["ok"] else pl["problems"])] and print(dim("\n  add --apply to do it")))
+        return 0 if pl["ok"] else 1
+    r = IP.apply(root, spec)
+    out_json(r) if a.json else [print(green("✓ ") + x) for x in r["done"]]
+    return 0
+
+
 def cmd_dispatch(a, p) -> int:
     from research import agents as AG
     target = getattr(a, "target", None)
     d = AG.dispatch(p, getattr(a, "role", None), target, getattr(a, "objective", None), a.profile, a.agent_model,
                     getattr(a, "instructions", None), strategy=getattr(a, "strategy", None), level=getattr(a, "level", None),
-                    headless=getattr(a, "headless", False), require_skills=getattr(a, "require_skill", None))
+                    headless=getattr(a, "headless", False), require_skills=getattr(a, "require_skill", None), effort=getattr(a, "effort", None))
+    if d.get("problem") and not a.print:
+        print(red("✗ ") + d["problem"], file=sys.stderr)
+        return 127
+    if d["headless"] and d.get("execution_id") and not a.print:
+        import subprocess
+        from research import execution as EX
+        root = p.root
+        p.close()
+        rc = subprocess.call(d["argv"], cwd=d["cwd"], env={**os.environ, **d["env"]})
+        with Project(root) as q:
+            rec = EX.show(q, d["execution_id"])
+            lg = EX.logs(q, d["execution_id"])
+        if a.json:
+            out_json({**d, "execution": rec, "logs": lg})
+        else:
+            print(lg["out"] or "")
+            if lg["err"]:
+                print(lg["err"], file=sys.stderr)
+            print(dim(f"execution {d['execution_id'][:8]}: {rec['state']} (exit {rec.get('exit_code')}); completed means the provider exited 0, "
+                      "not that the task is verified: run `research task verify`"), file=sys.stderr)
+        return rc
     if d["headless"] and not a.print:
         h = AG.run_headless(p, d)
         if a.json:
@@ -2878,6 +2992,24 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("role", choices=["planner", "implementer", "verifier", "analyst"])
     x.add_argument("target", nargs="?", help="T-, F-, EXP-, PLAN- … id")
     _dispatch_args(x)
+    x = add(sub, "execution", cmd_execution, "launched agent sessions: list | show | logs | stop | retry (completed ≠ verified)", aliases=["exec"])
+    x.add_argument("action", choices=["list", "show", "logs", "stop", "retry"])
+    x.add_argument("id", nargs="?", help="execution id (a unique prefix is enough)")
+    x.add_argument("--task", help="list: only this task")
+    x.add_argument("--profile", help="retry: continue with this agent profile instead")
+    x.add_argument("--agent-model", help="retry: model for the new session")
+    x.add_argument("--headless", action="store_true", help="retry: run non-interactively")
+    x = add(sub, "provider", cmd_provider, "agent providers: list | set-default NAME | mcp NAME [--apply]")
+    x.add_argument("action", choices=["list", "set-default", "mcp"])
+    x.add_argument("name", nargs="?")
+    x.add_argument("--apply", action="store_true", help="mcp: write the registration (then verify it)")
+    x.add_argument("--cwd", help="mcp: directory to verify from (default: first experiment worktree)")
+    x = add(sub, "project-init", cmd_project_init, "initialize an empty folder: main/ + ledger/ + experiments/ + workspace (preview unless --apply)")
+    x.add_argument("folder", nargs="?")
+    x.add_argument("--name"); x.add_argument("--goal")
+    x.add_argument("--agents", default="claude", help="comma list from claude,codex,agy; first is the default")
+    x.add_argument("--spec", help="JSON file with the full wizard spec")
+    x.add_argument("--apply", action="store_true")
     add(sub, "agents", cmd_agents, "agent profiles and roles (config.yaml → agents)")
     x = add(sub, "ledger", cmd_ledger, "shared research ledger for git worktrees: status | enable [--apply] | relink")
     x.add_argument("action", choices=["status", "enable", "relink"])
@@ -2963,7 +3095,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("dataset", nargs="?", help="dataset id, for `datasets inspect|check|fetch|adopt`")
     x.add_argument("--cluster", help="cluster name from hpc.clusters (default: hpc.default_cluster)")
     x.add_argument("--dry-run", action="store_true", help="preview only; transfers and submits nothing")
+    x.add_argument("--compute", action="store_true", help="doctor: also prove the job environment on a compute node (one-minute, one-CPU srun)")
     x.add_argument("--yes", action="store_true", help="approve an expensive action (submit, dataset staging)")
+    x.add_argument("--override", metavar="REASON", help="submit: go past the unsynthesized/failed-run budget (logged)")
     x.add_argument("--format", choices=["tar.gz", "zip"], default="tar.gz", help="bundle archive format")
     x.add_argument("--project", help="inspect another project slug on the same cluster")
     x.add_argument("--no-collect", action="store_true", help="sync: update status only, fetch no results")
@@ -3453,6 +3587,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--context")
     x.add_argument("--status", choices=STATUSES["plan"])
     x.add_argument("--skill", action="append")
+    from . import supervisor_cmds as SC
+    SC.attach_plan(g, add)
+    SC.attach_top(sub, add, group)
 
     # Phase 0: Tasks
     g = group("task", "tasks within plans (units of work)", aliases=["tasks", "t"])
@@ -3550,6 +3687,7 @@ def _dispatch_args(x) -> None:
     x.add_argument("--agent-model", help="override the profile's model for this session")
     x.add_argument("--strategy", help="use this allocation strategy for this dispatch only")
     x.add_argument("--level", help="use this strategy level (e.g. fast|balanced|deep) for this dispatch only")
+    x.add_argument("--effort", help="reasoning effort for providers that support it (codex, agy)")
     x.add_argument("--headless", action="store_true", help="run non-interactively and record the usage the provider reports")
     x.add_argument("--instructions", help="extra instructions added to the brief")
     x.add_argument("--print", action="store_true", help="print the command instead of starting the agent")
@@ -3620,8 +3758,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_init(a)
         if fn is cmd_ledger:
             return cmd_ledger(a)
+        if fn is cmd_project_init:
+            return cmd_project_init(a)
         if fn is cmd_doctor:
             return cmd_doctor(a)
+        if fn.__name__ == "cmd_plan_yaml" and getattr(a, "action", None) == "template":
+            return fn(a, None) or 0                # a template needs no project
         p = _proj(a, sync=not _is_readonly(a))
         try:
             rc = fn(a, p)

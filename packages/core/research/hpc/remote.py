@@ -39,7 +39,7 @@ OPTIONAL_TOOLS = ("scancel", "rsync", "python3")
 
 # =============================================================================== doctor
 
-def doctor(p: Project, cluster_name: Optional[str] = None) -> Dict[str, Any]:
+def doctor(p: Project, cluster_name: Optional[str] = None, compute: bool = False) -> Dict[str, Any]:
     """Can this project execute on this cluster right now? Read-only; creates nothing."""
     cluster = C.get(p, cluster_name)
     out: Dict[str, Any] = {"cluster": cluster["name"], "transport": cluster.get("transport"),
@@ -104,6 +104,28 @@ def doctor(p: Project, cluster_name: Optional[str] = None) -> Dict[str, Any]:
     py_ok = bool(pyver) and tuple(int(x) for x in pyver.split(".")[:2]) >= (3, 8)
     add("python", py_ok, f"{py} → {pyver or 'not found'}" + ("" if py_ok else " (need >= 3.8)"),
         "" if py_ok else "Set `hpc.clusters.<name>.python`, or load a module in `slurm.setup`.")
+
+    # 3b. the job environment: setup lines + required packages. The login node is NOT the compute node: `compute=True` proves it on one
+    # (a one-minute, one-CPU srun), because "numpy imports on the login node" is exactly what fails later.
+    req = [str(x) for x in (cluster.get("required_packages") or [])]
+    setup = [str(x) for x in ((cluster.get("slurm") or {}).get("setup") or [])]
+    if req and py_ok:
+        imports = "; ".join(f"import {x.split('[')[0].replace('-', '_')}" for x in req)
+        snippet = "; ".join(setup + [f"{shlex.quote(py)} -c {shlex.quote(imports)}"])
+        r = ssh.run_shell(f"bash -lc {shlex.quote(snippet)} 2>&1 | tail -2; echo EXIT=${{PIPESTATUS[0]}}")
+        ok = "EXIT=0" in r.stdout
+        add("job environment (login node)", ok, f"{', '.join(req)} import with the slurm.setup lines" if ok else (r.stdout.strip().splitlines() or ["failed"])[0][:200],
+            "" if ok else "Fix `hpc.clusters.<name>.slurm.setup` (module load / PYTHONPATH / venv activate) or `.python`.")
+        if compute:
+            part = (cluster.get("slurm") or {}).get("partition")
+            srun = f"srun {('--partition ' + shlex.quote(part)) if part else ''} --time 00:01:00 --ntasks 1 --cpus-per-task 1 --mem 300M " \
+                   f"bash -lc {shlex.quote(snippet)} 2>&1 | tail -2; echo EXIT=${{PIPESTATUS[0]}}"
+            r = ssh.run_shell(srun, timeout=150)
+            ok = "EXIT=0" in r.stdout
+            add("job environment (compute node)", ok, "imports work on a compute node" if ok else (r.stdout.strip().splitlines() or ["failed"])[0][:200],
+                "" if ok else "The compute node differs from the login node: make the environment reachable from compute nodes (shared venv or module).")
+    elif req and not py_ok:
+        add("job environment", False, "skipped: no usable Python", "Fix the python check first.")
 
     # 4. storage
     storage_ok = True
@@ -239,7 +261,8 @@ def _remote_run_paths(paths: Dict[str, str], exp_id: str, run_id: str) -> Dict[s
 
 def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, command: Optional[str] = None,
            dry_run: bool = False, approve: bool = False, resources: Optional[Dict[str, Any]] = None,
-           stage_datasets: bool = False, deep_verify: bool = False) -> Dict[str, Any]:
+           stage_datasets: bool = False, deep_verify: bool = False,
+           override: Optional[str] = None) -> Dict[str, Any]:
     """Bundle, upload and submit one experiment run through SSH + Slurm.
 
     The run record and submission token exist before anything is transferred, so results always come home
@@ -301,7 +324,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
 
     run = create_run(p, exp_id, command=cmd, backend="slurm", status="queued",
                      parameters=exp.get("parameters") or {},
-                     notes=f"submitted to {cluster['name']} over ssh")
+                     notes=f"submitted to {cluster['name']} over ssh", override=override)
     run_id = run["id"]
     rp = _remote_run_paths(paths, exp_id, run_id)
     for path in rp.values():
@@ -326,7 +349,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
                 hint="Remote code snapshots are immutable once submitted. This should not happen for a "
                      "fresh run id; check the remote directory by hand. Nothing was overwritten.")
     ssh.mkdir(rp["code"], rp["run"], rp["results"])
-    ssh.push(os.path.join(p.root, bun["dir"]), rp["code"],
+    ssh.push(p.abspath(bun["dir"]), rp["code"],
              method=(cluster.get("transfer") or {}).get("method", "rsync"))
     ssh.write_file(posixpath.join(rp["code"], ".bundle-token"), token + "\n")
     verified = _verify_upload(ssh, rp["code"], bun)
@@ -600,6 +623,14 @@ def sync(p: Project, *, cluster_name: Optional[str] = None, collect_results: boo
             except ResearchError as e:
                 out["errors"].append({"run": run["id"], "error": str(e)})
 
+    for x in out["updated"]:   # a failed job says why right here, without an ssh session
+        if x.get("status") == "failed":
+            lp = os.path.join(p.abspath(p.rel(p.path("runs", x["run"]))), "collected", "logs", "stderr.log")
+            try:
+                lines = [l for l in open(lp, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
+                x["stderr_tail"] = lines[-1][:300] if lines else None
+            except OSError:
+                x["stderr_tail"] = None
     out["next_tasks"] = _pending_analysis(p)
     return out
 

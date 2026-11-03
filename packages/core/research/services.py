@@ -143,7 +143,13 @@ def check_run_budget(p: Project, exp_id: str, override: Optional[str] = None) ->
     if not problems:
         return []
     if _is_enforced(p) and not override:
-        raise BudgetExceeded(" ".join(problems), hint=f"research experiment synthesize {exp_id} …")
+        steps = []
+        if st["over_failure_budget"]:
+            steps.append("mark each failed run reviewed once you know why: `research run update RUN-… --reviewed --notes \"cause\"`")
+        if st["over_run_budget"] or st["over_failure_budget"]:
+            steps.append(f"or record what the runs showed: `research experiment synthesize {exp_id} --happened \"…\" --interpretation \"…\"`")
+        steps.append("or, if you decide the limit should not apply, repeat the command with `--override \"reason\"` (logged)")
+        raise BudgetExceeded(" ".join(problems), hint="; ".join(steps) + ".")
     if override:
         p.event("experiment", exp_id, "override", f"Run budget override: {override}")
     return problems

@@ -198,7 +198,30 @@ def test_dispatch_runs_in_the_linked_workspace_and_says_so(shared):
         brief = open(p.abspath(d["brief"])).read()
         assert "## Workspace" in brief and ws["branch"] in brief
         other = plans.create_task(p, pl["id"], "unlinked", goal="g")
-        assert agents.dispatch(p, "implementer", other["id"])["cwd"] == str(repo)
+        from research.util import NoWorkspace
+        with pytest.raises(NoWorkspace):          # never silently edit the main checkout
+            agents.dispatch(p, "implementer", other["id"])
+        assert agents.dispatch(p, "analyst", other["id"])["cwd"] == str(repo)   # read-only roles are unaffected
+        e2 = services.create_experiment(p, "e2", hypothesis="h", question=e["question_id"] if "question_id" in e else None)
+        t2 = plans.create_task(p, pl["id"], "exp task", goal="g", related_experiment_id=e2["id"])
+        with pytest.raises(NoWorkspace):
+            agents.dispatch(p, "implementer", t2["id"])
+        d2 = agents.dispatch(p, "implementer", t2["id"], create_workspace=True)
+        assert d2["cwd"] != str(repo) and "/" + e2["id"] in d2["cwd"]
+        assert agents.dispatch(p, "implementer", t2["id"])["cwd"] == d2["cwd"]   # reused via the experiment
+
+
+def test_task_checks_run_in_the_task_worktree(shared):
+    repo, _ = shared
+    with Project(str(repo)) as p:
+        from research import services, plans, verification
+        e = services.create_experiment(p, "e", hypothesis="h", question=services.create_question(p, "q")["id"])
+        ws = W.create(p, e["id"])
+        t = plans.create_task(p, plans.create_plan(p, "plan", objective="o")["id"], "t", goal="g", related_experiment_id=e["id"],
+                              checks=["file:out.txt", "cmd:test -f out.txt"])
+        assert not verification.verify_task(p, t["id"], transition=False)["passed"]
+        open(os.path.join(ws["path"], "out.txt"), "w").write("x")
+        assert verification.verify_task(p, t["id"], transition=False)["passed"]
 
 
 def test_hpc_manifest_pins_the_exact_source(shared):
@@ -214,3 +237,32 @@ def test_hpc_manifest_pins_the_exact_source(shared):
     snap = m["provenance"]["workspace"]["snapshot"]
     shown = subprocess.run(["git", "show", f"{snap['commit']}:uncommitted.py"], cwd=ws["path"], capture_output=True, text=True)
     assert shown.stdout == "y = 2\n" and m["provenance"]["workspace"]["id"] == ws["id"]
+
+
+def test_implementer_brief_states_the_hpc_result_contract(shared):
+    repo, _ = shared
+    with Project(str(repo)) as p:
+        from research import agents
+        b = agents.build_brief(p, "implementer")
+        assert "artifacts.jsonl" in b and "RESEARCH_RUN_DIR" in b
+        assert "artifacts.jsonl" not in agents.build_brief(p, "verifier")
+
+
+def test_ui_hpc_submit_ships_the_experiment_worktree_not_main(shared):
+    """The Control Center/RPC submit path must bundle the experiment's own code (CLI users cd into the worktree)."""
+    repo, _ = shared
+    from research.rpc import Server
+    with Project(str(repo)) as p:
+        from research import services
+        e = services.create_experiment(p, "e", hypothesis="h", question=services.create_question(p, "q")["id"])
+        ws = W.create(p, e["id"])
+    srv = Server(str(repo))
+    try:
+        q = srv._exp_project(e["id"])
+        assert q.root == ws["path"] and q is not srv.p
+        q.close()
+        with pytest.raises(ResearchError):
+            srv.m_hpc_submit(e["id"], "  ")
+    finally:
+        if srv.p:
+            srv.p.close()

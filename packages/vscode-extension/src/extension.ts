@@ -31,6 +31,11 @@ export async function activate(ctx: vscode.ExtensionContext) {
   out.appendLine(`[research] project root: ${root} (remote: ${vscode.env.remoteName || 'no'})`);
 
   const cfg = () => vscode.workspace.getConfiguration('research');
+  if (ctx.globalState.get('research.justInitialized')) {   // first window after Initialize Project: say what to do next
+    ctx.globalState.update('research.justInitialized', undefined);
+    vscode.window.showInformationMessage('Research project ready. Start with New experiment, then dispatch a task to an agent.', 'New experiment', 'Quick start')
+      .then((c) => c === 'New experiment' ? vscode.commands.executeCommand('research.experiment.create') : c === 'Quick start' ? vscode.env.openExternal(vscode.Uri.parse('https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md')) : undefined);
+  }
   const python = detectPython(cfg().get<string>('pythonPath', ''), out);
   const corePath = CoreClient.corePath(ctx);
   CoreClient.pythonPathEnv = corePath;
@@ -59,7 +64,12 @@ export async function activate(ctx: vscode.ExtensionContext) {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'research.resume';
   ctx.subscriptions.push(status);
+  let autoOpened = false;   // open the Control Center once per window, when an initialized project is first seen
   model.onChange(() => {
+    if (!autoOpened && model.initialized && cfg().get<boolean>('openControlCenterOnStartup', true)) {
+      autoOpened = true;
+      panels.openControlCenter().catch(() => undefined);
+    }
     const r = model.resume;
     if (!model.initialized || !r) {
       status.hide();

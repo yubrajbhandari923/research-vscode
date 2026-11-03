@@ -426,7 +426,9 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
     base_ref = base or "HEAD"
     if _git(top, "rev-parse", "--verify", "-q", f"refs/heads/{br}"):
         raise ResearchError(f"Branch {br} already exists.", hint="Use `research workspace attach` to adopt an existing branch.")
-    base_dir = os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments")
+    cfg_dir = (p.config.get("layout") or {}).get("experiments_dir")
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(top), cfg_dir)) if cfg_dir else \
+        os.path.join(os.path.dirname(top), f"{os.path.basename(top)}-experiments")
     wt = os.path.abspath(path or os.path.join(base_dir, exp))
     if not path:   # a second workspace for the same experiment (a different implementation) gets its own directory
         n = 2
@@ -440,6 +442,23 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
         raise ResearchError(f"Unknown base revision {base_ref!r}")
     _git_ok(top, "worktree", "add", "-q", "-b", br, wt, base_rev)
     return _register(p, wt, br, base_rev, exp)
+
+
+def ensure_for_experiment(p, experiment: str) -> Dict[str, Any]:
+    """The experiment's workspace: the registered one, else an orphaned worktree on its branch (a supervisor killed between
+    `git worktree add` and the registration leaves one), else a new one. Never fails because the branch already exists."""
+    from .schema import normalize_id
+    exp = normalize_id(experiment, "EXP")
+    for rec in _fold(_records(p)).values():
+        if rec["status"] == "active" and rec.get("experiment") == exp:
+            s = show(p, rec["id"])
+            if s["present"]:
+                return s
+    top = toplevel(p.root)
+    for w in worktrees(top or p.root):
+        if w["branch"] and w["branch"].startswith(f"exp/{exp}") and os.path.realpath(w["path"]) != os.path.realpath(top or ""):
+            return attach(p, w["path"], exp)
+    return create(p, exp)
 
 
 def attach(p, path: str, experiment: Optional[str] = None) -> Dict[str, Any]:
@@ -587,6 +606,11 @@ def for_task(p, task: str) -> Optional[Dict[str, Any]]:
         return None
     for ws, rec in _fold(_records(p)).items():
         if rec["status"] == "active" and task in rec["tasks"]:
+            s = show(p, ws)
+            return s if s["present"] else None
+    exp = p.get("task", task).get("related_experiment_id")   # an experiment's worktree serves all its tasks
+    for ws, rec in _fold(_records(p)).items():
+        if exp and rec["status"] == "active" and rec.get("experiment") == exp:
             s = show(p, ws)
             return s if s["present"] else None
     return None

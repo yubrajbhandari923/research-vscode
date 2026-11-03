@@ -22,6 +22,12 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
+> **New:** run a whole research plan from YAML with the persistent supervisor: [docs/SUPERVISOR.md](docs/SUPERVISOR.md) · [end-to-end report](docs/SUPERVISOR_E2E_REPORT.md).
+
+## First run
+
+Open an empty folder in VS Code and run **Research: Initialize Project**. See [docs/QUICKSTART.md](docs/QUICKSTART.md); agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
+
 ## Control Center
 
 `Research: Open Control Center` opens one panel with four areas:

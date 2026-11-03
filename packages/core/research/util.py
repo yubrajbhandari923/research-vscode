@@ -19,6 +19,7 @@ class ResearchError(Exception):
     def __init__(self, message: str, hint: Optional[str] = None):
         super().__init__(message)
         self.hint = hint
+        self.data = None   # optional machine-readable detail for UIs
 
 
 class NotFound(ResearchError):
@@ -33,6 +34,14 @@ class BudgetExceeded(ResearchError):
 
 class PolicyBlocked(BudgetExceeded):
     """A verification / coordination gate refused the action (same exit code 3 as the run budget)."""
+
+
+class NoFrozenTests(PolicyBlocked):
+    """Dispatch needs frozen acceptance tests first (the UI offers to freeze them)."""
+
+
+class NoWorkspace(PolicyBlocked):
+    """The task's experiment has no worktree; the agent would otherwise run in the main checkout."""
 
 
 class NotInitialized(ResearchError):
