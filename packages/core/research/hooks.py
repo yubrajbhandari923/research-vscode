@@ -78,26 +78,112 @@ def add(p, name: str, stage: str, command: str, timeout: Optional[float] = None,
     return status_one(p, name)
 
 
-# Cheap, safe checks every project benefits from. They never block (required: false), so they cost nothing until they find something.
-STARTERS = {
-    "syntax-check": {"stage": "post_implementation", "required": False, "timeout": 120,
+# The hook catalog. `tier`: cheap (seconds, reads files and records, never runs project code) or costly (runs project code or toolchains).
+# `stacks`: the project kinds a hook is meant for (None = every project). `default`: installed (and approved by a human) in new projects;
+# the rest are offered by `recommended()` and installed on request. Commands use the checks module (see checks.py) and $RESEARCH_PYTHON.
+_PY = '"$RESEARCH_PYTHON" -m research.checks '
+CATALOG: Dict[str, Dict[str, Any]] = {
+    "syntax-check": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 120, "group": "code",
                      "command": "python3 -m compileall -q -x '(\\.venv|node_modules|\\.git|experiments)' .",
                      "description": "Python files compile after an agent's change (catches syntax errors before anything runs)."},
-    "whitespace-check": {"stage": "post_implementation", "required": False, "timeout": 60, "command": "git diff --check",
-                         "description": "No conflict markers or trailing-whitespace errors in the change."},
+    "whitespace-check": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "git",
+                         "command": "git diff --check", "description": "No conflict markers or trailing-whitespace errors in the change."},
+    "git-integrity": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 120, "group": "git",
+                      "command": _PY + "git-integrity", "description": "The repository is healthy: no damaged objects, unresolved conflicts or half-finished merge/rebase."},
+    "secrets": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "git",
+                "command": _PY + "secrets", "description": "No private keys or well-known token formats in changed or new files (values are never printed)."},
+    "task-scope": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "task",
+                   "command": _PY + "task-scope", "description": "A task changes only the files its contract allows."},
+    "frozen-tests": {"stage": "post_implementation", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "task",
+                     "command": _PY + "frozen-tests", "description": "A task's frozen acceptance tests are byte-identical to what was approved."},
+    "experiment-config": {"stage": "post_experiment", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "experiment",
+                          "command": _PY + "experiment-config", "description": "Runs record the code revision, a clean tree and the command; a seed is flagged (an error with harness.require_seed)."},
+    "numeric-invariants": {"stage": "post_experiment", "tier": "cheap", "stacks": None, "default": True, "timeout": 60, "group": "science",
+                           "command": _PY + "numeric-invariants", "description": "No NaN/Inf metric values; optional bounds from harness.invariants (e.g. rmse: {min: 0})."},
+    "artifact-integrity": {"stage": "post_experiment", "tier": "cheap", "stacks": None, "default": True, "timeout": 120, "group": "science",
+                           "command": _PY + "artifact-integrity", "description": "Registered artifacts exist and still match their recorded hash."},
+    "lint": {"stage": "post_implementation", "tier": "cheap", "stacks": ["python"], "default": False, "timeout": 120, "group": "code",
+             "command": _PY + "lint", "description": "ruff (or pyflakes) on the changed Python files; skipped, and says so, when neither is installed."},
+    "format": {"stage": "post_implementation", "tier": "cheap", "stacks": ["python"], "default": False, "timeout": 120, "group": "code",
+               "command": _PY + "format", "description": "ruff format / black --check on the changed Python files."},
+    "tests": {"stage": "post_implementation", "tier": "costly", "stacks": ["python"], "default": False, "timeout": 900, "group": "code",
+              "command": _PY + "tests", "description": "Runs the project's pytest suite. It executes project code, so it is offered, never automatic."},
+    "tsc": {"stage": "post_implementation", "tier": "costly", "stacks": ["typescript"], "default": False, "timeout": 900, "group": "code",
+            "command": _PY + "tsc", "description": "TypeScript type check with the project's own compiler (never downloads one)."},
 }
+STARTERS = {n: c for n, c in CATALOG.items() if c["default"]}
 
 
-def install_starters(p, approve_now: bool = False) -> Dict[str, Any]:
-    """Register the starter hooks that are not there yet (never overwrites a hook of the same name). With approve_now (a human acting
-    through the wizard or the Agents page, after seeing the commands) they are approved too, so they run from the first task."""
+def detect_stacks(root: str) -> List[str]:
+    """What kind of project this is, from marker files and a bounded look at dependency files. Never imports or runs project code."""
+    stacks: List[str] = []
+    names = set(os.listdir(root)) if os.path.isdir(root) else set()
+    txt = ""
+    for f in ("pyproject.toml", "requirements.txt", "environment.yml", "setup.py", "setup.cfg", "Pipfile"):
+        if f in names:
+            try:
+                with open(os.path.join(root, f), encoding="utf-8", errors="replace") as fh:
+                    txt += fh.read(60000).lower() + "\n"
+            except OSError:
+                pass
+    if names & {"pyproject.toml", "requirements.txt", "setup.py", "Pipfile", "environment.yml"} or any(n.endswith(".py") for n in names):
+        stacks.append("python")
+    if "tsconfig.json" in names or ("package.json" in names and any(n.endswith((".ts", ".tsx")) for n in names)):
+        stacks.append("typescript")
+    elif "package.json" in names:
+        stacks.append("javascript")
+    if any(n.endswith(".ipynb") for n in names) or "notebooks" in names:
+        stacks.append("notebooks")
+    if re.search(r"\b(numpy|scipy|pandas|sympy|xarray|matplotlib|astropy|jax)\b", txt):
+        stacks.append("scientific")
+    if re.search(r"\b(torch|pytorch|tensorflow|jax|scikit-learn|sklearn|lightning|transformers|keras)\b", txt):
+        stacks.append("ml")
+    if re.search(r"\b(pydicom|nibabel|monai|simpleitk)\b", txt):
+        stacks.append("medical-imaging")
+    if re.search(r"\b(qiskit|cirq|pennylane)\b", txt):
+        stacks.append("quantum")
+    if "slurm" in names or any(n.endswith((".sbatch", ".slurm")) for n in names):
+        stacks.append("hpc")
+    return stacks
+
+
+def recommended(p) -> Dict[str, Any]:
+    """The catalog in the light of this project: what applies, what is installed and approved. Read-only."""
+    stacks = detect_stacks(p.root)
+    have = specs(p)
+    rows = []
+    for n, c in CATALOG.items():
+        applies = c["stacks"] is None or bool(set(c["stacks"]) & set(stacks))
+        st = status_one(p, n) if n in have else None
+        rows.append({"name": n, "stage": c["stage"], "command": c["command"], "description": c["description"], "tier": c["tier"], "group": c["group"],
+                     "stacks": c["stacks"], "default": c["default"], "applies": applies, "installed": n in have,
+                     "approved": bool(st and st["approved"]), "enabled": bool(st and st["enabled"]), "last": st["last"] if st else None,
+                     "timeout": c["timeout"]})
+    return {"stacks": stacks, "hooks": rows}
+
+
+def install(p, names: Any = None, approve_now: bool = False) -> Dict[str, Any]:
+    """Register catalog hooks that are not there yet (never overwrites a hook of the same name). With approve_now (a human acting through
+    the wizard or the Agents page, after seeing the commands) they are approved too. With no names: the project-aware set, that is every
+    cheap hook that applies to this project's stacks."""
+    if names is None:
+        r = recommended(p)
+        names = [h["name"] for h in r["hooks"] if h["applies"] and h["tier"] == "cheap" and not h["installed"]]
     added = []
-    for n, s in STARTERS.items():
+    for n in names:
+        c = CATALOG.get(n)
+        if not c:
+            raise ResearchError(f"No catalog hook named {n!r}", hint="`research hook recommend` lists them.")
         if n not in specs(p):
-            add(p, n, s["stage"], s["command"], s.get("timeout"), s.get("required", True), s.get("description"))
+            add(p, n, c["stage"], c["command"], c.get("timeout"), False, c["description"])
             added.append(n)
     approved = approve(p, added)["approved"] if approve_now and added else []
     return {"added": added, "approved": approved}
+
+
+def install_starters(p, approve_now: bool = False) -> Dict[str, Any]:
+    """The universal, cheap, default set (what a new project gets)."""
+    return install(p, list(STARTERS), approve_now)
 
 
 def set_enabled(p, name: str, enabled: bool) -> Dict[str, Any]:
@@ -158,9 +244,11 @@ def listing(p) -> List[Dict[str, Any]]:
 
 
 def _exec(p, name: str, spec: Dict[str, Any], env_extra: Dict[str, str]) -> Dict[str, Any]:
+    import sys
+    pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # the directory holding the `research` package, so `python -m research.checks` works from any interpreter
     result = shell_check(spec["command"], cwd=p.root, timeout=timeout_for(p, spec),
-                         env={**os.environ, "RESEARCH_ROOT": p.root, "RESEARCH_HOOK": name,
-                              "RESEARCH_HOOK_STAGE": spec["stage"], **env_extra})
+                         env={**os.environ, "RESEARCH_ROOT": p.root, "RESEARCH_HOOK": name, "RESEARCH_HOOK_STAGE": spec["stage"],
+                              "RESEARCH_PYTHON": sys.executable, "PYTHONPATH": pkg + os.pathsep + os.environ.get("PYTHONPATH", ""), **env_extra})
     return {"ts": now_iso(), "hook": name, "stage": spec["stage"], **result,
             "required": spec.get("required", True), "digest": digest(p, spec)}
 

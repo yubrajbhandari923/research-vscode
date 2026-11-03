@@ -80,10 +80,11 @@ def _read_fm(path: str) -> Dict[str, Any]:
 def list_skills(p: Project) -> List[Dict[str, Any]]:
     from .services import list_skills as _base
     m = load_manifest(p)
+    off = {str(x) for x in as_list((p.config.get("skills") or {}).get("disabled"))}
     out = []
     for s in _base(p):
         meta = m.get(s["dir"] or s["name"]) or m.get(s["name"]) or {}
-        out.append({**s, "source": meta.get("source"), "subpath": meta.get("subpath"), "ref": meta.get("ref"),
+        out.append({**s, "enabled": (s["dir"] or s["name"]) not in off and s["name"] not in off, "source": meta.get("source"), "subpath": meta.get("subpath"), "ref": meta.get("ref"),
                     "added_at": meta.get("added_at"), "always": bool(meta.get("always")),
                     "applies_to": as_list(meta.get("applies_to")), "level": _level(meta),
                     "checks": [str(c) for c in as_list(meta.get("checks"))]})
@@ -304,7 +305,8 @@ def link_skills(p: Project, targets: Any = None) -> Dict[str, Any]:
     keys = as_list(targets) if targets is not None else as_list((p.config.get("skills") or {}).get("link"))
     report: Dict[str, Any] = {}
     skills_dir = p.path("skills")
-    names = sorted(d for d in os.listdir(skills_dir) if os.path.isfile(os.path.join(skills_dir, d, "SKILL.md")))
+    off = {str(x) for x in as_list((p.config.get("skills") or {}).get("disabled"))}   # a disabled skill is not exposed to the agent CLIs
+    names = sorted(d for d in os.listdir(skills_dir) if os.path.isfile(os.path.join(skills_dir, d, "SKILL.md")) and d not in off)
     for key in keys:
         rel_dir = LINK_TARGETS.get(key, key)
         tdir = os.path.join(p.root, rel_dir)
@@ -312,7 +314,7 @@ def link_skills(p: Project, targets: Any = None) -> Dict[str, Any]:
         done, skipped, removed = [], [], []
         for n in names:
             dst = os.path.join(tdir, n)
-            src_rel = os.path.relpath(os.path.join(skills_dir, n), tdir)
+            src_rel = os.path.relpath(os.path.realpath(os.path.join(skills_dir, n)), os.path.realpath(tdir))   # real paths: /var -> /private/var must not break the link
             if os.path.islink(dst):
                 if os.readlink(dst) == src_rel:
                     done.append(n)
@@ -340,8 +342,8 @@ def link_skills(p: Project, targets: Any = None) -> Dict[str, Any]:
 
 
 def _ours(link: str, skills_dir: str) -> bool:
-    target = os.path.normpath(os.path.join(os.path.dirname(link), os.readlink(link)))
-    return os.path.dirname(target) == os.path.normpath(skills_dir)
+    target = os.path.realpath(os.path.join(os.path.dirname(link), os.readlink(link)))
+    return os.path.dirname(target) == os.path.realpath(skills_dir)
 
 
 # =============================================================================== matching
@@ -349,7 +351,7 @@ def _ours(link: str, skills_dir: str) -> bool:
 def skills_for(p: Project, task: Optional[Dict[str, Any]] = None, plan: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Skills relevant to a task: assigned on the task or plan, matching its type/role, or always-on."""
     out: Dict[str, Dict[str, Any]] = {}
-    allsk = list_skills(p)
+    allsk = [s for s in list_skills(p) if s.get("enabled", True)]   # disabled skills are never suggested or listed as always-on
     by = {s["name"].lower(): s for s in allsk}
     by.update({(s["dir"] or "").lower(): s for s in allsk if s["dir"]})
 

@@ -135,6 +135,13 @@ OPTIONS: List[Option] = [
 
     _o("harness.hooks_timeout_seconds", "int", "hooks", "Hook timeout", "How long an approved hook command may run before it is stopped.", min_=1, max_=86400, unit="seconds",
        why="Hooks run shell commands; a hung one must not stall dispatch.", effect="Applies to every hook without its own timeout."),
+    _o("skills.packs", "list", "hooks", "Skill packs", "Which skill packs are on. Core Research is always on; the others add skills for a field (Scientific Python, Machine Learning, Physics, Medical Imaging, Quantum, HPC, Frontend, Scientific Writing). Put it in the machine file to choose the default for every new project.",
+       choices=[x["id"] for x in __import__("research.packs", fromlist=["x"]).pack_defs()], why="Skills only help when they fit the work; more is not better.",
+       effect="Enabling a pack installs its skills (yours are never overwritten). Disabling stops it being on.", affects=[".research/skills", ".research/skills.yaml"]),
+    _o("skills.disabled", "list", "hooks", "Disabled skills", "Skills that stay on disk but are not suggested to agents or linked into .claude/skills and .agents/skills.",
+       why="Switch a skill off without deleting it or its history.", effect="Takes effect on the next skills refresh.", affects=[".claude/skills", ".agents/skills"]),
+    _o("harness.require_seed", "bool", "hooks", "Require a seed in every run", "The experiment-config hook fails (instead of warning) when a run records no seed among its parameters.",
+       why="An unseeded stochastic run cannot be reproduced.", effect="Only affects the experiment-config hook, once approved."),
     _o("skills.link", "list", "hooks", "Expose skills to", "Which agent CLIs see the project's skills (`claude` → .claude/skills, `agents` → .agents/skills).", choices=["claude", "agents"],
        why="Skills only help agents that can find them.", effect="Changing it creates or removes links on the next skills refresh.", affects=[".claude/skills", ".agents/skills"]),
 

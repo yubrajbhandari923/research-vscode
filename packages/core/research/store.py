@@ -92,7 +92,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "coordination": {"stale_task_hours": 4},
     "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
-    "skills": {"link": ["claude", "agents"]},    # expose .research/skills to .claude/skills and .agents/skills
+    "skills": {"link": ["claude", "agents"], "packs": ["core-research"], "disabled": []},    # expose .research/skills to .claude/skills and .agents/skills
     # The Scientist Guide is a Quarto book on the main branch (docs/scientist-guide). `highlights` decides which findings count as
     # important results; `draft.*` bounds what an agent may write into it (see guide.py).
     "guide": {"enabled": True, "dir": "docs/scientist-guide", "profile": None, "model": "claude-opus-5-5",
@@ -115,7 +115,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
     "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
-                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300},   # hooks: see hooks.py (human approval required)
+                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300, "require_seed": False},   # hooks: see hooks.py (human approval required)
     "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
     # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
     # profile other than `native` applies, and a restrictive profile never silently falls back to native.
@@ -337,6 +337,13 @@ class Project:
         p = cls(root)
         if created:
             p.event("project", None, "initialized", f"Initialized research project '{p.name}'")
+            try:   # the enabled skill packs (Core Research unless a machine or project file says otherwise); never blocks init
+                from . import packs as _packs
+                _packs.apply_defaults(p)
+                for _pid in _packs.enabled_pack_ids(p):
+                    _packs.install_pack(p, _pid, link=False)
+            except Exception as e:  # noqa: BLE001
+                p.event("project", None, "skills_skipped", f"default skills not fully installed: {e}", {"author_type": "system"})
         elif name or goal or description:
             p.update_project(name=name, goal=goal, description=description)
         if agents_md:

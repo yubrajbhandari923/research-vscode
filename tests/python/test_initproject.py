@@ -138,7 +138,7 @@ def test_new_projects_load_skills_hooks_and_mcp_by_default(made):
     p = Project(str(main))
     try:
         hs = {h["name"]: h for h in HK.listing(p)}
-        assert set(hs) == {"syntax-check", "whitespace-check"} and all(h["approved"] and not h["required"] for h in hs.values())
+        assert set(hs) == set(HK.STARTERS) and len(hs) == 9 and all(h["approved"] and not h["required"] for h in hs.values())
         assert any("starter hooks approved" in d for d in r["done"]) and any("skills linked" in d for d in r["done"])
         # MCP is registered for the enabled agents and the tools view reports all three
         assert (main / ".mcp.json").exists()
@@ -163,7 +163,7 @@ def test_starter_hooks_and_skill_links_can_be_declined_and_added_later(tmp_path,
     try:
         assert HK.listing(p) == []
         r = HK.install_starters(p)  # added but not approved: they do not run until a human approves
-        assert r["added"] == ["syntax-check", "whitespace-check"] and r["approved"] == [] and not any(h["approved"] for h in HK.listing(p))
+        assert r["added"] == list(HK.STARTERS) and r["approved"] == [] and not any(h["approved"] for h in HK.listing(p))
         assert HK.install_starters(p, approve_now=True) == {"added": [], "approved": []}  # idempotent, never overwrites
         HK.approve(p, ["syntax-check"])
         assert HK.is_approved(p, "syntax-check")
@@ -180,7 +180,7 @@ def test_starter_hooks_really_run(made):
     p = Project(str(main))
     try:
         r = HK.run(p, "post_implementation")
-        assert {x["hook"] for x in r["ran"]} == {"syntax-check", "whitespace-check"} and all(x.get("passed", x.get("ok")) for x in r["ran"]), r
+        assert {x["hook"] for x in r["ran"]} == {n for n, c in HK.STARTERS.items() if c["stage"] == "post_implementation"} and all(x.get("passed", x.get("ok")) for x in r["ran"]), r
         (main / "bad.py").write_text("def broken(:\n")
         r2 = HK.run(p, "post_implementation", names=["syntax-check"])
         assert not r2["ran"][0].get("passed", r2["ran"][0].get("ok"))
@@ -198,6 +198,6 @@ def test_an_agent_running_the_wizard_cannot_approve_the_starter_hooks_and_nothin
     from research import hooks as HK
     p = Project(str(a / "main"))
     try:
-        assert {h["name"]: h["approved"] for h in HK.listing(p)} == {"syntax-check": False, "whitespace-check": False}
+        assert {h["name"]: h["approved"] for h in HK.listing(p)} == {n: False for n in HK.STARTERS}
     finally:
         p.close()

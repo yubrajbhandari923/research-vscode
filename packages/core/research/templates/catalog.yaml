@@ -1,0 +1,853 @@
+# Research OS skills catalog. Generated at release time from the first-party skills, the vendored copies in catalog/ and the pinned upstream commits.
+# kind: first-party (ships in skills/) · bundled (a curated, attributed copy in catalog/, works offline) · external (installed from its source at the pinned commit on request).
+version: 1
+skills:
+- name: clean-dataset
+  kind: first-party
+  description: Treat data cleaning/conversion as an experiment with validation evidence rather than an untracked script run.
+  license: MIT
+  author: Research OS
+  path: skills/clean-dataset
+  applies_to:
+  - data
+  packs:
+  - core-research
+- name: engineering-loop
+  kind: first-party
+  description: Specification → tests → implementation loop across Opus/Sonnet/Haiku tiers with bounded retries. Use for any engineering task;
+    skip tiers that the task does not need.
+  license: MIT
+  author: Research OS
+  path: skills/engineering-loop
+  applies_to:
+  - implementation
+  - debug
+  - implementer
+  packs:
+  - core-research
+- name: failure-triage
+  kind: first-party
+  description: 'Diagnose a failed or suspicious run, test or experiment systematically: classify the failure, reproduce it, isolate the cause
+    with evidence, fix the cause once, and record what was learned. Use when a run fails, a metric is NaN or implausible, a test flakes, results
+    contradict the hypothesis, or a task check fails twice.'
+  license: MIT
+  author: Research OS
+  path: skills/failure-triage
+  applies_to:
+  - debug
+  packs:
+  - core-research
+- name: hpc-setup
+  kind: first-party
+  description: Configure, diagnose and repair remote HPC execution (SSH + Slurm). Use when `research hpc` reports a problem, when a project needs
+    remote execution for the first time, or when the user asks why remote submission is not working.
+  license: MIT
+  author: Research OS
+  path: skills/hpc-setup
+  applies_to:
+  - hpc
+  packs:
+  - core-research
+  - hpc
+- name: hypothesis-design
+  kind: first-party
+  description: Turn an idea into a falsifiable hypothesis with a prediction, controls, baselines, a primary metric, success and failure criteria
+    and the confounds that could fool you, before any run exists. Use when creating or revising an experiment, when a hypothesis is vague ("improves",
+    "better"), or when results arrive and nobody wrote down what would count as failure.
+  license: MIT
+  author: Research OS
+  path: skills/hypothesis-design
+  applies_to:
+  - planner
+  - research
+  packs:
+  - core-research
+- name: independent-review
+  kind: first-party
+  description: 'Review another agent''s or person''s work as an independent verifier: check methodology, evidence, numbers, controls and conclusions
+    against the records, and give a verdict (supported, needs work, contradicted) with reasons. Use when dispatched as verifier, when asked to
+    review a finding, experiment, task result or guide chapter, or before accepting your own surprising result.'
+  license: MIT
+  author: Research OS
+  path: skills/independent-review
+  applies_to:
+  - verifier
+  - verification
+  packs:
+  - core-research
+- name: literature-evidence
+  kind: first-party
+  description: 'Verify citations and establish what the literature supports: confirm each source exists and says what is claimed, compare papers
+    on equal terms, check novelty and prior art, and record sources with separate identity, examination and support. Use when citing a paper,
+    writing related work or a guide chapter, judging whether an idea is new, or checking a reference list.'
+  license: MIT
+  author: Research OS
+  path: skills/literature-evidence
+  applies_to:
+  - research
+  packs:
+  - core-research
+- name: parameter-tuning
+  kind: first-party
+  description: Bounded, validation-only parameter tuning with a frozen selection criterion and a one-shot held-out test. Use when automating a
+    parameter search.
+  license: MIT
+  author: Research OS
+  path: skills/parameter-tuning
+  applies_to:
+  - experiment
+  packs:
+  - core-research
+- name: promote-validated-work
+  kind: first-party
+  description: 'Safely move verified experiment code from its worktree into main through Research OS promotion: select the commits, run tests,
+    get review and approval, then integrate without losing history or pulling in experiment clutter. Use when an experiment''s code is validated
+    and should become part of the project, or when asked to merge experiment work.'
+  license: MIT
+  author: Research OS
+  path: skills/promote-validated-work
+  applies_to:
+  - verifier
+  packs:
+  - core-research
+- name: reproduce-paper
+  kind: first-party
+  description: Staged protocol for reproducing a paper's results without runaway implementation or sweeps.
+  license: MIT
+  author: Research OS
+  path: skills/reproduce-paper
+  applies_to:
+  - research
+  packs:
+  - core-research
+- name: reproducibility-audit
+  kind: first-party
+  description: 'Audit whether a result can be reproduced: code revision and cleanliness, environment and dependency versions, random seeds, data
+    identity and hashes, parameters, hardware and artifact provenance. Use before reporting a result, before promoting experiment code, when a
+    result cannot be recreated, or when asked "is this reproducible?".'
+  license: MIT
+  author: Research OS
+  path: skills/reproducibility-audit
+  applies_to:
+  - verification
+  - verifier
+  packs:
+  - core-research
+- name: research-context
+  kind: first-party
+  description: 'Recover where the project stands before acting: goal, open questions, experiments and their state, decisions in force, the task
+    you were given and what is claimed or blocked. Use at the start of every session, after a context reset, when taking over from another agent,
+    or when you are unsure what has already been tried.'
+  license: MIT
+  author: Research OS
+  path: skills/research-context
+  applies_to: []
+  packs:
+  - core-research
+  always: true
+- name: run-experiment
+  kind: first-party
+  description: Register, execute and track a computational experiment with bounded runs. Use before any substantial run, sweep, or SLURM job.
+  license: MIT
+  author: Research OS
+  path: skills/run-experiment
+  applies_to:
+  - experiment
+  packs:
+  - core-research
+- name: scientific-briefing
+  kind: first-party
+  description: Write a short first draft of an important result in the Quarto Scientist Guide (docs/scientist-guide/*.qmd) within the researcher's
+    limits. Required for every Scientist Guide writing task.
+  license: MIT
+  author: Research OS
+  path: skills/scientific-briefing
+  applies_to: []
+  packs:
+  - core-research
+- name: scientific-handoff
+  kind: first-party
+  description: Convert an approved scientific discussion or researcher prompt into a Research OS Question, Plan, Experiment and Tasks without
+    losing intent. Use when the human hands over a research objective.
+  license: MIT
+  author: Research OS
+  path: skills/scientific-handoff
+  applies_to:
+  - planner
+  packs:
+  - core-research
+- name: scientific-visualization
+  kind: first-party
+  description: 'Make rigorous, publication-quality figures from recorded data: choose the right plot, label axes and units, show uncertainty,
+    avoid misleading scales and colour, make them accessible and reproducible from a script that reads recorded values. Use when producing any
+    figure for a finding, report, guide chapter or paper, or reviewing one.'
+  license: MIT
+  author: Research OS
+  path: skills/scientific-visualization
+  applies_to:
+  - analysis
+  - synthesis
+  packs:
+  - core-research
+- name: synthesize-experiment
+  kind: first-party
+  description: Turn finished runs into a synthesis, findings and (if warranted) decisions. Use when an experiment needs review or the run budget
+    is reached.
+  license: MIT
+  author: Research OS
+  path: skills/synthesize-experiment
+  applies_to:
+  - synthesis
+  - analysis
+  packs:
+  - core-research
+- name: uncertainty-analysis
+  kind: first-party
+  description: 'Quantify how much a result can be trusted: repeated runs and seeds, confidence intervals and effect sizes, sensitivity to parameters
+    and preprocessing, robustness to noise and data splits, and error propagation. Use before comparing methods, before claiming an improvement,
+    when a difference is small, or when a single run is being reported.'
+  license: MIT
+  author: Research OS
+  path: skills/uncertainty-analysis
+  applies_to:
+  - analysis
+  - experiment
+  packs:
+  - core-research
+- name: validation-oracles
+  kind: first-party
+  description: 'Build independent checks that a computation is right before trusting its numbers: analytic or limiting cases, conservation laws
+    and invariants, dimensional and unit analysis, convergence under refinement, symmetry, a second implementation, and known benchmark values.
+    Use when implementing a numerical method, simulation, solver, reconstruction or metric, or when a result is surprisingly good.'
+  license: MIT
+  author: Research OS
+  path: skills/validation-oracles
+  applies_to:
+  - implementation
+  - verification
+  - verifier
+  packs:
+  - core-research
+- name: ponytail
+  kind: bundled
+  description: 'Lazy senior dev mode: the smallest change that fully solves the task, and a reply a busy human understands in one read. Use on
+    any coding task (writing, fixing, refactoring, reviewing, choosing dependencies) and when the user says "ponytail", "be lazy", "simplest solution",
+    "yagni", or complains about over-engineering or bloat. Levels: lite, full (default), ultra.'
+  license: MIT
+  author: DietrichGebert
+  source: https://github.com/DietrichGebert/ponytail
+  source_path: skills/ponytail
+  commit: 96608e078b2d5ea607c5c3b8b5a54d1c1fba6846
+  files: complete skill folder
+  path: catalog/ponytail
+  applies_to:
+  - implementation
+  packs:
+  - scientific-python
+- name: ponytail-review
+  kind: bundled
+  description: 'Quality review of a change: is the logic right, is it safe, does it hold under real load, is risky code tested, is it fast enough,
+    and is every line needed. Reads the connected code, not only the diff. Each finding is explained in plain English. Use for "review this",
+    "code review", "review the last commit", "review my PR", "is this over-engineered", /ponytail-review.'
+  license: MIT
+  author: DietrichGebert
+  source: https://github.com/DietrichGebert/ponytail
+  source_path: skills/ponytail-review
+  commit: 96608e078b2d5ea607c5c3b8b5a54d1c1fba6846
+  files: complete skill folder
+  path: catalog/ponytail-review
+  applies_to:
+  - verifier
+  - verification
+  packs:
+  - scientific-python
+- name: systematic-debugging
+  kind: bundled
+  description: Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes
+  license: MIT
+  author: Jesse Vincent
+  source: https://github.com/obra/superpowers
+  source_path: skills/systematic-debugging
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  files: complete skill folder
+  path: catalog/systematic-debugging
+  applies_to:
+  - debug
+  packs:
+  - core-research
+- name: verification-before-completion
+  kind: bundled
+  description: Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification
+    commands and confirming output before making any success claims; evidence before assertions always
+  license: MIT
+  author: Jesse Vincent
+  source: https://github.com/obra/superpowers
+  source_path: skills/verification-before-completion
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  files: complete skill folder
+  path: catalog/verification-before-completion
+  applies_to:
+  - implementation
+  - implementer
+  packs:
+  - core-research
+- name: requesting-code-review
+  kind: bundled
+  description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
+  license: MIT
+  author: Jesse Vincent
+  source: https://github.com/obra/superpowers
+  source_path: skills/requesting-code-review
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  files: complete skill folder
+  path: catalog/requesting-code-review
+  applies_to:
+  - implementation
+  packs:
+  - core-research
+- name: receiving-code-review
+  kind: bundled
+  description: Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable
+    - requires technical rigor and verification, not performative agreement or blind implementation
+  license: MIT
+  author: Jesse Vincent
+  source: https://github.com/obra/superpowers
+  source_path: skills/receiving-code-review
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  files: complete skill folder
+  path: catalog/receiving-code-review
+  applies_to:
+  - implementation
+  packs:
+  - core-research
+- name: experimental-design
+  kind: bundled
+  description: Designs experiments and studies BEFORE data is collected — choosing a design, randomizing, blocking, and laying out treatment combinations
+    so results are interpretable. Use whenever someone is planning a study, asks how to assign subjects/samples to groups, mentions randomization,
+    blocking, stratification, controls, factorial or fractional-factorial designs, design of experiments (DOE), screening many factors, response-surface
+    optimization, crossover or repeated-measures or split-plot designs, cluster/group randomization, Latin squares, plate layouts, batch/run-order
+    effects, replication vs. pseudoreplication, or sequential/adaptive/group-sequential designs. Trigger even for informal phrasings like "how
+    should I set up this experiment", "how do I avoid confounding", "what's the best way to test these 6 factors", or "assign these mice to conditions".
+    For computing the sample size or power once the design is chosen, use statistical-power; for analyzing data already collected, use statistical-analysis.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/experimental-design
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/experimental-design
+  applies_to:
+  - research
+  - experiment
+  packs:
+  - core-research
+- name: hypothesis-generation
+  kind: bundled
+  description: Formulates evidence-bounded scientific questions, candidate hypotheses, rival explanations, causal or associational claims, discriminating
+    predictions, measurements, and preregistration-ready analysis plans. Used when turning observations or preliminary findings into transparent,
+    testable research plans without treating hypotheses as facts.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/hypothesis-generation
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/hypothesis-generation
+  applies_to:
+  - research
+  - planner
+  packs:
+  - core-research
+- name: literature-review
+  kind: bundled
+  description: Conducts systematic, scoping, and narrative literature reviews using PubMed, arXiv, bioRxiv, Semantic Scholar, and other appropriate
+    sources. Use for research synthesis, reproducible literature searches, screening, citation checking, or preparing Markdown and PDF reviews.
+    Tracks search coverage, records versus studies, and evidence limitations; supports meta-analysis planning but does not supply a meta-analysis
+    engine.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/literature-review
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/literature-review
+  applies_to:
+  - research
+  packs:
+  - scientific-writing
+- name: scientific-critical-thinking
+  kind: bundled
+  description: Evaluates scientific claims and evidence quality. Applies to experimental design validity, biases and confounders, statistical
+    interpretation, evidence grading frameworks (GRADE, Cochrane Risk of Bias), and teaching critical analysis. Supports evidence appraisal and
+    identifying flaws; formal peer review writing belongs to peer-review.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/scientific-critical-thinking
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/scientific-critical-thinking
+  applies_to:
+  - analysis
+  - verifier
+  packs:
+  - core-research
+- name: statistical-analysis
+  kind: bundled
+  description: Guided statistical analysis for research data - test selection, assumption checking, effect sizes, power analysis, Bayesian alternatives,
+    and APA-formatted reporting. Use whenever a user wants to compare groups, test a hypothesis, analyze experimental or survey data, check statistical
+    assumptions, compute required sample sizes, or write up results - even if they never name a specific test. Covers t-tests, ANOVA, chi-square,
+    correlation, regression, non-parametric and Bayesian methods. For low-level model APIs, see the statsmodels and pymc skills.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/statistical-analysis
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/statistical-analysis
+  applies_to:
+  - analysis
+  packs:
+  - scientific-python
+- name: statistical-power
+  kind: bundled
+  description: Calculates sample sizes and statistical power for study planning. Applies when someone asks "how many subjects/samples/replicates
+    do I need", wants an a priori power analysis, a minimum detectable effect (MDE), a power curve, or needs to justify a sample size for a grant,
+    IRB protocol, or pre-registration. Covers closed-form power for t-tests, ANOVA, proportions, correlations, chi-square, and regression, plus
+    simulation-based (Monte Carlo) power for complex designs — logistic/Poisson regression, mixed models, cluster-randomized trials, survival,
+    and interactions. Also handles requests that only mention an effect size, alpha, or "80% power" without saying "power analysis" explicitly.
+    For laying out the study (randomization, blocking, factorial/DOE, crossover, sequential designs) use experimental-design; for analyzing data
+    already collected and reporting it use statistical-analysis.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/statistical-power
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/statistical-power
+  applies_to:
+  - experiment
+  - analysis
+  packs:
+  - scientific-python
+  - machine-learning
+- name: exploratory-data-analysis
+  kind: bundled
+  description: Performs bounded, local exploratory analysis of explicitly supported scientific files. Supports redacted CSV/TSV/JSON profiles;
+    optional NumPy, HDF5, FASTA/FASTQ, and basic image metadata inspection; missingness/leakage audits; outlier and transformation sensitivity;
+    and rigorous EDA report scaffolds. Other domain formats are reference-only and unknown formats fail closed.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/exploratory-data-analysis
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/exploratory-data-analysis
+  applies_to:
+  - data
+  - analysis
+  packs:
+  - scientific-python
+  - machine-learning
+  - medical-imaging
+- name: scientific-writing
+  kind: bundled
+  description: Drafts, revises, and audits scientific manuscripts or reports with explicit evidence provenance, reporting-guideline coverage,
+    authorship accountability, confidentiality controls, and local consistency checks. Use for manuscript sections, references, declarations,
+    tables, figures, or submission preparation when scientific accuracy and traceability matter.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/scientific-writing
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/scientific-writing
+  applies_to:
+  - synthesis
+  packs:
+  - scientific-writing
+- name: peer-review
+  kind: bundled
+  description: Prepares evidence-bounded, constructive peer-review drafts and structured manuscript assessments. Supports authorized review of
+    scientific manuscripts, protocols, preprints, or research proposals; reporting-guideline selection; claim–evidence checks; methods, statistics,
+    reproducibility, ethics, figure/table, and citation critique; or revision-response planning.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/peer-review
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/peer-review
+  applies_to:
+  - verifier
+  packs:
+  - scientific-writing
+- name: citation-management
+  kind: bundled
+  description: Comprehensive citation management for academic research. Search OpenAlex, PubMed, and Google Scholar for papers, extract accurate
+    metadata, validate citations, and generate properly formatted BibTeX entries. This skill should be used when you need to find papers, verify
+    citation information, convert DOIs to BibTeX, or ensure reference accuracy in scientific writing.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/citation-management
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/citation-management
+  applies_to:
+  - synthesis
+  packs:
+  - scientific-writing
+- name: matplotlib
+  kind: bundled
+  description: Creates and customizes scientific plots with Matplotlib. Used for fine-grained control over plot elements, novel plot types, and
+    scientific workflows. Export to PNG/PDF/SVG for publication. For quick statistical plots use seaborn; for interactive plots use plotly; for
+    publication-ready multi-panel figures with journal styling, use scientific-visualization.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/matplotlib
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/matplotlib
+  applies_to:
+  - analysis
+  packs:
+  - scientific-python
+  - physics-numerical
+- name: sympy
+  kind: bundled
+  description: Performs exact symbolic mathematics with SymPy for algebra, calculus, equation solving, symbolic linear algebra, physics, and lambdify
+    or LaTeX code generation. Use when a task needs symbolic results, explicit assumptions, or exact arithmetic; use NumPy or SciPy for purely
+    numerical workloads.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/sympy
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/sympy
+  applies_to:
+  - implementation
+  - analysis
+  packs:
+  - scientific-python
+  - physics-numerical
+  - quantum-computing
+- name: simpy
+  kind: bundled
+  description: Builds, inspects, tests, and analyzes bounded process-based discrete-event simulations with SimPy. Use for event scheduling, resource
+    queues, interrupts, monitoring, independent replications, warm-up, and reproducible output analysis.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/simpy
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/simpy
+  applies_to:
+  - implementation
+  packs:
+  - physics-numerical
+- name: pytorch-lightning
+  kind: bundled
+  description: Deep learning framework (PyTorch Lightning / lightning package). Organize PyTorch code into LightningModules, configure Trainers
+    for multi-GPU/TPU, implement data pipelines, callbacks, logging (W&B, TensorBoard, MLflow), distributed training (DDP, FSDP, DeepSpeed), for
+    scalable neural network training.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/pytorch-lightning
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/pytorch-lightning
+  applies_to:
+  - implementation
+  - experiment
+  packs:
+  - machine-learning
+- name: shap
+  kind: bundled
+  description: Explain and audit machine-learning predictions with SHAP. Use for selecting SHAP explainers and maskers, computing and validating
+    feature attributions, handling multi-output explanations, and producing local or global SHAP visualizations.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/shap
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/shap
+  applies_to:
+  - analysis
+  packs:
+  - machine-learning
+- name: scikit-learn
+  kind: bundled
+  description: Supports machine learning in Python with scikit-learn. Applies when working with supervised learning (classification, regression),
+    unsupervised learning (clustering, dimensionality reduction), model evaluation, hyperparameter tuning, preprocessing, or building ML pipelines.
+    Provides comprehensive reference documentation for algorithms, preprocessing techniques, pipelines, and best practices.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/scikit-learn
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/scikit-learn
+  applies_to:
+  - implementation
+  - analysis
+  packs:
+  - machine-learning
+- name: pydicom
+  kind: bundled
+  description: Reads, inspects, writes, transforms, and preflights local DICOM datasets and pixel data. Applies to DICOM metadata, transfer syntaxes,
+    compression plugins, frames, private elements, JSON, and bounded de-identification review.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/pydicom
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/pydicom
+  applies_to:
+  - data
+  - implementation
+  packs:
+  - medical-imaging
+- name: qiskit
+  kind: bundled
+  description: Builds, simulates, transpiles, and executes quantum circuits with Qiskit and IBM Quantum Runtime. Use for Qiskit 2.x circuits and
+    operators, V2 Sampler or Estimator primitives, target-aware transpilation, local or noisy simulation, IBM QPU execution, Runtime sessions
+    or batches, error mitigation, and Qiskit ecosystem packages.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/qiskit
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/qiskit
+  applies_to:
+  - implementation
+  packs:
+  - quantum-computing
+- name: cirq
+  kind: bundled
+  description: Google quantum computing framework. Use when targeting Google Quantum AI hardware, designing noise-aware circuits, or running quantum
+    characterization experiments. Best for Google hardware, noise modeling, and low-level circuit design. For IBM hardware use qiskit; for quantum
+    ML with autodiff use pennylane; for physics simulations use qutip.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/cirq
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/cirq
+  applies_to:
+  - implementation
+  packs:
+  - quantum-computing
+- name: pennylane
+  kind: bundled
+  description: Builds and differentiates PennyLane quantum circuits, hybrid PyTorch or JAX models, molecular VQE and QAOA workflows. Use for variational
+    quantum algorithms, quantum machine learning, simulator validation, and moving validated circuits to provider plugins. For hardware-specific
+    compilation use qiskit or cirq; for open-system dynamics use qutip.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/pennylane
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: complete skill folder
+  path: catalog/pennylane
+  applies_to:
+  - implementation
+  packs:
+  - quantum-computing
+- name: dask
+  kind: bundled
+  description: Scales pandas, NumPy, and custom Python research workflows beyond memory or across clusters with Dask. Covers DataFrames, Arrays,
+    Bags, Futures, chunking, schedulers, and distributed diagnostics. Use for partitioned file processing, scientific array computation, or parallel
+    tasks whose memory and dependency structure require Dask.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/dask
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/dask
+  applies_to:
+  - implementation
+  - hpc
+  packs:
+  - hpc
+- name: scientific-visualization-kdense
+  kind: bundled
+  description: Creates and audits truthful, accessible, publication-ready scientific figures with Matplotlib, Seaborn, or Plotly. Use it for figure
+    design, multi-panel layouts, uncertainty and missing-data displays, color/contrast review, image metadata validation, and journal export planning.
+  license: MIT
+  author: K-Dense Inc.
+  source: https://github.com/k-dense-ai/scientific-agent-skills
+  source_path: skills/scientific-visualization
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  files: SKILL.md only (references and scripts stay upstream at the pinned commit)
+  path: catalog/scientific-visualization-kdense
+  applies_to:
+  - analysis
+  packs:
+  - scientific-python
+  - medical-imaging
+  - scientific-writing
+- name: frontend-design
+  kind: bundled
+  description: Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction,
+    typography, and making choices that don't read as templated defaults.
+  license: Apache-2.0
+  author: Anthropic, PBC
+  source: https://github.com/anthropics/skills
+  source_path: skills/frontend-design
+  commit: ca45fc496a3436251f191354091d557da31c15b5
+  files: complete skill folder
+  path: catalog/frontend-design
+  applies_to:
+  - implementation
+  packs:
+  - frontend
+- name: webapp-testing
+  kind: bundled
+  description: Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging
+    UI behavior, capturing browser screenshots, and viewing browser logs.
+  license: Apache-2.0
+  author: Anthropic, PBC
+  source: https://github.com/anthropics/skills
+  source_path: skills/webapp-testing
+  commit: ca45fc496a3436251f191354091d557da31c15b5
+  files: complete skill folder
+  path: catalog/webapp-testing
+  applies_to:
+  - verification
+  packs:
+  - frontend
+- name: reproducibility-statement
+  kind: bundled
+  description: Prepare the reproducibility, transparency and open-science parts of a paper, including data and code availability statements, reproducibility
+    checklists (NeurIPS, ICML, ICLR, ACL Responsible NLP, Nature reporting summaries), research artifact packaging (Zenodo DOI, CITATION.cff,
+    environment lockfiles, seeds), ethics/broader-impact statements, CRediT author contributions, competing interests and AI-use disclosures.
+    Use when a venue requires any of these statements or checklists, or when preparing code/data for release alongside a paper.
+  license: MIT
+  author: Kalaris Labs
+  source: https://github.com/KalarisLabs/research-agent-skills
+  source_path: skills/reproducibility-statement
+  commit: fa023d6d166562a8de118f59bb73647c0e444b8c
+  files: complete skill folder
+  path: catalog/reproducibility-statement
+  applies_to:
+  - synthesis
+  packs:
+  - scientific-writing
+- name: modern-python
+  kind: external
+  description: Configures Python projects with modern tooling (uv, ruff, ty). Use when creating projects, writing standalone scripts, or migrating
+    from pip/Poetry/mypy/black.
+  license: CC-BY-SA-4.0
+  author: Trail of Bits
+  source: https://github.com/trailofbits/skills
+  source_path: plugins/modern-python/skills/modern-python
+  commit: 711af095215ad4ecde5b90cd1d0124b3f1c4ca9e
+  applies_to:
+  - implementation
+  packs:
+  - scientific-python
+- name: property-based-testing
+  kind: external
+  description: 'Writes, reviews, and debugs property-based tests — Hypothesis, fast-check, proptest, jqwik, rapid, and Echidna or Medusa for Solidity
+    invariants. Use whenever tests should cover a whole input domain instead of a hand-picked list of examples: encode/decode and serialize/deserialize
+    pairs, parsers, canonicalizers and normalizers, validators, numeric and Decimal types, comparators and sort order, dat'
+  license: CC-BY-SA-4.0
+  author: Trail of Bits
+  source: https://github.com/trailofbits/skills
+  source_path: plugins/property-based-testing/skills/property-based-testing
+  commit: 711af095215ad4ecde5b90cd1d0124b3f1c4ca9e
+  applies_to:
+  - implementation
+  - verification
+  packs:
+  - scientific-python
+- name: mutation-testing
+  kind: external
+  description: Configures mewt or muton campaigns, analyzes surviving mutants, and investigates bugs exposed by testing gaps. Use when setting
+    up mutation testing, reviewing campaign results, identifying equivalent mutants, or finding bugs from surviving mutations.
+  license: CC-BY-SA-4.0
+  author: Trail of Bits
+  source: https://github.com/trailofbits/skills
+  source_path: plugins/mutation-testing/skills/mutation-testing
+  commit: 711af095215ad4ecde5b90cd1d0124b3f1c4ca9e
+  applies_to:
+  - verification
+  packs:
+  - scientific-python
+- name: dimensional-analysis
+  kind: external
+  description: Audits code for unit and decimal-scaling bugs and annotates it with dimensional comments recording the units of each value. Use
+    when someone asks to audit or review code for unit confusion, decimals or scaling mismatches, WAD/RAY scale errors, or the wrong token's decimals;
+    to annotate units in a codebase; or to perform a dimensional analysis of a DeFi protocol, offchain code, or other arithmetic-
+  license: CC-BY-SA-4.0
+  author: Trail of Bits
+  source: https://github.com/trailofbits/skills
+  source_path: plugins/dimensional-analysis/skills/dimensional-analysis
+  commit: 711af095215ad4ecde5b90cd1d0124b3f1c4ca9e
+  applies_to:
+  - implementation
+  - verification
+  packs:
+  - physics-numerical
+- name: differential-review
+  kind: external
+  description: 'Performs security-focused differential review of code changes. Adapts analysis depth to codebase size, uses git blame for context,
+    calculates blast radius by counting callers, checks test coverage of modified code, and generates a markdown report. Use when reviewing a
+    PR, commit, or diff for security vulnerabilities, checking whether a change re-introduces a previously fixed bug, asking what else '
+  license: CC-BY-SA-4.0
+  author: Trail of Bits
+  source: https://github.com/trailofbits/skills
+  source_path: plugins/differential-review/skills/differential-review
+  commit: 711af095215ad4ecde5b90cd1d0124b3f1c4ca9e
+  applies_to:
+  - verifier
+  packs: []
+- name: web-design-guidelines
+  kind: external
+  description: Review UI code for Web Interface Guidelines compliance. Use when asked to "review my UI", "check accessibility", "audit design",
+    "review UX", or "check my site against best practices".
+  license: no license published
+  author: Vercel
+  source: https://github.com/vercel-labs/agent-skills
+  source_path: skills/web-design-guidelines
+  commit: 1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62
+  applies_to:
+  - verification
+  packs:
+  - frontend
+- name: react-best-practices
+  kind: external
+  description: React and Next.js performance optimization guidelines from Vercel Engineering. This skill should be used when writing, reviewing,
+    or refactoring React/Next.js code to ensure optimal performance patterns. Triggers on tasks involving React components, Next.js pages, data
+    fetching, bundle optimization, or performance improvements.
+  license: MIT (declared in the skill; the repository publishes no license file)
+  author: Vercel
+  source: https://github.com/vercel-labs/agent-skills
+  source_path: skills/react-best-practices
+  commit: 1a2c79d4e6c4a2283dc2c614b6538cbe1ed5ca62
+  applies_to:
+  - implementation
+  packs:
+  - frontend
+- name: skill-creator
+  kind: external
+  description: Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from
+    scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a
+    skill's description for better triggering accuracy.
+  license: Apache-2.0
+  author: Anthropic, PBC
+  source: https://github.com/anthropics/skills
+  source_path: skills/skill-creator
+  commit: ca45fc496a3436251f191354091d557da31c15b5
+  applies_to: []
+  packs: []

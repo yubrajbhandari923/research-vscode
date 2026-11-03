@@ -68,7 +68,14 @@ def environment(root: str) -> Dict[str, Any]:
         r = providers.readiness(profs[key], key)
         r["models"] = providers.available_models(r["provider"], r["command"], profs)
         provs.append(r)
-    return {"root": root, "folder_name": os.path.basename(root), "folder_exists": os.path.isdir(root),
+    from . import configfile, packs as _packs
+    mc, mpath = configfile.machine_config()   # a pack list in the machine file is this computer's default for every new project
+    mine = [x for x in ((mc.get("skills") or {}).get("packs") or []) if x in {q["id"] for q in _packs.pack_defs()}]
+    skill_packs = [{"id": q["id"], "title": q["title"], "description": q["description"], "default": bool(q.get("default")), "skills": len(q.get("skills") or []),
+                    "optional": len(q.get("optional") or []), "examples": (q.get("skills") or [])[-4:] if not q.get("default") else (q.get("skills") or [])[:0]}
+                   for q in _packs.pack_defs()]
+    return {"packs": skill_packs, "default_packs": mine or _packs.default_pack_ids(), "machine_config": mpath,
+            "root": root, "folder_name": os.path.basename(root), "folder_exists": os.path.isdir(root),
             "entries": entries, "empty": not entries, "layout": DEFAULT_LAYOUT,
             "existing_project": os.path.isfile(os.path.join(root, ".research", "config.yaml"))
             or any(os.path.isfile(os.path.join(root, d, ".research", "config.yaml")) for d in ("ledger", "main")),
@@ -151,6 +158,9 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         ex = os.path.expanduser(str(pyenv.get("path") or ""))
         if not ex or not (os.path.isfile(ex) or os.path.isfile(os.path.join(ex, "bin", "python"))):
             problems.append("Existing Python: give a venv folder or an interpreter that exists.")
+    unknown_packs = [x for x in ((spec.get("tools") or {}).get("packs") or []) if x not in {q["id"] for q in __import__("research.packs", fromlist=["x"]).pack_defs()}]
+    if unknown_packs:
+        problems.append(f"Unknown skill pack(s): {', '.join(unknown_packs)}.")
     gs = spec.get("guide") or {}
     if gs.get("enabled", True):
         for k, lo, hi in (("max_words", 30, 2000), ("max_sections", 1, 20), ("max_figures", 0, 10)):
@@ -180,10 +190,15 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                             "agy": "Register the Research MCP server for Antigravity in main/.agents/mcp_config.json",
                             "codex": "Register the Research MCP server for Codex with `codex mcp add research` (your user-level Codex config)"}[x])
         tl = spec.get("tools") or {}
+        from . import packs as _packs
+        want = [x for x in (tl.get("packs") if tl.get("packs") is not None else []) if x != "core-research"]
+        titles = {x["id"]: x["title"] for x in _packs.pack_defs()}
+        actions.append("Install the Core Research skills (research context, hypothesis design, validation oracles, failure triage, reproducibility audit, uncertainty, literature evidence, visualization, independent review, promotion, plus curated debugging and review skills)"
+                       + ("; and the packs: " + ", ".join(titles[x] for x in want if x in titles) if want else ""))
         if tl.get("link_skills", True):
-            actions.append("Link the shipped skills (run-experiment, engineering-loop, scientific-briefing, …) into main/.claude/skills and main/.agents/skills so Claude Code and Codex find them (machine-local links, git-ignored)")
+            actions.append("Link the skills into main/.claude/skills and main/.agents/skills so Claude Code and Codex find them (machine-local links, git-ignored); they reach an agent's brief only when the task type or role matches")
         if tl.get("starter_hooks", True):
-            actions.append("Add and approve two starter hooks that run after an agent's change: a Python syntax check and `git diff --check` (they never block; edit or revoke them in Agents → Skills, hooks and MCP)")
+            actions.append("Add and approve nine cheap starter hooks (syntax, whitespace, git integrity, secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity). They never block, never run your code, and project-specific ones (lint, format, tests, tsc) are offered in Agents → Skills, hooks and MCP once you have code")
         gs = spec.get("guide") or {}
         if gs.get("enabled", True):
             actions.append(f"Create the Scientist Guide (a Quarto book for communicating results) in {rel(lay['main_path'])}/docs/scientist-guide/ on main, "
@@ -218,7 +233,7 @@ def workspace_file(root: str, spec: Dict[str, Any], lay: Dict[str, str]) -> Dict
             "extensions": {"recommendations": ["research-os.research-panel"]}}
 
 
-def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
+def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from .store import Project
     pl = plan(root, spec)
     if not pl["ok"]:
@@ -260,6 +275,8 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         done.append("experiments/ created (empty)")
 
         p = Project(main)
+        if author:   # the UI passes the human who pressed Create; a CLI/agent caller is whoever the environment says it is
+            p.author = author
         try:
             cfg: Dict[str, Any] = {"layout.main_dir": lay["main_dir"], "layout.ledger_dir": lay["ledger_dir"],
                                    "layout.experiments_dir": lay["experiments_dir"],
@@ -307,7 +324,16 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             from . import registry
             registry.write_policy(p)
             tl = spec.get("tools") or {}
-            if tl.get("link_skills", True):   # the shipped skills reach the agent CLIs from the first session (machine-local links, git-ignored)
+            from . import packs as _packs
+            want = [x for x in (tl.get("packs") or []) if x != "core-research"]
+            if tl.get("packs") is not None:   # the wizard's choice replaces the default pack list (Core Research is always on)
+                p.save_config({"skills.packs": ["core-research"] + want})
+                p.config = p.load_config()
+            for pid in want:
+                r_ = _packs.install_pack(p, pid, link=False)
+                bad = [x["name"] for x in r_["results"] if x["state"] == "failed"]
+                done.append(f"skill pack {pid}: {len(r_['results']) - len(bad)} skills" + (f" ({len(bad)} failed: {', '.join(bad)})" if bad else ""))
+            if tl.get("link_skills", True):   # the skills reach the agent CLIs from the first session (machine-local links, git-ignored)
                 from . import skills as _skills
                 lk = _skills.link_skills(p)
                 done.append("skills linked for agents: " + ", ".join(f"{k} ({len(v['linked'])})" for k, v in lk.items()))

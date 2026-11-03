@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.3.0
+
+**Equipped by default: a curated skills catalog with packs, and project-aware hooks** (`docs/AGENT_TOOLS.md`).
+
+- **Ten first-party skills** (Core Research): `research-context`, `hypothesis-design`, `validation-oracles`, `failure-triage`, `reproducibility-audit`, `uncertainty-analysis`, `literature-evidence`, `scientific-visualization`, `independent-review`, `promote-validated-work`. They use real Research OS commands and do not duplicate existing skills.
+- **A catalog of 58 skills** (`research skills catalog`): first-party, **bundled** (31 curated copies from Ponytail, Superpowers, K-Dense scientific-agent-skills, Anthropic skills and Kalaris, MIT or Apache-2.0 only, each with its LICENSE, a SOURCE.yaml with the pinned commit, and an entry in THIRD_PARTY_NOTICES.md) and **external** (Trail of Bits CC-BY-SA-4.0, Vercel without a license, Anthropic's large skill-creator: listed, never shipped, installed from source at a pinned commit on request).
+- **Nine skill packs** (`skills.packs`): Core Research (default), Scientific Python, Machine Learning, Physics/Numerical, Medical Imaging, Quantum Computing, HPC, Frontend, Scientific Writing. The wizard has a Skills step; a pack list in the machine config is the default for every new project; the project value wins.
+- **Activation, not injection:** each skill has `applies_to` (task type or role) in `.research/skills.yaml`; only matching, assigned or always-on skills reach a brief. `research skills catalog|packs|install|enable|disable|upgrade`; `upgrade` never replaces a skill you changed.
+- **Hooks catalog and checks** (`python -m research.checks`): git integrity, secrets scan (values never printed), lint, format, tests, tsc, task scope, frozen-test integrity, experiment configuration (commit, clean tree, seed), numeric invariants (NaN/Inf, declared bounds), artifact integrity, plus the existing syntax and whitespace checks. Nine cheap ones are the default and are approved by the human in the wizard; `research hook recommend|install` is **project-aware** (detects Python, TypeScript, notebooks, scientific/ML/medical/quantum dependencies); costly ones that run project code are never automatic. Approval, timeouts and enforcement are unchanged.
+- **Agents → Skills, hooks and MCP** rebuilt: searchable catalog, install, enable/disable, editable activation, packs, update, recommended hooks with approval and test results, where the settings live.
+- **Fixes:** advisory hooks no longer count as the "deterministic verifier" a task needs (a syntax check could make a task with no checks pass); skill links were broken when the project path went through a symlink (`/var` on macOS); skill front matter with a colon in the description is quoted so strict YAML readers accept it.
+- Tests: catalog integrity and licensing, attribution, activation, packs, update semantics, external install from a pinned commit, symlink regression, every check, project-aware recommendation, the wizard end to end with a small workflow, and the Agents page and wizard step against the real core.
+- Not done: skills from sources beyond the seven named; per-pack hooks (hooks are project-aware, not pack-bound); run-time enforcement of draft limits (unchanged).
+
 ## 2.2.0
 
 **The Scientist Guide is Quarto-only, created by default, and built for communicating results** (`docs/GUIDE.md`).
@@ -37,7 +51,7 @@
 - **Agent reporting** (`research agent progress|artifact|report|problem|propose|finish`, MCP `agent_report`/`agent_propose`/`plan_status`), validated against the owning execution.
 - **Plan-change proposals** (operational vs scientific) with approval in the UI.
 - **Control Center → Plans** tab and YAML import/open/apply commands; **Settings → Supervisor**.
-- Fixes found by real runs: frozen tests inside worktrees, provider usage limits, claim handling. See docs/SUPERVISOR.md and docs/SUPERVISOR_E2E_REPORT.md.
+- Fixes found by real runs: frozen tests inside worktrees, provider usage limits, claim handling. See docs/SUPERVISOR.md.
 
 ## 2.0.4
 

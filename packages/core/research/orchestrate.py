@@ -346,6 +346,20 @@ def contract_md(p: Project, tid: str) -> str:
     return "\n".join(x for x in L if x)
 
 
+def scope_violations(p: Project, tid: str) -> List[str]:
+    """Files this task changed that its contract does not allow (empty when there is no contract). Used by verification and by the
+    `task-scope` hook, so the two can never disagree."""
+    import fnmatch
+    led = ledger(p, tid)
+    allowed = (led.get("contract") or {}).get("allowed_files") or []
+    if not allowed:
+        return []
+    base = led.get("baseline_hashes") or {}
+    snap = file_snapshot(p)
+    return [f for f in changed_files(p) if ((f not in base) or snap.get(f) != base.get(f))
+            and not any(fnmatch.fnmatch(f, a) or f.startswith(a.rstrip("/") + "/") for a in allowed)]
+
+
 def changed_files(p: Project) -> List[str]:
     from . import gitinfo
     out = gitinfo._git(p.root, "status", "--porcelain", "-uall", "--", ".", ":(exclude).research") or ""
@@ -396,14 +410,11 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
     bad = tampered(p, tid)
     if bad:
         problems.append("frozen acceptance tests were modified (restore them): " + ", ".join(bad))
-    allowed = (led.get("contract") or {}).get("allowed_files") or []
-    if allowed:
-        import fnmatch
-        extra = [f for f in changed_files(p) if ((f not in (led.get("baseline_hashes") or {})) or file_snapshot(p).get(f) != led["baseline_hashes"].get(f)) and not any(fnmatch.fnmatch(f, a) or f.startswith(a.rstrip("/") + "/") for a in allowed)]
-        if extra:
-            problems.append("files changed outside the contract's allowed_files: " + ", ".join(extra))
+    extra = scope_violations(p, tid)
+    if extra:
+        problems.append("files changed outside the contract's allowed_files: " + ", ".join(extra))
     hr = hooks.run(p, "post_implementation", task=tid)
-    ran += len(hr["ran"])
+    ran += len([r for r in hr["ran"] if r["required"]])   # an advisory hook (a syntax check, a linter) is not an acceptance check
     problems += hooks.format_failures({"failed": [r for r in hr["failed"] if r["required"]]})
     problems += [f"hook {r['hook']} skipped: {r['reason']}" for r in hr["blocked"]]
     checks = None
@@ -420,7 +431,7 @@ def verify_work(p: Project, tid: str, tier: Optional[str] = None, record: bool =
             ran += len(pc["checks"])
             problems += [f"protocol skill {r['name']}: `{c['check']}` failed (exit {c['exit_code']})" for c in pc["checks"] if not c["ok"]]
     unresolved = bool(problems)
-    if not (any(r["ok"] for r in hr["ran"]) or checks) and not problems:
+    if not (any(r["ok"] and r["required"] for r in hr["ran"]) or checks) and not problems:
         problems.append("no deterministic verifier ran (no task checks and no approved post_implementation hooks): this is not a pass")
     passed = not problems
     out: Dict[str, Any] = {"task": tid, "passed": passed, "diagnostics": problems, "hooks_skipped": hr["skipped"], "verifiers_run": ran,

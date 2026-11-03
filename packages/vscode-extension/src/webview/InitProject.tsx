@@ -7,10 +7,11 @@ interface Env {
   uv?: { path?: string | null; version?: string | null };
   root: string; folder_name: string; entries: string[]; empty: boolean; existing_project: boolean;
   git: { available: boolean; version: string | null; user_configured: boolean };
+  packs: { id: string; title: string; description: string; default: boolean; skills: number; optional: number }[]; default_packs: string[];
   providers: Prov[]; strategies: string[]; ssh_hosts: string[]; layout: Record<string, string>;
 }
 
-const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Guide', 'Review'];
+const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Skills', 'Guide', 'Review'];
 const REVIEW = STEPS.length - 1;
 const BLURB: Record<string, string> = {
   claude: 'Anthropic’s Claude Code. Default. Interactive and headless, per-task model choice, reports token usage.',
@@ -46,6 +47,8 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
   const [py, setPy] = useState({ mode: env.uv?.path ? 'create' : 'none', path: '', packages: 'numpy, matplotlib' });
   const [pyProbe, setPyProbe] = useState<any>(null);
   const [guide, setGuide] = useState({ enabled: true, publish: true, trigger: 'result', max_words: 150, max_sections: 3, max_figures: 1, auto_log: true, highlights: 'supported' });
+  const [packs, setPacks] = useState<string[]>(env.default_packs || ['core-research']);
+  const [starter, setStarter] = useState(true);
   const [compute, setCompute] = useState(false);
   const [probe, setProbe] = useState<any>(null);
   const [plan, setPlan] = useState<any>(null);
@@ -57,7 +60,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
     name, goal, layout: lay, create_workspace: wsFile, git: remote ? { remote_url: remote } : {},
     agents: { enabled, default: dflt, strategy: dflt === 'claude' || enabled.includes('claude') ? strategy : undefined },
     verification: { independent_review: review }, hpc: hpc ? { enabled: true, ...h } : undefined,
-    python: py.mode === 'none' ? undefined : py, guide,
+    python: py.mode === 'none' ? undefined : py, guide, tools: { packs, link_skills: true, starter_hooks: starter },
   });
   const go = async (n: number) => {
     setStep(n); setErr('');
@@ -209,6 +212,24 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
         </section>)}
 
       {step === 5 && (
+        <section aria-label="Skills">
+          <Learn title="Skills and hooks: what your agents are equipped with">
+            <b>Skills</b> are short written procedures an agent follows (how to design a hypothesis, build validation oracles, triage a failed run, audit reproducibility…). They sit in the project and are linked for Claude Code and Codex, but a skill reaches an agent’s brief only when the task type or role matches, so a bigger toolbox does not mean a bigger prompt.
+            <b> Hooks</b> are deterministic checks <i>you</i> approve. The nine starter hooks are cheap, never block and never run your code: syntax, whitespace, git integrity, a secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity. Linters, formatters and test runs are offered later, once there is code to detect.
+          </Learn>
+          <fieldset className="stack"><legend>Skill packs</legend>
+            {env.packs.map((x) => (
+              <label key={x.id} className="check">
+                <input type="checkbox" checked={packs.includes(x.id)} disabled={x.default} onChange={(e) => setPacks(e.target.checked ? [...packs, x.id] : packs.filter((y) => y !== x.id))} aria-label={x.title} />
+                {' '}<b>{x.title}</b> {x.default ? <span className="badge k-ok">always on</span> : <span className="muted small">{x.skills} skills{x.optional ? ` + ${x.optional} from source` : ''}</span>}
+                <span className="muted small"> — {x.description}</span>
+              </label>))}
+          </fieldset>
+          <label className="check"><input type="checkbox" checked={starter} onChange={(e) => setStarter(e.target.checked)} /> Add and approve the nine cheap starter hooks (recommended)</label>
+          <p className="muted small">Third-party skills are curated, attributed copies (MIT or Apache-2.0) with their source and pinned commit recorded; ones that cannot be redistributed stay install-from-source. Change any of this later in Agents → Skills, hooks and MCP, or in the config (<code>skills.packs</code>; put it in the machine file for the default of every new project).</p>
+        </section>)}
+
+      {step === 6 && (
         <section aria-label="Guide">
           <Learn title="The Scientist Guide: where you explain the science">
             <code>research report</code> records <i>everything</i>. The guide is the opposite: a short, readable <b>Quarto book</b> with only the results that matter, in your words, with your citations. It lives in <code>docs/scientist-guide/</code> on the <b>main</b> branch, so it is versioned with your code and can be published as a website.
@@ -246,7 +267,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
           </>}
         </section>)}
 
-      {step === 6 && (
+      {step === 7 && (
         <section aria-label="Review">
           {plan ? (plan.ok ? <>
             <p>Research OS will create:</p>
