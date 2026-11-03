@@ -4,6 +4,7 @@ import type { Host } from './host';
 
 interface Prov { name: string; provider: string; installed: boolean; version: string | null; capabilities: any; models: { source: string; models: { id: string; label: string }[] }; problem?: string }
 interface Env {
+  uv?: { path?: string | null; version?: string | null };
   root: string; folder_name: string; entries: string[]; empty: boolean; existing_project: boolean;
   git: { available: boolean; version: string | null; user_configured: boolean };
   providers: Prov[]; strategies: string[]; ssh_hosts: string[]; layout: Record<string, string>;
@@ -40,7 +41,10 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
   const [strategy, setStrategy] = useState('sonnet_first');
   const [review, setReview] = useState(true);
   const [hpc, setHpc] = useState(false);
-  const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '' });
+  const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '', python: '', required_packages: '' });
+  const [py, setPy] = useState({ mode: env.uv?.path ? 'create' : 'none', path: '', packages: 'numpy, matplotlib' });
+  const [pyProbe, setPyProbe] = useState<any>(null);
+  const [compute, setCompute] = useState(false);
   const [probe, setProbe] = useState<any>(null);
   const [plan, setPlan] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -51,6 +55,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
     name, goal, layout: lay, create_workspace: wsFile, git: remote ? { remote_url: remote } : {},
     agents: { enabled, default: dflt, strategy: dflt === 'claude' || enabled.includes('claude') ? strategy : undefined },
     verification: { independent_review: review }, hpc: hpc ? { enabled: true, ...h } : undefined,
+    python: py.mode === 'none' ? undefined : py,
   });
   const go = async (n: number) => {
     setStep(n); setErr('');
@@ -65,9 +70,13 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
     setBusy(true); setErr('');
     try { const r = await host.call('init_apply', { spec: spec() }); setResult(r); onDone(r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
+  const testPy = async () => {
+    setPyProbe({ busy: true });
+    try { setPyProbe(await host.call('env_probe', { python: py.path, packages: py.packages.split(',').map((x) => x.trim()).filter(Boolean) })); } catch (e: any) { setPyProbe({ error: e.message }); }
+  };
   const test = async () => {
     setProbe({ busy: true });
-    try { setProbe(await host.call('hpc_test', { ssh_host: h.ssh_host, workspace_root: h.workspace_root })); } catch (e: any) { setProbe({ error: e.message }); }
+    try { setProbe(await host.call('hpc_test', { ssh_host: h.ssh_host, workspace_root: h.workspace_root, python: h.python, required_packages: h.required_packages, setup: h.setup, partition: h.partition, compute })); } catch (e: any) { setProbe({ error: e.message }); }
   };
 
   if (result) return <Done r={result} host={host} />;
@@ -151,7 +160,24 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
 
       {step === 4 && (
         <section aria-label="Execution">
-          <p>Experiments run on this computer. <b>Local execution is on</b> and needs no setup.</p>
+          <p>Experiments run on this computer. <b>Local execution is on</b>.</p>
+          <Learn title="Python environment for this computer (recommended)">
+            Agents, task checks and <code>{'{python}'}</code> in checks all use <b>one</b> Python. Without it they use whatever <code>python3</code> is on your PATH, which often lacks the packages your code needs.
+            Research OS can create the environment with <b>uv</b> (fast, nothing is installed globally), or you can point it at one you already have.
+          </Learn>
+          <div className="stack" role="radiogroup" aria-label="Python environment">
+            <label className="check"><input type="radio" name="pymode" checked={py.mode === 'create'} disabled={!env.uv?.path} onChange={() => setPy({ ...py, mode: 'create' })} /> Create one with uv {env.uv?.path ? <span className="muted">({String(env.uv.version || 'uv').replace(/^uv\s+/, 'uv ')} found)</span> : <span className="help-warn">uv not found: install from docs.astral.sh/uv</span>}</label>
+            <label className="check"><input type="radio" name="pymode" checked={py.mode === 'existing'} onChange={() => setPy({ ...py, mode: 'existing' })} /> Use an existing environment</label>
+            <label className="check"><input type="radio" name="pymode" checked={py.mode === 'none'} onChange={() => setPy({ ...py, mode: 'none' })} /> Decide later</label>
+          </div>
+          {py.mode === 'existing' && <><label htmlFor="py-path">Venv folder or interpreter</label><input id="py-path" type="text" value={py.path} onChange={(e) => setPy({ ...py, path: e.target.value })} placeholder="/path/to/venv" /></>}
+          {py.mode !== 'none' && <><label htmlFor="py-pk">Packages <span className="muted">(comma separated; created environments install them with uv)</span></label>
+            <input id="py-pk" type="text" value={py.packages} onChange={(e) => setPy({ ...py, packages: e.target.value })} />
+            {py.mode === 'create' && <p className="muted small">Created in <code>{env.folder_name}/.venv</code>, next to main/.</p>}
+            {py.mode === 'existing' && <div className="row"><button type="button" disabled={!py.path || pyProbe?.busy} onClick={testPy}>Test this environment</button></div>}
+            {pyProbe?.busy && <p className="muted">Checking…</p>}
+            {pyProbe?.error && <div className="field-error" role="alert">{pyProbe.error}</div>}
+            {pyProbe?.python && <p>{pyProbe.ok ? '✓' : '✗'} {pyProbe.python} {pyProbe.version ? `(Python ${pyProbe.version})` : ''}{pyProbe.problems?.length ? ` · ${pyProbe.problems.join('; ')}` : ''}</p>}</>}
           <Learn title="Optional: run on an HPC cluster">
             If you have a Slurm cluster, Research OS can ship only the <b>source code for one experiment</b> to it and bring results back. It does <b>not</b> copy your ledger or large datasets: the ledger stays here, and datasets stay where they are on the cluster.
             Connecting is read-only until you press <i>Test connection</i>, and nothing is created remotely during setup.
@@ -170,6 +196,9 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
             <label htmlFor="hp-setup">Job environment <span className="muted">(optional; one shell line per row, run inside every job)</span></label>
             <textarea id="hp-setup" rows={2} placeholder={'module load python/3.11\nsource ~/venvs/research/bin/activate'} value={h.setup} onChange={(e) => setH({ ...h, setup: e.target.value })} />
             <p className="muted small">Compute nodes often lack packages (for example NumPy) that the login node has. Without this, the first job can fail with ModuleNotFoundError.</p>
+            <label htmlFor="hp-py">Python on the cluster <span className="muted">(optional; interpreter or venv path visible from compute nodes)</span></label><input id="hp-py" type="text" value={h.python} onChange={(e) => setH({ ...h, python: e.target.value })} placeholder="/home/you/venvs/research/bin/python" />
+            <label htmlFor="hp-req">Packages the jobs need <span className="muted">(comma separated; checked by the test)</span></label><input id="hp-req" type="text" value={h.required_packages} onChange={(e) => setH({ ...h, required_packages: e.target.value })} placeholder="numpy" />
+            <label className="check"><input type="checkbox" checked={compute} onChange={(e) => setCompute(e.target.checked)} /> Also test on a compute node <span className="muted">(runs a one-minute, one-CPU srun)</span></label>
             <div className="row"><button type="button" disabled={!h.ssh_host || probe?.busy} onClick={test}>Test connection (read-only)</button></div>
             {probe?.busy && <p className="muted">Connecting…</p>}
             {probe?.error && <div className="field-error" role="alert">{probe.error}</div>}

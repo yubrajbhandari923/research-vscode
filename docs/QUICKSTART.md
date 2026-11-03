@@ -1,5 +1,7 @@
 # Quick start
 
+> **Before your first run:** set up your Python (and cluster) environment once, see [SETUP.md](SETUP.md).
+
 1. Create an empty folder (for example `~/Code/sparse-ct`) and open it in VS Code.
 2. Run **Research: Initialize Project**. The wizard teaches the model, asks for a name and goal, folder names, agents, optional HPC, and shows exactly what it will do. Nothing is written until you press *Create*.
 3. VS Code reopens `sparse-ct.code-workspace`:

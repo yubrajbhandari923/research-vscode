@@ -25,7 +25,7 @@ from .util import ResearchError, now_iso
 
 CATEGORIES = [
     ("project", "Project"), ("policy", "Research policy"), ("verification", "Verification"),
-    ("agents", "Agents & orchestration"), ("hooks", "Hooks & skills"), ("git", "Git & workspaces"), ("supervisor", "Supervisor"),
+    ("agents", "Agents & orchestration"), ("hooks", "Hooks & skills"), ("git", "Git & workspaces"), ("environment", "Python environment"), ("supervisor", "Supervisor"),
     ("sandbox", "Execution & sandbox"), ("hpc", "HPC & SLURM"), ("context", "Context & guide"), ("data", "Data & artifacts"),
 ]
 
@@ -142,6 +142,10 @@ OPTIONS: List[Option] = [
        why="Puts research history into git history automatically.", effect="Off: checkpoints are files only; commit them yourself or use `checkpoint create --commit`.",
        affects=["git history"]),
 
+    _o("environment.python", "str", "environment", "Project Python", "The Python used on this machine by agents, task checks and `{python}` in check commands: a venv folder or an interpreter path (relative paths are under the project folder). Empty uses whatever `python3` is on PATH.",
+       nullable=True, why="Without it, an agent's `python3` and your checks may use an interpreter that lacks your packages.", effect="Takes effect for the next agent session and check run.", affects=[".research/bin/py"]),
+    _o("environment.packages", "list", "environment", "Packages the project needs", "Importable package names that `research env check` verifies (for example numpy, matplotlib).",
+       why="Finds a missing package before an agent session does.", effect="Only used by the check."),
     _o("supervisor.poll_seconds", "int", "supervisor", "Polling interval", "How often the supervisor looks for ready tasks, finished agents and HPC jobs.",
        why="Short intervals react faster; long ones are gentler on shared filesystems.", effect="Takes effect on the daemon's next cycle.", min_=1, max_=3600, unit="seconds"),
     _o("supervisor.max_parallel_agents", "int", "supervisor", "Agents at once", "How many agents may work at the same time across a plan. Tasks of one experiment never share a worktree concurrently.",

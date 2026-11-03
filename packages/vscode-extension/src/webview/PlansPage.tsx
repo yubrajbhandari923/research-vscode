@@ -21,7 +21,8 @@ const live = (ph: string) => ['running', 'verifying', 'waiting_hpc'].includes(ph
 
 export function PlansPage({ host }: { host: Host }) {
   const list = useAsync<any[]>(() => host.call('managed_plans'), []);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string[]>([]);
+  const toggleSel = (k: string) => setSel((v) => (v.includes(k) ? v.filter((x) => x !== k) : [...v, k]));
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState !== 'hidden') list.reload(); }, 4000); return () => clearInterval(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const act = async (fn: () => Promise<any>, ok: string) => { try { await fn(); setMsg({ ok: true, text: ok }); } catch (e: any) { setMsg({ ok: false, text: e.message }); } list.reload(); };
@@ -37,7 +38,7 @@ export function PlansPage({ host }: { host: Host }) {
           Ask a planning AI (Claude, ChatGPT) to write a plan in the Research OS YAML format, save it, and import it here. You can edit the file and apply it again at any time without losing results.</EmptyState>
       ) : <>
         <div className="cards">{plans.map((pl) => (
-          <section key={pl.key} className={'card' + (sel === pl.key ? ' sel' : '')} aria-label={pl.title || pl.key} style={{ margin: '8px 0', padding: 12 }}>
+          <section key={pl.key} className={'card' + (sel.includes(pl.key) ? ' sel' : '')} aria-label={pl.title || pl.key} style={{ margin: '8px 0', padding: 12 }}>
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <div><b>{pl.title || pl.key}</b> <span className="muted">{pl.id} · key <code>{pl.key}</code> · revision {pl.revision}</span></div>
               <Badge kind={pl.state === 'running' ? 'info' : pl.state === 'completed' ? 'ok' : pl.state === 'paused' ? 'warn' : ''} live={pl.state === 'running'}>{pl.state.replace('_', ' ')}</Badge>
@@ -49,12 +50,12 @@ export function PlansPage({ host }: { host: Host }) {
               {['paused', 'blocked', 'attention'].includes(pl.state) && <button type="button" className="primary" onClick={() => act(() => host.call('plan_control', { plan: pl.key, action: 'resume' }), `${pl.key} resumed`)}>Resume</button>}
               {['running', 'paused'].includes(pl.state) && <button type="button" onClick={() => act(() => host.call('plan_control', { plan: pl.key, action: 'stop' }), `${pl.key} stopped (history kept)`)}>Stop</button>}
               <button type="button" onClick={() => host.run('research.plan.yaml.open', pl.key)}>Open YAML</button>
-              <button type="button" onClick={() => setSel(sel === pl.key ? null : pl.key)}>{sel === pl.key ? 'Hide tasks' : 'Show tasks'}</button>
+              <button type="button" aria-expanded={sel.includes(pl.key)} onClick={() => toggleSel(pl.key)}>{sel.includes(pl.key) ? 'Hide tasks' : 'Show tasks'}</button>
               {pl.pending_proposals > 0 && <Badge kind="warn">{pl.pending_proposals} proposal(s) need approval</Badge>}
             </div>
           </section>))}
         </div>
-        {sel && <PlanDetail host={host} plan={sel} act={act} />}
+        {sel.map((k) => <PlanDetail key={k} host={host} plan={k} act={act} />)}
       </>}</State>
     </div>
   );
@@ -68,7 +69,7 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
   return (
     <State a={a}>{(s) => <>
       <Section id="tasks" title={`Tasks of ${s.plan}`} count={s.tasks.length} hint={<>Phase is what Research OS observed, not what an agent claimed. Supervisor process: {s.daemon.running ? <b>running (pid {s.daemon.pid})</b> : <b>not running</b>}{' '}
-        <button type="button" className="link" onClick={() => act(() => host.call('supervisor_daemon', { action: s.daemon.running ? 'stop' : 'start' }), s.daemon.running ? 'Supervisor stopped' : 'Supervisor started')}>{s.daemon.running ? 'stop' : 'start'}</button></>}>
+        <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_daemon', { action: s.daemon.running ? 'stop' : 'start' }), s.daemon.running ? 'Supervisor stopped' : 'Supervisor started')}>{s.daemon.running ? 'Stop supervisor' : 'Start supervisor'}</button></>}>
         <div className="tbl-wrap"><table><caption className="sr">Tasks and their supervised state</caption>
           <thead><tr><th scope="col">Task</th><th scope="col">Phase</th><th scope="col" className="hide-narrow">Agent</th><th scope="col">Attempts</th><th scope="col" className="hide-narrow">Depends on</th><th scope="col"><span className="sr">Actions</span></th></tr></thead>
           <tbody>{s.tasks.map((t: any) => { const ph = PHASE[t.phase] || PHASE.waiting; return (
@@ -78,7 +79,7 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
               <td title={ph.hint}><Badge kind={ph.kind} live={live(t.phase)}>{ph.label}</Badge>{t.execution?.state && live(t.phase) && <span className="sub">process {t.execution.state}{t.execution.alive ? '' : ' (not confirmed)'}</span>}
                 {t.deferred && <span className="sub">spec change queued for next attempt</span>}</td>
               <td className="hide-narrow">{t.role}{t.profile ? <span className="sub">{t.profile}</span> : null}</td>
-              <td>{t.attempts || '-'}{t.execution?.verification && !t.execution.verification.passed && <span className="sub">last check failed</span>}</td>
+              <td>{t.attempts || '-'}{t.voided_attempts > 0 && <span className="sub" title="Kept as evidence, not counted against the budget">+{t.voided_attempts} voided</span>}{t.execution?.verification && !t.execution.verification.passed && <span className="sub">last check failed</span>}</td>
               <td className="hide-narrow">{t.depends_on.join(', ') || '-'}</td>
               <td className="min"><button type="button" className="sm" onClick={() => setDetail(t.id)}>Details</button>
                 {t.phase === 'awaiting_approval' && <button type="button" className="sm primary" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'approve' }), `${t.id} approved`)}>Approve</button>}

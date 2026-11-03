@@ -537,6 +537,18 @@ class Server:
         return HR.sync(self.project(), cluster_name=cluster)
 
     # supervisor ----------------------------------------------------------------------------
+    def m_env_check(self, packages: Optional[List[str]] = None, python: Optional[str] = None) -> Dict[str, Any]:
+        from . import envcheck
+        p = self.project(sync=False)
+        if python:                                   # test a candidate before it is saved
+            saved = p.config.get("environment")
+            p.config["environment"] = {"python": python, "packages": packages or []}
+            try:
+                return envcheck.check(p, packages)
+            finally:
+                p.config["environment"] = saved
+        return envcheck.check(p, packages)
+
     def m_plan_yaml_template(self) -> Dict[str, Any]:
         from . import planspec as PS
         return {"text": PS.TEMPLATE}
@@ -762,15 +774,32 @@ class Server:
         from . import initproject
         return {"hosts": initproject.ssh_hosts()}
 
-    def m_hpc_test(self, ssh_host: str, workspace_root: str = "") -> Dict[str, Any]:
-        """Explicit, read-only connection test (the existing `hpc doctor` checks) before any project exists."""
+    def m_env_probe(self, python: str, packages: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Test an existing interpreter or venv before any project exists (the wizard's *Use an existing environment*)."""
+        from types import SimpleNamespace
+        from . import envcheck
+        fake = SimpleNamespace(config={"environment": {"python": python, "packages": packages or []}}, root=self.root, rdir=self.root)
+        return envcheck.check(fake, packages)
+
+    def m_hpc_test(self, ssh_host: str, workspace_root: str = "", python: str = "", required_packages: Any = None, setup: Any = None,
+                   partition: str = "", compute: bool = False) -> Dict[str, Any]:
+        """Explicit, read-only connection test (the existing `hpc doctor` checks) before any project exists. With `compute`, also one
+        one-minute srun to prove the job environment on a compute node."""
         from types import SimpleNamespace
         from .hpc import remote as HR
         if not ssh_host or any(c.isspace() for c in ssh_host) or ssh_host.startswith("-"):
             raise ResearchError("Invalid SSH host alias")
-        fake = SimpleNamespace(config={"hpc": {"clusters": {"probe": {"ssh_host": ssh_host, "paths": {"workspace_root": workspace_root or "~/research-os-probe"}}}}},
-                               name="probe", root=self.root)
-        return HR.doctor(fake, "probe")
+        lines = lambda v: [x.strip() for x in (v.splitlines() if isinstance(v, str) else (v or [])) if str(x).strip()]
+        cl: Dict[str, Any] = {"ssh_host": ssh_host, "paths": {"workspace_root": workspace_root or "~/research-os-probe"}}
+        if python:
+            cl["python"] = python
+        if required_packages:
+            cl["required_packages"] = [x.strip() for x in (required_packages.split(",") if isinstance(required_packages, str) else required_packages) if str(x).strip()]
+        sl = {k: v for k, v in (("setup", lines(setup)), ("partition", partition or None)) if v}
+        if sl:
+            cl["slurm"] = sl
+        fake = SimpleNamespace(config={"hpc": {"clusters": {"probe": cl}}}, name="probe", root=self.root)
+        return HR.doctor(fake, "probe", compute=compute)
 
     def m_mcp_install(self, clients: Any = None) -> Dict[str, Any]:
         from . import mcp as MCP

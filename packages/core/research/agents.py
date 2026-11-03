@@ -315,7 +315,7 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
         if ws is None and role == "implementer" and p.location.linked:   # never silently edit the main checkout
             exp = p.get("task", tid).get("related_experiment_id")
             if create_workspace and exp:
-                ws = W.link_task(p, W.create(p, exp)["id"], tid)
+                ws = W.link_task(p, W.ensure_for_experiment(p, exp)["id"], tid)
             else:
                 raise NoWorkspace(f"{tid}: {exp or 'it'} has no worktree, so the agent would edit the main checkout" if exp else
                                   f"{tid} is not tied to an experiment, so the agent would edit the main checkout",
@@ -339,9 +339,14 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
     env = {"RESEARCH_AGENT": name, "RESEARCH_AGENT_ROLE": role, "RESEARCH_ROOT": src_root, "RESEARCH_BRIEF": abs_brief}
     if mdl:
         env["RESEARCH_AGENT_MODEL"] = str(mdl)
+    from . import envcheck
     shim = os.path.join(p.rdir, "bin")   # the worktree has no .research/bin: put the ledger's `research` on PATH
+    search_path = os.environ.get("PATH", "")
     if os.path.isdir(shim):
-        env["PATH"] = shim + os.pathsep + os.environ.get("PATH", "")
+        search_path = shim + os.pathsep + search_path
+    env["PATH"] = envcheck.path_with_python(p, search_path)        # the configured project Python first, so `python3` is the right one
+    if envcheck.resolve_python(p):
+        env["RESEARCH_PYTHON"] = envcheck.resolve_python(p)
     if sk["required"]:
         _atomic_write(path[:-3] + ".skills.json", json.dumps(
             {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "role": role, "target": label, "skills": sk["required"]},

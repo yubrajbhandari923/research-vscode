@@ -4,7 +4,7 @@ You write (or have an AI write) a plan in YAML, import it, press **Run plan**, a
 checks their work itself, repairs failures within limits, watches HPC jobs, and stops for you when it must. It never needs an LLM to
 decide what to run next.
 
-If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first, then come back here.
+If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first. **Set up your Python and cluster environments once: [SETUP.md](SETUP.md).**
 
 ## 1. Who does what
 
@@ -161,9 +161,9 @@ otherwise they stay on the cluster. Job environment (modules, venv) goes in `hpc
 
 ### Parallel agents and promotion
 
-`max_parallel_agents` (plan or project) lets agents of *different* experiments work at the same time, including different providers;
+`max_parallel_agents` (plan or project; the cap applies per plan, so several plans can each use their own cap) lets agents of *different* experiments work at the same time, including different providers;
 tasks of one experiment never share a worktree concurrently. When a task verifies, its changes are committed on the experiment branch
-(never `main`, never pushed; `supervisor.commit_verified_work`, `commit_exclude`). **Plans → Prepare promotion from verified work**
+(never `main`, never pushed; `supervisor.commit_verified_work`; `commit_exclude` keeps results, `patch*.yaml`, caches and venvs out). **Plans → Prepare promotion from verified work**
 (or `research plan promote PLAN-001`) turns those commits into promotion candidates *prepared by the supervisor*, so you can review them
 yourself; tests, review, approval and the explicit merge confirmation then follow the existing Work-tab flow.
 

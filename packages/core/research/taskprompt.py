@@ -72,21 +72,12 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
         e = p.get("experiment", eid)
         add(f"Experiment {eid}: {e['title']}", "\n".join(f"{k}: {e[k]}" for k in ("hypothesis", "method", "success_criteria", "parameters") if e.get(k)),
             f"experiment {eid}")
-    # 3. the task
-    add("Your task", tspec.get("prompt") or task.get("goal"), f"task {tid}", cap=per * 2)
-    ob = []
-    if task.get("acceptance_criteria"):
-        ob.append("Acceptance: " + task["acceptance_criteria"])
-    if task.get("inputs"):
-        ob.append("Inputs: " + str(task["inputs"]))
-    if tspec.get("expected_artifacts"):
-        ob.append("Expected artifacts (relative to your workspace): " + ", ".join(tspec["expected_artifacts"]))
-    if task.get("checks"):
-        from .verification import describe_check, parse_check
-        ob.append("Checks Research OS will run to verify you:\n" + "\n".join("  - " + describe_check(parse_check(c)) for c in task["checks"]))
+    # 3. the task itself, its acceptance and its checks are already in the brief's task and effective-specification sections;
+    #    repeating them here tripled the text, so only what the brief does not carry is added.
     if tspec.get("allowed_files"):
-        ob.append("You may modify only: " + ", ".join(tspec["allowed_files"]) + " (advisory unless a sandbox profile enforces it)")
-    add("Acceptance, inputs and checks", "\n".join(ob), f"task {tid}")
+        add("Boundaries", "You may modify only: " + ", ".join(tspec["allowed_files"]) + " (advisory unless a sandbox profile enforces it)", f"task {tid}")
+    if tspec.get("expected_artifacts"):
+        add("Expected artifacts", "Relative to your workspace: " + ", ".join(tspec["expected_artifacts"]), f"task {tid}")
     # 4. dependency results
     deps = []
     for d in task.get("depends_on") or []:
@@ -123,7 +114,7 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
         f"  research agent report {tid} --summary \"what you did and found\"",
         f"  research agent problem {tid} --category <incorrect_implementation|ambiguous_specification|insufficient_test_oracle|environment|"
         f"scientific_assumption|resource_limit> --message \"...\"",
-        f"  research agent propose {tid} --file patch.yaml --rationale \"...\"   # plan changes need Research OS (and often human) approval",
+        f"  research agent propose {tid} --file /tmp/patch.yaml --rationale \"...\"   # keep the patch outside your workspace; plan changes need approval",
         f"  research agent finish {tid} --request-verification   # when you believe you are done",
         "You cannot mark the task done or verified; the supervisor verifies after you exit. Do not edit or weaken checks or frozen tests."]), "supervisor")
     text = "\n\n".join(parts)

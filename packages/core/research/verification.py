@@ -109,8 +109,9 @@ def run_check(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, 
     base = ws["path"] if ws else None
     if c["type"] == "command":
         timeout = float(_policy(p).get("check_timeout_seconds") or 600)
-        r = shell_check(c["run"], cwd=base or p.root, timeout=timeout, output_limit=2000,
-                        env={**os.environ, "RESEARCH_ROOT": p.root})
+        from . import envcheck
+        r = shell_check(envcheck.expand(p, c["run"]), cwd=base or p.root, timeout=timeout, output_limit=2000,
+                        env={**os.environ, "RESEARCH_ROOT": p.root, "PATH": envcheck.path_with_python(p)})
         out.update(ok=r["ok"], output=r["output"],
                    detail=f"timed out after {timeout:g}s" if r["timed_out"] else f"exit {r['exit_code']}")
     elif c["type"] == "file":

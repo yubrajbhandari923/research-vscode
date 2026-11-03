@@ -137,6 +137,23 @@ Caveats: Codex's sandbox has no network, so a Codex task cannot submit Slurm job
 the agents left in their worktrees were committed (`patch.yaml` appears in PROMO-007); I edited the demo project's config to
 `promotion.require_supported_finding: false` because those toy experiments have no findings.
 
+## 4b. Short stress tests
+
+Not hour-long; each is minutes. Mock-agent tests run in CI (`tests/python/test_supervisor.py`), the real ones used Claude and Slurm.
+
+| Test | Result |
+|---|---|
+| Three plans, nine tasks, running at once in three worktrees (mock) | all complete; peak ≥ 2 agents; every task launched exactly once; one worktree per plan |
+| **Daemon `SIGKILL` mid-run**, restart (mock, detached daemon process) | the running agent survived, the restarted daemon finished the plan; no task launched twice |
+| **Same with real Claude agents** (`evidence/stress-real.txt`): two plans, `claude-fast`, daemon SIGKILLed with two agents running, restarted | both plans completed, 4/4 tasks verified, **1 attempt each** |
+| HPC status unreadable (every `hpc sync` raises) for many polls | task stays `waiting_hpc`; no new attempt; no second Slurm run |
+| Supervisor "dies" between preparing and starting an agent | the unstarted launch is re-fired once; one execution record, run once |
+| 12 independent tasks over 4 experiments, 4 agents at once (mock) | 12/12 verified, 12 attempts |
+| `research hpc doctor --compute` on the real cluster (`evidence/hpc-doctor-compute.txt`) | proves `numpy` imports on a compute node, the failure that cost three Slurm jobs earlier |
+
+Found and fixed here: `daemon_status` treated a killed-but-unreaped supervisor as running (zombie); and a parallel cap applies **per plan**,
+not across plans (documented; a global cap is a setting for later).
+
 ## 5. UX assessment (first-time researcher)  **6 / 10**
 
 Good: one place (Plans) shows what is waiting, running, verifying, blocked; every attempt's exact prompt, verification diagnostics and

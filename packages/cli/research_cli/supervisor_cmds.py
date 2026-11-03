@@ -218,6 +218,40 @@ def cmd_agent(a, p) -> int:
 cmd_agent = M.mut(cmd_agent)
 
 
+# ----------------------------------------------------------------------------------------------- environment
+def _default_venv(p) -> str:
+    return os.path.join(os.path.dirname(p.root) if p.location.linked else p.root, ".venv")
+
+
+def cmd_env(a, p) -> int:
+    from research import envcheck as EC
+    act = a.action
+    pk = a.package or None
+    if act == "check":
+        r = EC.check(p, pk)
+        def lines(d):
+            out = [M.bold("project Python ") + (d["python"] or M.yellow("not configured")) + (f"  ({d['version']})" if d["version"] else "")]
+            out += [f"  {'✓' if ok else '✗'} {name}" for name, ok in d["packages"].items()]
+            out += [M.yellow("  ! " + x) for x in d["problems"]]
+            if not d["configured"]:
+                out.append(M.dim("  set one: `research env create` (uses uv) or `research config set environment.python /path/to/venv`"))
+            return out
+        _emit(a, r, lines)
+        return 0 if r["ok"] or (not r["configured"] and not r["problems"][1:]) else 1
+    if act == "create":
+        path = a.path or _default_venv(p)
+        pkgs = pk or (p.config.get("environment") or {}).get("packages") or []
+        r = EC.create(path, pkgs, a.python)
+        p.save_config({"environment.python": r["path"], "environment.packages": list(pkgs)})
+        return _emit(a, r, lambda d: [M.green("✓ ") + f"created {d['path']} with {', '.join(d['packages']) or 'no packages'} and set environment.python"])
+    if act == "install":
+        return _emit(a, EC.install(p, pk or []), lambda d: [M.green("✓ ") + "installed " + ", ".join(d["installed"])])
+    raise ResearchError(f"unknown env action {act}")
+
+
+cmd_env = M.mut(cmd_env)
+
+
 # ----------------------------------------------------------------------------------------------- registration
 def attach_plan(g, add) -> None:
     x = add(g, "yaml", cmd_plan_yaml, "YAML plans: template | export | validate | diff | apply")
@@ -243,6 +277,11 @@ def attach_plan(g, add) -> None:
 
 
 def attach_top(sub, add, group) -> None:
+    x = add(sub, "env", cmd_env, "the project's Python environment: check | create (uv) | install")
+    x.add_argument("action", choices=["check", "create", "install"])
+    x.add_argument("--path", help="create: where to create the venv (default: .venv next to main/)")
+    x.add_argument("--python", help="create: python version/interpreter for uv (for example 3.12)")
+    x.add_argument("--package", "-k", action="append", help="packages (repeatable)")
     x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve")
     x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void"])
     x.add_argument("target", nargs="?", help="approve/accept/resolve: task id")

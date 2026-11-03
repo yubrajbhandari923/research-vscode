@@ -75,6 +75,7 @@ def environment(root: str) -> Dict[str, Any]:
             "git": {"available": gitinfo.available(), "version": providers.version("git"),
                     "user_configured": bool(_git(root if os.path.isdir(root) else ".", "config", "user.name").stdout.strip())},
             "providers": provs, "strategies": list(STRATEGIES), "ssh_hosts": ssh_hosts(),
+            "uv": {"path": shutil.which("uv"), "version": providers.version("uv")},
             "defaults": {"provider": "claude", "strategy": "sonnet_first", "create_workspace": True, "local_execution": True,
                          "independent_review": True, "hpc": False}}
 
@@ -87,6 +88,11 @@ def _layout(root: str, spec: Dict[str, Any]) -> Dict[str, str]:
 
 def _workspace_name(spec: Dict[str, Any], root: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", spec.get("name") or os.path.basename(root)).strip("-") or "project"
+
+
+def _venv_path(root: str, spec: Dict[str, Any]) -> str:
+    p = (spec.get("python") or {}).get("path")
+    return os.path.abspath(os.path.expanduser(p)) if p else os.path.join(os.path.abspath(root), ".venv")
 
 
 def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -131,6 +137,20 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
     hpc = spec.get("hpc") or {}
     if hpc.get("enabled") and not (hpc.get("ssh_host") and hpc.get("workspace_root")):
         problems.append("HPC deployment needs an SSH host and a remote workspace directory (or turn HPC off).")
+    pyenv = spec.get("python") or {}
+    pmode = pyenv.get("mode") or "none"
+    if pmode not in ("none", "create", "existing"):
+        problems.append("python.mode must be none, create or existing.")
+    if pmode == "create":
+        if not shutil.which("uv"):
+            problems.append("Creating a Python environment needs uv (https://docs.astral.sh/uv/). Install it, or choose an existing environment.")
+        pth = _venv_path(root, spec)
+        if os.path.exists(pth) and os.listdir(pth):
+            problems.append(f"{pth} already exists and is not empty; choose another path or use it as an existing environment.")
+    if pmode == "existing":
+        ex = os.path.expanduser(str(pyenv.get("path") or ""))
+        if not ex or not (os.path.isfile(ex) or os.path.isfile(os.path.join(ex, "bin", "python"))):
+            problems.append("Existing Python: give a venv folder or an interpreter that exists.")
     remote = (spec.get("git") or {}).get("remote_url")
     if remote and not re.match(r"^(https://|git@|ssh://)[^\s]+$", remote):
         problems.append("The GitHub remote URL must start with https://, git@ or ssh://.")
@@ -148,6 +168,10 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                             "codex": "Register the Research MCP server for Codex with `codex mcp add research` (your user-level Codex config)"}[x])
         if spec.get("create_workspace", True):
             actions.append(f"Write {_workspace_name(spec, root)}.code-workspace and open it in VS Code")
+        if pmode == "create":
+            actions.append(f"Create a Python environment at {_venv_path(root, spec)} with uv" + (f" and install {', '.join(pyenv.get('packages') or [])}" if pyenv.get("packages") else ""))
+        if pmode in ("create", "existing"):
+            actions.append("Set environment.python so agents, checks and `{python}` all use it")
         if hpc.get("enabled"):
             actions.append(f"Save HPC cluster profile for {hpc['ssh_host']} (no connection is made while initializing; test it later with `research hpc doctor`)")
         if remote:
@@ -227,11 +251,25 @@ def apply(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                         cfg[f"hpc.clusters.{name_}.paths.{k}"] = h[k]
                 if h.get("partition"):
                     cfg[f"hpc.clusters.{name_}.slurm.partition"] = h["partition"]
+                if h.get("python"):
+                    cfg[f"hpc.clusters.{name_}.python"] = h["python"]
+                if h.get("required_packages"):
+                    cfg[f"hpc.clusters.{name_}.required_packages"] = [x.strip() for x in (h["required_packages"].split(",") if isinstance(h["required_packages"], str) else h["required_packages"]) if str(x).strip()]
                 setup = h.get("setup") or []
                 setup = [x.strip() for x in (setup.splitlines() if isinstance(setup, str) else setup) if str(x).strip()]
                 if setup:   # runs inside every job: compute nodes often lack what the login node has
                     cfg[f"hpc.clusters.{name_}.slurm.setup"] = setup
                 cfg["hpc.default_cluster"] = name_
+            pyenv = spec.get("python") or {}
+            pk = [x.strip() for x in (pyenv.get("packages").split(",") if isinstance(pyenv.get("packages"), str) else (pyenv.get("packages") or [])) if str(x).strip()]
+            if pyenv.get("mode") == "create":
+                from . import envcheck
+                made = envcheck.create(_venv_path(root, spec), pk)
+                cfg["environment.python"] = made["path"]
+            elif pyenv.get("mode") == "existing":
+                cfg["environment.python"] = os.path.abspath(os.path.expanduser(pyenv["path"]))
+            if pk:
+                cfg["environment.packages"] = pk
             p.save_config(cfg)
             p.config = p.load_config()
             from . import registry

@@ -2319,7 +2319,7 @@ def cmd_hpc(a, p) -> int:
         return 0
 
     if act == "doctor":
-        d = HR.doctor(p, cl)
+        d = HR.doctor(p, cl, compute=getattr(a, 'compute', False))
         if a.json:
             out_json(d)
             return 0
@@ -3095,6 +3095,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("dataset", nargs="?", help="dataset id, for `datasets inspect|check|fetch|adopt`")
     x.add_argument("--cluster", help="cluster name from hpc.clusters (default: hpc.default_cluster)")
     x.add_argument("--dry-run", action="store_true", help="preview only; transfers and submits nothing")
+    x.add_argument("--compute", action="store_true", help="doctor: also prove the job environment on a compute node (one-minute, one-CPU srun)")
     x.add_argument("--yes", action="store_true", help="approve an expensive action (submit, dataset staging)")
     x.add_argument("--override", metavar="REASON", help="submit: go past the unsynthesized/failed-run budget (logged)")
     x.add_argument("--format", choices=["tar.gz", "zip"], default="tar.gz", help="bundle archive format")

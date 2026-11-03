@@ -1,0 +1,14 @@
+HPC doctor — cluster plp-drcc-login2 (plp-drcc-login2)
+  ✓ cluster profile      workspace /home/yb107/research-os-sup, project dir /home/yb107/research-os-sup/projects/sup-demo
+  ✓ ssh connectivity     reached plp-drcc-login2 in 1.9s
+  ✓ slurm                sbatch=yes, squeue=yes, sacct=yes
+  ✓ scancel              present
+  ✓ rsync                present
+  ✓ python               /usr/bin/python3 → 3.8
+  ✓ job environment (login node) numpy import with the slurm.setup lines
+  ✓ job environment (compute node) imports work on a compute node
+  ✓ path workspace_root  /home/yb107/research-os-sup exists, writable
+  ✓ path projects        /home/yb107/research-os-sup/projects exists, writable
+  • project workspace    /home/yb107/research-os-sup/projects/sup-demo: present
+
+✓ ready: ssh-slurm, bundle

@@ -34,7 +34,7 @@ DEFAULTS: Dict[str, Any] = {
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
-    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/"],
+    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
 }
 PHASES = ("waiting", "ready", "awaiting_approval", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
@@ -235,7 +235,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
         phase = "retired" if key in (st.get("retired") or {}) else e.get("phase") or ("verified" if t["status"] == "done" else "waiting")
         rows.append({"key": key, "id": tid, "title": t["title"], "experiment": flat[key].get("experiment"), "status": t["status"], "phase": phase,
                      "depends_on": [st["tasks"].get(d, d) for d in flat[key]["depends_on"]], "role": flat[key]["agent"].get("role"),
-                     "profile": flat[key]["agent"].get("profile"), "attempts": len(att), "reason": e.get("reason"),
+                     "profile": flat[key]["agent"].get("profile"), "attempts": len([x for x in att if not x.get("voided")]), "voided_attempts": len([x for x in att if x.get("voided")]), "reason": e.get("reason"),
                      "execution": last and {"id": last["execution"], "state": ex and ex["state"], "alive": ex and ex.get("alive"),
                                             "kind": last["kind"], "verification": last.get("verification"), "outcome": last.get("outcome")},
                      "requires_approval": bool((flat[key].get("execution") or {}).get("requires_approval")) and not (rs.get("approvals") or {}).get(tid),
@@ -722,7 +722,7 @@ def _commit_verified(p: Project, tid: str, a: Dict[str, Any], spec_title: str, p
     if not ws:
         return None
     path = ws["path"]
-    excl = [f":(exclude){x.rstrip('/')}" for x in (c.get("commit_exclude") or [])]
+    excl = [(f":(exclude,glob)**/{x.rstrip('/')}/**" if x.endswith("/") else f":(exclude,glob)**/{x}") for x in (c.get("commit_exclude") or [])]
     env = {**os.environ, "GIT_AUTHOR_NAME": "Research OS supervisor", "GIT_AUTHOR_EMAIL": "supervisor@research-os.local",
            "GIT_COMMITTER_NAME": "Research OS supervisor", "GIT_COMMITTER_EMAIL": "supervisor@research-os.local"}
     def git(*args):
@@ -1108,6 +1108,12 @@ def daemon_status(p: Project) -> Dict[str, Any]:
         alive = False
     except PermissionError:
         alive = True
+    if alive and os.name == "posix":      # a killed child that nobody has reaped yet is a zombie, not a running supervisor
+        try:
+            stat = subprocess.run(["ps", "-o", "stat=", "-p", str(d["pid"])], capture_output=True, text=True, timeout=5).stdout.strip()
+            alive = bool(stat) and not stat.startswith("Z")
+        except (OSError, subprocess.SubprocessError):
+            pass
     age = time.time() - float(d.get("heartbeat", 0))
     return {"running": alive, "pid": d.get("pid"), "started_at": d.get("started_at"), "heartbeat_age_seconds": round(age, 1),
             "note": None if alive else "no such process; state is intact and a new `supervisor start` will reconcile it"}

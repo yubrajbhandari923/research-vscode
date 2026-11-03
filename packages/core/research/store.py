@@ -115,10 +115,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
     # profile other than `native` applies, and a restrictive profile never silently falls back to native.
     # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
+    "environment": {"python": None, "packages": []},
     "supervisor": {"poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
                    "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True,
                    "auto_apply_operational": True, "max_auto_tasks": 5, "require_approval_for_scientific_changes": True,
-                   "session_resume": "auto", "context_max_chars": 24000, "commit_verified_work": True, "commit_exclude": ["outputs/", "results/"], "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1},
+                   "session_resume": "auto", "context_max_chars": 24000, "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"], "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1},
     "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
     "sandbox": {
         "enabled": False,                         # true → `default_profile` applies to jobs that name no profile

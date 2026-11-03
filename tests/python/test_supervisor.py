@@ -8,7 +8,7 @@ import time
 import pytest
 
 from conftest import git
-from research import execution as E, planspec as PS, plans, supervisor as SV
+from research import agents, execution as E, planspec as PS, plans, supervisor as SV
 from research import workspace as W
 from research.store import Project
 from research.util import PolicyBlocked, ResearchError
@@ -462,12 +462,12 @@ def two_exp_plan(par):
               - key: e1
                 title: One
                 tasks:
-                  - {{key: a1, title: A1, agent: {{role: implementer, profile: fake}}, checks: ["file:a1.txt"], prompt: "MOCK_SH: sleep 3; echo 1 > a1.txt"}}
-                  - {{key: a2, title: A2, depends_on: [], agent: {{role: implementer, profile: fake}}, checks: ["file:a2.txt"], prompt: "MOCK_SH: sleep 3; echo 2 > a2.txt"}}
+                  - {{key: a1, title: A1, agent: {{role: implementer, profile: fake}}, checks: ["file:a1.txt"], prompt: "Work.\\nMOCK_SH: sleep 3; echo 1 > a1.txt"}}
+                  - {{key: a2, title: A2, depends_on: [], agent: {{role: implementer, profile: fake}}, checks: ["file:a2.txt"], prompt: "Work.\\nMOCK_SH: sleep 3; echo 2 > a2.txt"}}
               - key: e2
                 title: Two
                 tasks:
-                  - {{key: b1, title: B1, agent: {{role: implementer, profile: fake}}, checks: ["file:b1.txt"], prompt: "MOCK_SH: sleep 3; echo 3 > b1.txt"}}
+                  - {{key: b1, title: B1, agent: {{role: implementer, profile: fake}}, checks: ["file:b1.txt"], prompt: "Work.\\nMOCK_SH: sleep 3; echo 3 > b1.txt"}}
         """)
 
 
@@ -658,3 +658,138 @@ def test_codex_session_id_and_resume_command_follow_the_verified_cli_shape():
     out = 'Reading additional input from stdin...\n{"type":"thread.started","thread_id":"0192-abc"}\n{"type":"turn.started"}\n'
     assert P.session_id_of("codex", out) == "0192-abc"
     assert P.session_id_of("codex", "no json") is None
+
+
+# ------------------------------------------------------------------------------------------------ short stress tests
+def multi_plan(key, n_tasks, sleep=1):
+    tasks = "\n".join(f"""                  - {{key: t{i}, title: T{i}, {'depends_on: [t' + str(i - 1) + '], ' if i else ''}agent: {{role: implementer, profile: fake}}, checks: ["file:{key}{i}.txt"], prompt: "Work.\\nMOCK_SH: sleep {sleep}; echo {i} > {key}{i}.txt"}}"""
+                      for i in range(n_tasks))
+    return f"""schema_version: 1
+plans:
+  - key: {key}
+    title: Plan {key}
+    execution: {{max_attempts_per_task: 1, max_parallel_agents: 4}}
+    experiments:
+      - key: e
+        title: Experiment {key}
+        tasks:
+{tasks}
+"""
+
+
+def test_several_plans_run_at_once_without_cross_talk(lproj):
+    for k in ("pa", "pb", "pc"):
+        PS.apply(lproj, multi_plan(k, 3))
+        SV.plan_run(lproj, k, start_daemon=False)
+    peak, t0 = 0, time.time()
+    while time.time() - t0 < 150:
+        SV.tick(lproj)
+        live = sum(1 for k in ("pa", "pb", "pc") for t in SV.status(lproj, k)["tasks"] if t["phase"] in ("running", "verifying"))
+        peak = max(peak, live)
+        if all(SV.status(lproj, k)["state"] == "completed" for k in ("pa", "pb", "pc")):
+            break
+        time.sleep(0.3)
+    assert all(SV.status(lproj, k)["state"] == "completed" for k in ("pa", "pb", "pc")) and peak >= 2
+    cwds = set()
+    for k in ("pa", "pb", "pc"):
+        rs = SV.load_run(lproj, PS.load_state(lproj, k)["plan_id"])
+        assert all(len(e["attempts"]) == 1 for e in rs["tasks"].values())          # nothing launched twice
+        cwds |= {e["attempts"][0]["cwd"] for e in rs["tasks"].values()}
+    assert len(cwds) == 3                                                           # one worktree per plan's experiment
+
+
+def test_killing_the_daemon_mid_run_loses_nothing_and_duplicates_nothing(lproj):
+    PS.apply(lproj, multi_plan("kill", 3, sleep=3))
+    SV.plan_run(lproj, "kill", start_daemon=False)
+    d = SV.daemon_start(lproj, detach=True)
+    assert d["running"]
+    assert run_until_phase(lproj, "kill", "t0", "running", 30)
+    os.kill(int(d["pid"]), 9)                                                       # no clean shutdown, no goodbye
+    time.sleep(1)
+    assert not SV.daemon_status(lproj)["running"]
+    d2 = SV.daemon_start(lproj, detach=True, exit_when_idle=True)                   # a restart reconciles from the files
+    assert d2["running"] and d2["pid"] != d["pid"]
+    deadline = time.time() + 120
+    while time.time() < deadline and SV.status(lproj, "kill")["state"] != "completed":
+        time.sleep(0.5)
+    st = SV.status(lproj, "kill")
+    if st["state"] != "completed":
+        log = os.path.join(lproj.rdir, "supervisor", "daemon.log")
+        print("DAEMON", SV.daemon_status(lproj), open(log).read()[-800:] if os.path.exists(log) else "(no log)", [(t["key"], t["phase"], t["reason"]) for t in st["tasks"]])
+    assert st["state"] == "completed" and [t["phase"] for t in st["tasks"]] == ["verified"] * 3
+    rs = SV.load_run(lproj, st["plan_id"])
+    assert all(len(e["attempts"]) == 1 for e in rs["tasks"].values())               # the running agent survived; no second launch
+
+
+def run_until_phase(p, ref, key, phase, timeout):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if phases(p, ref).get(key) == phase:
+            return True
+        time.sleep(0.3)
+    return False
+
+
+def test_an_unreadable_hpc_status_never_causes_a_resubmission(lproj, monkeypatch):
+    PS.apply(lproj, hpc_plan(("running", 0), ("completed", 0)))
+    from research.hpc import remote as HR
+    calls = []
+    monkeypatch.setattr(HR, "sync", lambda *a, **k: calls.append(1) or (_ for _ in ()).throw(ResearchError("ssh: connection timed out")))
+    lproj.config["supervisor"]["hpc_poll_seconds"] = 5
+    SV.plan_run(lproj, "hpc", start_daemon=False)
+    assert run_until(lproj, lambda: phases(lproj, "hpc")["job"] == "waiting_hpc", 60)
+    pid = PS.load_state(lproj, "hpc")["plan_id"]
+    for _ in range(12):                                                             # many polls, all failing
+        SV.tick(lproj)
+        time.sleep(0.2)
+    e = next(iter(SV.load_run(lproj, pid)["tasks"].values()))
+    assert calls and e["phase"] == "waiting_hpc" and len(e["attempts"]) == 1        # still waiting; no new attempt, no new job
+    assert lproj.q1("SELECT COUNT(*) AS n FROM runs WHERE backend='slurm'")["n"] == 1
+
+
+def test_a_launch_interrupted_before_the_process_started_is_refired_once(lproj, monkeypatch):
+    lproj.config["supervisor"]["launch_grace_seconds"] = 0
+    PS.apply(lproj, yaml_plan([task_yaml("a", "A", "echo 1 > a.txt", checks=["file:a.txt"])]))
+    SV.plan_run(lproj, "demo-plan", start_daemon=False)
+    real = SV.subprocess.Popen
+    monkeypatch.setattr(SV.subprocess, "Popen", lambda *a, **k: type("Dead", (), {})() if "execution.py" in " ".join(map(str, a[0])) else real(*a, **k))   # the supervisor "dies" right after preparing
+    SV.tick(lproj)
+    monkeypatch.setattr(SV.subprocess, "Popen", real)
+    pid = PS.load_state(lproj, "demo-plan")["plan_id"]
+    e = next(iter(SV.load_run(lproj, pid)["tasks"].values()))
+    assert E.show(lproj, e["attempts"][0]["execution"])["state"] == "prepared"
+    assert run_until(lproj, lambda: phases(lproj)["a"] == "verified", 60)
+    e = next(iter(SV.load_run(lproj, pid)["tasks"].values()))
+    assert len(e["attempts"]) == 1 and len(E.list_all(lproj)) == 1                   # one execution record, run exactly once
+
+
+def test_twelve_independent_tasks_across_four_experiments_all_verify_once(lproj):
+    exps = "\n".join(f"""      - key: e{x}
+        title: Exp {x}
+        tasks:
+""" + "\n".join(f"""          - {{key: e{x}t{i}, title: T{x}{i}, agent: {{role: implementer, profile: fake}}, checks: ["file:f{x}{i}.txt"], prompt: "Work.\\nMOCK_SH: echo 1 > f{x}{i}.txt"}}""" for i in range(3)) for x in range(4))
+    PS.apply(lproj, f"""schema_version: 1
+plans:
+  - key: fan
+    title: Fan
+    execution: {{max_attempts_per_task: 1, max_parallel_agents: 4}}
+    experiments:
+{exps}
+""")
+    SV.plan_run(lproj, "fan", start_daemon=False)
+    assert run_until(lproj, lambda: SV.status(lproj, "fan")["state"] == "completed", 180)
+    rs = SV.load_run(lproj, PS.load_state(lproj, "fan")["plan_id"])
+    assert len(rs["tasks"]) == 12 and all(len(e["attempts"]) == 1 and e["phase"] == "verified" for e in rs["tasks"].values())
+    assert rs["budgets"]["attempts"] == 12
+
+
+def test_an_orphaned_worktree_left_by_a_killed_supervisor_is_adopted_not_a_dead_end(lproj, tmp_path):
+    from research import services
+    e = services.create_experiment(lproj, "orphan", hypothesis="h", question=services.create_question(lproj, "q")["id"])
+    top = W.toplevel(lproj.root)
+    orphan = tmp_path / "orphan-wt"
+    git(top, "worktree", "add", "-q", "-b", f"exp/{e['id']}-orphan", str(orphan))          # created, but never registered
+    pl = plans.create_plan(lproj, "p")
+    t = plans.create_task(lproj, pl["id"], "t", goal="g", related_experiment_id=e["id"])
+    d = agents.dispatch(lproj, "implementer", t["id"], profile="fake", create_workspace=True)
+    assert os.path.realpath(d["cwd"]) == os.path.realpath(str(orphan)) and d["workspace"]
