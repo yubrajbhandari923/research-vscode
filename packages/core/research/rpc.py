@@ -424,14 +424,70 @@ class Server:
         from . import report as RP
         return RP.write_report(self.project(), scope, fmt)
 
+    def _ro(self):
+        return Project(self.root, author=self.author, sync=False)
+
     def m_guide_status(self) -> Dict[str, Any]:
-        """Scientist Guide: pending syntheses, per-section freshness, review/approval state and Quarto availability. Read-only."""
+        """Scientist Guide: important results, chapters' freshness, citations, last draft check, review state, Quarto availability. Read-only."""
         from . import guide as G
-        p = Project(self.root, author=self.author, sync=False)
+        p = self._ro()
         try:
             return G.overview(p)
         finally:
             p.close()
+
+    def m_guide_init(self, workflow: Optional[bool] = None) -> Dict[str, Any]:
+        from . import guide as G
+        return G.init(self.project(), workflow=workflow)
+
+    def m_guide_build(self, edition: str = "scientific", pdf: bool = False, allow_invalid: bool = False) -> Dict[str, Any]:
+        from . import guide_quarto as GQ
+        return GQ.build(self.project(), edition, pdf, allow_invalid)
+
+    def m_guide_preview(self, edition: str = "scientific") -> Dict[str, Any]:
+        """The command that serves the book with live reload (the extension runs it in a terminal). Starts nothing itself."""
+        from . import guide_quarto as GQ
+        from . import provenance as PV
+        p = self.project()
+        return {"argv": GQ.preview_argv(p, edition), "cwd": PV.main_root(p)}
+
+    def m_guide_highlight(self, id: str, on: bool = True) -> Dict[str, Any]:
+        from . import guide as G
+        return G.star(self.project(), id, on)
+
+    def m_guide_log(self, ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        from . import guide as G
+        return G.log(self.project(), ids)
+
+    def m_guide_draft(self, results: Optional[List[str]] = None, section: Optional[str] = None, profile: Optional[str] = None,
+                      model: Optional[str] = None) -> Dict[str, Any]:
+        """Prepare (never start) a bounded agent draft. Returns the dispatch (argv/env/brief) the extension then previews and starts."""
+        from . import guide as G
+        d = G.draft(self.project(), profile, model, None, results, [section] if section else None)
+        d["shell"] = None   # never ship a copy-pasteable string built from record text
+        return d
+
+    def m_guide_draft_done(self, ids: Optional[List[str]] = None) -> Dict[str, Any]:
+        from . import guide as G
+        return G.draft_done(self.project(), ids)
+
+    def m_guide_cite_list(self) -> Dict[str, Any]:
+        from . import guide as G
+        p = self._ro()
+        try:
+            return G.cite_list(p)
+        finally:
+            p.close()
+
+    def m_guide_cite_add(self, bibtex: Optional[str] = None, key: Optional[str] = None, title: Optional[str] = None,
+                         authors: Optional[str] = None, year: Optional[str] = None, doi: Optional[str] = None,
+                         journal: Optional[str] = None, url: Optional[str] = None) -> Dict[str, Any]:
+        from . import guide as G
+        return G.cite_add(self.project(), bibtex, key, title, authors, year, doi, journal, url)
+
+    def m_guide_chapter_add(self, path: str, title: Optional[str] = None) -> Dict[str, Any]:
+        from . import guide_quarto as GQ
+        return GQ.chapter_add(self.project(), path, title)
 
     def m_guide_validate(self) -> Dict[str, Any]:
         """Deterministic claim/figure/section provenance validation. Read-only; not a scientific review."""
@@ -441,6 +497,17 @@ class Server:
             return PV.validate(p)
         finally:
             p.close()
+
+    def m_reports(self) -> Dict[str, Any]:
+        """Reports already written under .research/reports (newest first), with absolute paths for the editor. Read-only."""
+        p = self.project(sync=False)
+        d = p.path("reports")
+        rows = []
+        for f in (os.listdir(d) if os.path.isdir(d) else []):
+            if f.endswith((".md", ".html")):
+                st = os.stat(os.path.join(d, f))
+                rows.append({"name": f, "abs": os.path.join(d, f), "bytes": st.st_size, "modified": st.st_mtime, "full": f.endswith("-full.md")})
+        return {"dir": d, "reports": sorted(rows, key=lambda r: -r["modified"])}
 
     def m_report_full(self, scope: Optional[str] = None, check: bool = True) -> Dict[str, Any]:
         """Deterministic full context export. Read-only: opened without sync so nothing is mutated."""
@@ -858,6 +925,29 @@ class Server:
             out.append({**e, "state": S.experiment_state(p, e["id"]), "validation": ev})
         return out
 
+    def m_tools(self) -> Dict[str, Any]:
+        """What the agents get from Research OS besides records: skills (and whether they are exposed to the agent CLIs), approved hooks,
+        and the MCP server. Read-only."""
+        from . import hooks as HK
+        from . import skills as SK
+        p = self.project(sync=False)
+        p.config = p.load_config()
+        sk = SK.list_skills(p)
+        links = {}
+        for key, rel in SK.LINK_TARGETS.items():
+            d = os.path.join(p.root, rel)
+            links[key] = {"dir": rel, "linked": sorted(n["name"] for n in sk if os.path.exists(os.path.join(d, n["dir"] or n["name"])))}
+        return {"skills": [{"name": s["name"], "dir": s["dir"], "description": s.get("description"), "level": s["level"], "always": s["always"],
+                            "applies_to": s["applies_to"], "source": s.get("source")} for s in sk],
+                "links": links, "link_targets": list((p.config.get("skills") or {}).get("link") or []),
+                "hooks": HK.listing(p), "starters": {n: {"stage": s["stage"], "command": s["command"], "description": s["description"],
+                                                         "installed": n in HK.specs(p)} for n, s in HK.STARTERS.items()},
+                "mcp_command": __import__("research.providers", fromlist=["x"])._server_cmd(self.root)}
+
+    def m_hook_install_starters(self, approve: bool = True) -> Dict[str, Any]:
+        from . import hooks as HK
+        return HK.install_starters(self.project(sync=False), approve)
+
     def m_hook_approve(self, names: Any = None) -> Dict[str, Any]:
         from . import hooks as HK
         return HK.approve(self.project(sync=False), names)
@@ -922,7 +1012,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

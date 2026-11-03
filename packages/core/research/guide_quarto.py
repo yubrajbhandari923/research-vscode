@@ -49,13 +49,18 @@ book:
   chapters:
     - index.qmd
     - briefing.qmd
+    - results.qmd
     - theory.qmd
     - storyline.qmd
 {begin}
 {end}
     - open-questions.qmd
+    - ideas.qmd
+    - references.qmd
 
+# Your sources: add entries to references.bib (`research guide cite add`), cite them in any chapter as [@key].
 bibliography: references.bib
+link-citations: true
 
 # Rendering must never run simulations or any other code.
 execute:
@@ -63,9 +68,11 @@ execute:
 
 format:
   html:
-    theme: cosmo
+    # The project's own look: edit theme.scss (colours, fonts) or swap the theme list for any Quarto theme.
+    theme: [cosmo, theme.scss]
     toc: true
     number-sections: true
+    citations-hover: true
     html-math-method: mathjax
     code-fold: false
     filters:
@@ -90,7 +97,62 @@ project:
 book:
   appendices:
     - _generated/evidence-status.qmd
-    - _generated/legacy.qmd
+"""
+
+_THEME = """/*-- scss:defaults --*/
+// This project's look. Edit freely: it is yours, Research OS never rewrites it.
+// Any Quarto theme works too: change `theme:` in _quarto.yml (for example [flatly, theme.scss]).
+$primary: #2a5d8f;
+$link-color: #2a5d8f;
+$font-family-sans-serif: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+$headings-font-weight: 600;
+$body-color: #1f2328;
+
+/*-- scss:rules --*/
+.quarto-title-block .quarto-title-banner { background: $primary; }
+blockquote { border-left: 4px solid $primary; color: #444; }
+figure figcaption { font-size: 0.9em; color: #555; }
+"""
+
+_PUBLISH_YML = """# Builds the guide's scientific edition and publishes it as a website (GitHub Pages) on every push to main.
+# One-time setup on GitHub: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
+# Written once by Research OS; it is yours to edit (add the researcher edition, a custom domain, a PDF, ...).
+name: Publish scientist guide
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "{path}/**"
+      - ".github/workflows/publish-guide.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{{{ steps.deployment.outputs.page_url }}}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: quarto-dev/quarto-actions/setup@v2
+      - name: Render (never executes code)
+        run: quarto render {path} --profile scientific --to html --no-execute
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: {path}/_output/scientific
+      - id: deployment
+        uses: actions/deploy-pages@v4
 """
 
 _FILTER = r"""-- Edition filter. Same prose, two readings.
@@ -152,15 +214,33 @@ _CHAPTERS = {
                      "work: the current goal, the established findings, the significant negative results, the unresolved questions, "
                      "the main limitations, the working hypotheses, the decisions that need human judgment, and the reasonable next "
                      "experiments."),
+    "results.qmd": ("Key results", "The results that matter most, each with its evidence. Research OS adds a short entry here when a "
+                    "finding becomes an important result; entries are yours to edit (add the scientific context, cite the "
+                    "literature, rewrite them) and are never rewritten. Delete anything you do not want."),
     "theory.qmd": ("Mathematical and physical formulation", "_Not yet written._ The model, its assumptions, and the equations the "
                    "investigations rely on."),
     "storyline.qmd": ("How the investigation developed", "_Not yet written._ The questions, hypotheses, approaches, surprises, "
                       "corrections and failed directions, and why the direction changed."),
     "open-questions.qmd": ("Open questions and future directions", "_Not yet written._"),
+    "ideas.qmd": ("Notes and ideas", "Your scratch space: half-formed ideas, things to check, quotes and links to papers. Agents never "
+                  "edit this chapter. Cite a source with `[@key]` once it is in references.bib. Move text into other chapters "
+                  "when it is ready."),
 }
+HUMAN_CHAPTERS = ("ideas.qmd", "references.qmd")
 
 _GITIGNORE = "_output/\n_generated/\n.quarto/\n/.quarto/\n*.quarto_ipynb\n"
-_BIB = "% References cited in the chapters ([@key]). Cite only sources you have actually examined.\n"
+_BIB = """% References for the guide. Cite one in any chapter with [@key]. Add entries with `research guide cite add`, or paste BibTeX here
+% (from Zotero, a publisher page, Google Scholar...). Cite only sources you have actually examined.
+%
+% @article{smith2020example,
+%   author  = {Smith, Jane and Lee, Wei},
+%   title   = {An example article},
+%   journal = {Journal of Examples},
+%   year    = {2020},
+%   doi     = {10.0000/example}
+% }
+"""
+_REFERENCES = "# References {.unnumbered}\n\n::: {#refs}\n:::\n"
 
 
 def _qmd(title: str, body: str) -> str:
@@ -188,8 +268,21 @@ def _run(argv: List[str], cwd: Optional[str] = None, timeout: int = 600) -> Tupl
         return 127, str(e)
 
 
+_DOCTOR: Dict[Tuple[str, float], Dict[str, Any]] = {}  # a working install does not change while the process lives
+
+
 def doctor(p: Optional[Project] = None) -> Dict[str, Any]:
     q = find_quarto(p)
+    key = (q, os.path.getmtime(q)) if q and os.path.exists(q) else None
+    if key and key in _DOCTOR:
+        return dict(_DOCTOR[key])
+    out = _doctor(q)
+    if key and out["ok"]:
+        _DOCTOR[key] = dict(out)
+    return out
+
+
+def _doctor(q: Optional[str]) -> Dict[str, Any]:
     out: Dict[str, Any] = {"quarto": q, "version": None, "ok": False, "html": False, "pdf": False, "problems": [], "hints": []}
     if not q:
         out["problems"].append("Quarto is not installed (it is needed only to render or preview the guide)")
@@ -231,38 +324,48 @@ def _write_new(path: str, text: str, created: List[str], skipped: List[str], roo
     created.append(rel)
 
 
-def init_quarto(p: Project, dry_run: bool = False) -> Dict[str, Any]:
-    """Create the Quarto Scientist Guide. Never overwrites or edits an existing file; safe to repeat after an interruption
-    (each file is written atomically, so a retry just creates what is still missing)."""
-    gd = PV.guide_dir(p)
+def workflow_path(p: Project) -> str:
+    return os.path.join(PV.main_root(p), ".github", "workflows", "publish-guide.yml")
+
+
+def init_quarto(p: Project, dry_run: bool = False, workflow: Optional[bool] = None) -> Dict[str, Any]:
+    """Create the Quarto Scientist Guide on the main branch's checkout, with the publish workflow. Never overwrites or edits an
+    existing file; safe to repeat after an interruption (each file is written atomically, so a retry creates what is missing)."""
+    gd, root = PV.guide_dir(p), PV.main_root(p)
     proj = p.config.get("project") or {}
+    guide_rel = os.path.relpath(gd, root).replace(os.sep, "/")
     files = {
         "_quarto.yml": _QUARTO_YML.format(title=f"{p.name}: scientific guide".replace('"', "'"), author=(p.name or "Research").replace('"', "'"),
                                           begin=CHAPTER_MARK_BEGIN, end=CHAPTER_MARK_END),
         "_quarto-scientific.yml": _PROFILE_SCIENTIFIC, "_quarto-researcher.yml": _PROFILE_RESEARCHER,
-        "filters/edition.lua": _FILTER, "references.bib": _BIB, ".gitignore": _GITIGNORE,
+        "filters/edition.lua": _FILTER, "references.bib": _BIB, "references.qmd": _REFERENCES, "theme.scss": _THEME, ".gitignore": _GITIGNORE,
     }
     for name, (title, body) in _CHAPTERS.items():
         if name == "index.qmd" and proj.get("goal"):
             body += f"\n\n**Goal.** {proj['goal']}"
         files[name] = _qmd(title, body)
-    plan = [{"path": os.path.relpath(os.path.join(gd, n), p.root), "exists": os.path.exists(os.path.join(gd, n))} for n in files]
+    want_wf = (p.config.get("guide") or {}).get("publish", {}).get("workflow", True) if workflow is None else workflow
+    paths = {n: os.path.join(gd, n) for n in files}
+    if want_wf:
+        files[os.path.relpath(workflow_path(p), gd).replace(os.sep, "/")] = _PUBLISH_YML.format(path=guide_rel)
+        paths[os.path.relpath(workflow_path(p), gd).replace(os.sep, "/")] = workflow_path(p)
+    plan = [{"path": os.path.relpath(paths[n], root), "exists": os.path.exists(paths[n])} for n in files]
     if dry_run:
-        return {"dry_run": True, "guide_dir": p.rel(gd), "files": plan}
+        return {"dry_run": True, "guide_dir": os.path.relpath(gd, root), "files": plan}
     created: List[str] = []
     skipped: List[str] = []
     for n, t in files.items():
-        _write_new(os.path.join(gd, n), t, created, skipped, p.root)
-    for n in _CHAPTERS:  # register chapters as agent-owned sections (never changes an existing registration)
-        if n not in PV.load_sections(p):
-            PV.section_set(p, n, owner="agent")
-    legacy = os.path.join(p.root, (p.config.get("guide") or {}).get("path") or "docs/SCIENTIST_GUIDE.md")
-    return {"guide_dir": p.rel(gd), "created": created, "left_untouched": skipped,
-            "legacy_guide": p.rel(legacy) if os.path.exists(legacy) else None,
-            "next": ["research guide quarto doctor", "research guide quarto build --edition scientific"]}
+        _write_new(paths[n], t, created, skipped, root)
+    secs = PV.load_sections(p)
+    for n in list(_CHAPTERS) + ["references.qmd"]:  # register chapters as sections (never changes an existing registration)
+        if n not in secs:
+            PV.section_set(p, n, owner="human" if n in HUMAN_CHAPTERS else "agent")
+    return {"guide_dir": os.path.relpath(gd, root), "created": created, "left_untouched": skipped, "workflow": bool(want_wf),
+            "next": ["git add " + guide_rel + (" .github" if want_wf else "") + " && git commit  (on main)",
+                     "research guide quarto doctor", "research guide quarto build --edition scientific"]}
 
 
-def chapter_add(p: Project, path: str, title: Optional[str] = None, owner: str = "agent") -> Dict[str, Any]:
+def chapter_add(p: Project, path: str, title: Optional[str] = None, owner: Optional[str] = None) -> Dict[str, Any]:
     """Create an investigation chapter (if absent) and list it in _quarto.yml between the managed markers."""
     key = PV._section_key(p, path)
     if not key.endswith(".qmd"):
@@ -285,7 +388,8 @@ def chapter_add(p: Project, path: str, title: Optional[str] = None, owner: str =
     if not listed:
         text = text.replace(CHAPTER_MARK_END, f"    - {key}\n{CHAPTER_MARK_END}", 1)
         _atomic_write(qy, text)
-    PV.section_set(p, key, owner=owner)
+    if owner or key not in PV.load_sections(p):  # an existing registration (and its owner) is kept unless you say otherwise
+        PV.section_set(p, key, owner=owner or "agent")
     return {"chapter": key, "file_created": created, "added_to_book": not listed}
 
 
@@ -464,12 +568,7 @@ def prepare(p: Project) -> Dict[str, Any]:
     for ch in chapters:
         wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence", slug_of(ch) + ".md"), _panel(p, ch, rep, claims, figs, secs, rvs.get(ch)))
     wrote += _write_if_changed(os.path.join(gd, "_generated", "evidence-status.qmd"), _status_page(p, rep, rvs))
-    legacy = os.path.join(p.root, (p.config.get("guide") or {}).get("path") or "docs/SCIENTIST_GUIDE.md")
-    body = ("# Legacy narrative {.unnumbered}\n\nThe earlier Markdown guide, preserved unchanged.\n\n{{< include "
-            + os.path.relpath(legacy, os.path.join(gd, "_generated")).replace(os.sep, "/") + " >}}\n") if os.path.exists(legacy) else \
-        "# Legacy narrative {.unnumbered}\n\nThis project had no earlier Markdown guide.\n"
-    wrote += _write_if_changed(os.path.join(gd, "_generated", "legacy.qmd"), body)
-    return {"generated": p.rel(os.path.join(gd, "_generated")), "files_written": wrote, "chapters": chapters,
+    return {"generated": os.path.relpath(os.path.join(gd, "_generated"), PV.main_root(p)), "files_written": wrote, "chapters": chapters,
             "validation": {"ok": rep["ok"], "errors": rep["errors"], "warnings": rep["warnings"], "stale": rep["stale"]}}
 
 
@@ -549,7 +648,8 @@ def source_issues(p: Project) -> List[Dict[str, Any]]:
                 issues.append(PV._issue("warning", "figure_alt_missing", f"{rel}: {label.group(1)} has no fig-alt text"))
         if listed and rel not in listed and rel != "_quarto.yml":
             issues.append(PV._issue("warning", "chapter_not_in_book", f"{rel} is not listed in _quarto.yml (`research guide chapter add {rel}`)"))
-    return issues
+    from . import guide as G
+    return issues + G.citation_issues(p)
 
 
 class _Visible(html.parser.HTMLParser):
@@ -629,7 +729,7 @@ def build(p: Project, edition: str = "scientific", pdf: bool = False, allow_inva
                                  "or pass --allow-invalid.")
     out: Dict[str, Any] = {"edition": edition, "validation": prep["validation"], "warnings": []}
     code, text = _run([q, "render", gd, "--profile", edition, "--to", "html", "--no-execute"], timeout=1800)
-    out["html"] = {"ok": code == 0, "dir": p.rel(os.path.join(gd, "_output", edition)), "log": text[-1500:]}
+    out["html"] = {"ok": code == 0, "dir": os.path.relpath(os.path.join(gd, "_output", edition), PV.main_root(p)), "log": text[-1500:]}
     if code != 0:
         out["ok"] = False
         return out
@@ -659,7 +759,7 @@ def build(p: Project, edition: str = "scientific", pdf: bool = False, allow_inva
                 for fn in (os.listdir(tmp) if os.path.isdir(tmp) else []):
                     if fn.endswith(".pdf"):
                         shutil.copy2(os.path.join(tmp, fn), os.path.join(gd, "_output", edition, fn))
-                        out["pdf"]["file"] = p.rel(os.path.join(gd, "_output", edition, fn))
+                        out["pdf"]["file"] = os.path.relpath(os.path.join(gd, "_output", edition, fn), PV.main_root(p))
                 shutil.rmtree(tmp, ignore_errors=True)
     return out
 

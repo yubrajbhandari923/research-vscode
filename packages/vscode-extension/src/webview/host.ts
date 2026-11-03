@@ -5,9 +5,15 @@ export interface Host {
   /** Open a record (Q-, EXP-, RUN-, F-, D-, T-, …) in the host's detail view. */
   openEntity(id: string): void;
   /** Run one of the few editor commands the Control Center may trigger (new plan, add task, dispatch). */
-  run(command: 'research.plan.create' | 'research.task.create' | 'research.dispatch' | 'research.workspace.open' | 'research.hpc.submit' | 'research.plan.yaml.import' | 'research.plan.yaml.new' | 'research.plan.yaml.apply' | 'research.plan.yaml.open' | 'research.plan.run', arg?: string): void;
+  run(command: 'research.plan.create' | 'research.task.create' | 'research.dispatch' | 'research.workspace.open' | 'research.hpc.submit' | 'research.plan.yaml.import' | 'research.plan.yaml.new' | 'research.plan.yaml.apply' | 'research.plan.yaml.open' | 'research.plan.run' | 'research.guide.draft' | 'research.guide.preview', arg?: string): void;
   /** Open a configuration file in the editor (project-relative path, or the machine config path the core reported). */
   openFile(path: string): void;
+  /** Open a written report (absolute path from the core): HTML in the browser, Markdown in the editor. */
+  openReport(file: string): void;
+  /** Tell the host the shell is listening for navigation requests (so a command sent while the page loaded is not lost). */
+  ready?(): void;
+  /** Open a file of the Scientist Guide (guide-relative path; `dir` is the absolute guide directory the core reported). */
+  openGuide(dir: string, file: string): void;
   /** Open documentation (a repo-relative path with optional #anchor). */
   openDoc(path: string): void;
   /** Persist small UI state (selected page, search text). */
@@ -36,6 +42,9 @@ export function vscodeHost(api: { postMessage(m: any): void; getState(): any; se
     run: (command, arg) => api.postMessage({ type: 'run', command, arg }),
     openDoc: (path) => api.postMessage({ type: 'open-doc', path }),
     openFile: (path) => api.postMessage({ type: 'open-file', path }),
+    openReport: (file) => api.postMessage({ type: 'open-report', file }),
+    ready: () => api.postMessage({ type: 'shell-ready' }),
+    openGuide: (dir, file) => api.postMessage({ type: 'open-guide', dir, file }),
     getState: () => api.getState() || {},
     setState: (s) => api.setState(s),
   };

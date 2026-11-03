@@ -100,9 +100,10 @@ def approve(p: Project, section: str, who: str, notes: Optional[str] = None, for
     return {"section": key, **entry}
 
 
-def status(p: Project) -> Dict[str, Dict[str, Any]]:
-    """Per chapter: the deterministic state plus the latest model review and human approval and whether each is current."""
-    rep = PV.validate(p)
+def status(p: Project, rep: Optional[Dict[str, Any]] = None) -> Dict[str, Dict[str, Any]]:
+    """Per chapter: the deterministic state plus the latest model review and human approval and whether each is current.
+    `rep` is an already computed `PV.validate(p)` (the Guide page needs it twice; validating is the slow part)."""
+    rep = rep or PV.validate(p)
     allr = _all(p)
     out: Dict[str, Dict[str, Any]] = {}
     for key, sec in rep["sections"].items():

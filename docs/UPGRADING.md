@@ -76,7 +76,7 @@ before switching if you want a clean cut-over.
 .research/bin/research guide coverage                # what the new guide does not cover yet
 ```
 
-Nothing in `.research/` records changes. Details: `docs/SCIENTIST_GUIDE_V2.md`.
+Nothing in `.research/` records changes. Details: `docs/GUIDE.md`.
 
 ## 5. Prove nothing was lost
 
@@ -173,3 +173,12 @@ Nothing about existing projects changes unless you opt in. `research ledger enab
 records, rebuilds the index there and compares per-table counts with the original, links the repository, and renames the original `.research/` to
 `.research.pre-ledger` (kept; nothing is deleted). Any failure before linking removes only what was created. To undo: `git worktree remove <ledger>`,
 delete `<git common dir>/research/ledger.json`, rename `.research.pre-ledger` back to `.research`. Nothing is committed for you.
+
+
+## 2.1 → 2.2: the Markdown Scientist Guide is gone
+
+`docs/SCIENTIST_GUIDE.md` and `.research/guide.json` are no longer read, and `research guide refresh` / `done` no longer exist.
+Nothing is deleted: keep the file, or paste what you want into the new book. Create the Quarto guide with `research guide init`
+(it adds `docs/scientist-guide/` and `.github/workflows/publish-guide.yml` on main; commit them). A guide created by 2.1 keeps its
+`_quarto.yml`: `research guide log` adds `results.qmd` itself, and `research guide chapter add ideas.qmd --owner human` and
+`research guide chapter add references.qmd --owner human` list the other new chapters (add `bibliography: references.bib` if absent).

@@ -48,8 +48,23 @@ _PLAIN = re.compile(r"^(EXP|RUN|F|D|Q|A|T|PLAN|CP)-\d+$", re.I)
 
 # =============================================================================== files
 
+def main_root(p: Project) -> str:
+    """The checkout of the repository's primary branch: the guide lives there, whichever experiment worktree the project was opened
+    from, so it is part of `main` (and of what GitHub publishes). Classic projects and unusual layouts use the project root."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=p.root, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return p.root
+    common = r.stdout.strip()
+    if r.returncode == 0 and os.path.basename(common) == ".git" and os.path.isdir(os.path.dirname(common)):
+        top = os.path.dirname(common)
+        return p.root if os.path.realpath(p.root) == os.path.realpath(top) else top
+    return p.root
+
+
 def guide_dir(p: Project) -> str:
-    return os.path.join(p.root, ((p.config.get("guide") or {}).get("dir") or DEFAULT_DIR))
+    return os.path.join(main_root(p), ((p.config.get("guide") or {}).get("dir") or DEFAULT_DIR))
 
 
 def prov_path(p: Project, name: str) -> str:
@@ -92,7 +107,7 @@ def load_sections(p: Project) -> Dict[str, Any]:
 def _section_key(p: Project, section: str) -> str:
     """Chapter path relative to the guide directory, POSIX style. Accepts a repo-relative or guide-relative path."""
     s = str(section).replace(os.sep, "/").strip().lstrip("./")
-    prefix = os.path.relpath(guide_dir(p), p.root).replace(os.sep, "/") + "/"
+    prefix = os.path.relpath(guide_dir(p), main_root(p)).replace(os.sep, "/") + "/"
     return s[len(prefix):] if s.startswith(prefix) else s
 
 

@@ -328,7 +328,7 @@ def test_report_md_and_html(proj, repo, monkeypatch):
     assert "## What we learned" in md and "alpha 0.5 is best" in md and "| run | status | alpha | err |" in md
     assert "](../../out_0.5.png)" in md and "U-shaped" in md
     html = (repo / ".research/reports/project.html").read_text()
-    assert '<img src="../../out_0.5.png"' in html and "<table>" in html
+    assert 'src="../../out_0.5.png"' in html and "<table>" in html and 'class="tbl-wrap"' in html
     scoped = RP.write_report(proj, q["id"], "md")
     assert scoped["paths"] == [".research/reports/Q-001.md"]
     custom = repo / "docs" / "r.md"

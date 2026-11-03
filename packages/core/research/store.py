@@ -93,7 +93,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "coordination": {"stale_task_hours": 4},
     "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
     "skills": {"link": ["claude", "agents"]},    # expose .research/skills to .claude/skills and .agents/skills
-    "guide": {"enabled": True, "path": "docs/SCIENTIST_GUIDE.md", "profile": None, "model": "claude-opus-5-5"},
+    # The Scientist Guide is a Quarto book on the main branch (docs/scientist-guide). `highlights` decides which findings count as
+    # important results; `draft.*` bounds what an agent may write into it (see guide.py).
+    "guide": {"enabled": True, "dir": "docs/scientist-guide", "profile": None, "model": "claude-opus-5-5",
+              "auto_log": True, "highlights": "supported",
+              "draft": {"trigger": "result", "max_words": 150, "max_sections": 3, "max_figures": 1},
+              "publish": {"workflow": True}},
     # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
     "orchestration": {
         "enabled": False,

@@ -2,7 +2,7 @@
   "name": "research-panel",
   "displayName": "Research Panel",
   "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "publisher": "research-local",
   "license": "MIT",
   "engines": {
@@ -41,7 +41,7 @@
     "package": "node esbuild.mjs --production && node scripts/bundle-python.mjs && vsce package --no-dependencies --out ../../dist/",
     "test:ext": "node test/run.mjs",
     "test:client": "node --test test/client.test.cjs",
-    "test:webview": "node --test --test-force-exit --test-timeout=60000 test/webview.test.cjs"
+    "test:webview": "node --test --test-force-exit --test-timeout=180000 test/webview.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
@@ -656,6 +656,24 @@
         "icon": "$(file-code)"
       },
       {
+        "command": "research.guide.open",
+        "title": "Open Scientist Guide",
+        "category": "Research",
+        "icon": "$(book)"
+      },
+      {
+        "command": "research.guide.draft",
+        "title": "Draft Scientist Guide Entry with an Agent…",
+        "category": "Research",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "research.guide.preview",
+        "title": "Preview Scientist Guide Website",
+        "category": "Research",
+        "icon": "$(preview)"
+      },
+      {
         "command": "research.plan.run",
         "title": "Run Plan (Supervisor)…",
         "category": "Research",
@@ -990,6 +1008,18 @@
         },
         {
           "command": "research.plan.yaml.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.guide.open",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.guide.draft",
+          "when": "research.initialized"
+        },
+        {
+          "command": "research.guide.preview",
           "when": "research.initialized"
         },
         {

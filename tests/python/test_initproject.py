@@ -82,3 +82,122 @@ def test_hpc_job_environment_is_saved_as_slurm_setup(tmp_path, monkeypatch):
     IP.apply(str(root), spec)
     with Project(str(root / "main")) as p:
         assert p.config["hpc"]["clusters"]["clu"]["slurm"]["setup"] == ["module load python/3.11", "source ~/v/bin/activate"]
+
+
+def test_new_projects_get_a_guide_on_main_with_a_publish_workflow(made):
+    root, _, r = made
+    files = set(g(root / "main", "ls-tree", "-r", "--name-only", "main").split())
+    for f in ("docs/scientist-guide/_quarto.yml", "docs/scientist-guide/references.bib", "docs/scientist-guide/theme.scss",
+              "docs/scientist-guide/ideas.qmd", "docs/scientist-guide/results.qmd", ".github/workflows/publish-guide.yml"):
+        assert f in files, f
+    assert not any(f.startswith("docs/scientist-guide/_output") for f in files)
+    assert any("Scientist Guide created" in d for d in r["done"])
+    p = Project(str(root / "main"))
+    try:
+        from research import guide as G
+        st = G.status(p)
+        assert st["exists"] and st["settings"]["draft"]["max_words"] == 150 and st["publishing"]["workflow"]
+    finally:
+        p.close()
+    assert g(root / "main", "status", "--porcelain").strip() == ""  # everything it wrote is committed
+
+
+def test_guide_choices_from_the_wizard_are_saved_and_can_be_declined(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    a = tmp_path / "a"
+    a.mkdir()
+    spec = {"name": "a", "guide": {"enabled": True, "trigger": "checkpoint", "max_words": 80, "max_sections": 2, "max_figures": 0,
+                                   "auto_log": False, "publish": False}}
+    pl = IP.plan(str(a), spec)
+    assert pl["ok"] and any("at most 80 words per section" in x for x in pl["actions"]) and not any("GitHub Actions" in x for x in pl["actions"])
+    IP.apply(str(a), spec)
+    p = Project(str(a / "main"))
+    try:
+        from research import guide as G
+        s = G.settings(p)
+        assert s["draft"] == {"trigger": "checkpoint", "max_words": 80, "max_sections": 2, "max_figures": 0} and s["auto_log"] is False
+        assert not (a / "main" / ".github").exists() and G.exists(p)
+    finally:
+        p.close()
+    b = tmp_path / "b"
+    b.mkdir()
+    IP.apply(str(b), {"name": "b", "guide": {"enabled": False}})
+    assert not (b / "main" / "docs").exists()
+
+
+def test_new_projects_load_skills_hooks_and_mcp_by_default(made):
+    root, _, r = made
+    main = root / "main"
+    # skills: linked where Claude Code and Codex look, never committed (links are machine-local)
+    for d in (".claude/skills", ".agents/skills"):
+        assert (main / d / "run-experiment" / "SKILL.md").exists() and (main / d / "scientific-briefing").is_symlink()
+    assert ".claude/skills/" in (main / ".gitignore").read_text()
+    assert not [f for f in g(main, "ls-files").split() if f.startswith((".claude/skills", ".agents/skills"))]
+    # hooks: two starters, approved by the wizard, never blocking
+    from research import hooks as HK
+    p = Project(str(main))
+    try:
+        hs = {h["name"]: h for h in HK.listing(p)}
+        assert set(hs) == {"syntax-check", "whitespace-check"} and all(h["approved"] and not h["required"] for h in hs.values())
+        assert any("starter hooks approved" in d for d in r["done"]) and any("skills linked" in d for d in r["done"])
+        # MCP is registered for the enabled agents and the tools view reports all three
+        assert (main / ".mcp.json").exists()
+    finally:
+        p.close()
+    from test_plans_tasks_interfaces import rpc
+    t = rpc(main, ("tools", {}))[1]["result"]
+    assert {s["name"] for s in t["skills"]} >= {"run-experiment", "scientific-briefing"} and t["links"]["claude"]["linked"] == sorted(s["name"] for s in t["skills"])
+    assert t["starters"]["syntax-check"]["installed"] and t["mcp_command"]
+
+
+def test_starter_hooks_and_skill_links_can_be_declined_and_added_later(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    a = tmp_path / "a"
+    a.mkdir()
+    IP.apply(str(a), {"name": "a", "tools": {"link_skills": False, "starter_hooks": False}})
+    main = a / "main"
+    assert not (main / ".claude" / "skills").exists()
+    from research import hooks as HK
+    from research import skills as SK
+    p = Project(str(main))
+    try:
+        assert HK.listing(p) == []
+        r = HK.install_starters(p)  # added but not approved: they do not run until a human approves
+        assert r["added"] == ["syntax-check", "whitespace-check"] and r["approved"] == [] and not any(h["approved"] for h in HK.listing(p))
+        assert HK.install_starters(p, approve_now=True) == {"added": [], "approved": []}  # idempotent, never overwrites
+        HK.approve(p, ["syntax-check"])
+        assert HK.is_approved(p, "syntax-check")
+        assert SK.link_skills(p)[".claude/skills"]["linked"]
+    finally:
+        p.close()
+
+
+def test_starter_hooks_really_run(made):
+    root, _, _ = made
+    from research import hooks as HK
+    main = root / "main"
+    (main / "ok.py").write_text("x = 1\n")
+    p = Project(str(main))
+    try:
+        r = HK.run(p, "post_implementation")
+        assert {x["hook"] for x in r["ran"]} == {"syntax-check", "whitespace-check"} and all(x.get("passed", x.get("ok")) for x in r["ran"]), r
+        (main / "bad.py").write_text("def broken(:\n")
+        r2 = HK.run(p, "post_implementation", names=["syntax-check"])
+        assert not r2["ran"][0].get("passed", r2["ran"][0].get("ok"))
+    finally:
+        p.close()
+
+
+def test_an_agent_running_the_wizard_cannot_approve_the_starter_hooks_and_nothing_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CLAUDECODE", "1")   # the process looks like an agent session
+    a = tmp_path / "a"
+    a.mkdir()
+    r = IP.apply(str(a), {"name": "a"})
+    assert any("NOT approved" in d for d in r["done"])
+    from research import hooks as HK
+    p = Project(str(a / "main"))
+    try:
+        assert {h["name"]: h["approved"] for h in HK.listing(p)} == {"syntax-check": False, "whitespace-check": False}
+    finally:
+        p.close()

@@ -81,6 +81,19 @@ def _tools() -> List[Tool]:
         finally:
             ro.close()
 
+    def report(p, scope=None, fmt="both"):
+        from . import report as RP
+        return RP.write_report(p, scope or None, fmt)
+
+    def guide_highlights(p):
+        from . import guide as G
+        from .store import Project
+        ro = Project(p.root, author=p.author, sync=False)
+        try:
+            return G.highlights(ro)
+        finally:
+            ro.close()
+
     def report_full(p, scope=None, check=True):
         """Export against a read-only snapshot of the same project, so rendering mutates nothing."""
         from .store import Project
@@ -229,9 +242,21 @@ def _tools() -> List[Tool]:
              "Q-/EXP-/PLAN-), with coverage verification. Use it for a complete context hand-off. It retrieves and "
              "renders records only — it is not a synthesis and interprets nothing.",
              {"scope": S, "check": B}, [], report_full, False),
-        Tool("guide_status", "Scientist Guide state: pending syntheses, per-section freshness (fresh|stale|invalid), uncovered "
-             "experiments/findings, review/approval label per chapter. Read-only; a clean state is not scientific approval.",
-             {}, [], guide_status, False),
+        Tool("report", "Write the readable project report (goal, findings with evidence plots, failed directions, decisions, runs and "
+             "syntheses per question) to .research/reports/<scope>.md and/or .html and return the paths. scope = Q-/EXP-/PLAN- id or "
+             "omitted for the whole project; fmt = md|html|both. It covers everything; the Scientist Guide is the short curated story.",
+             {"scope": S, "fmt": {"type": "string", "enum": ["md", "html", "both"]}}, [], report),
+        Tool("guide_status", "Scientist Guide (Quarto book on main) state: important results and whether each has a draft, per-chapter "
+             "freshness (fresh|stale|invalid), citations, the last draft's limit check, review/approval label per chapter. Read-only; "
+             "a clean state is not scientific approval.", {}, [], guide_status, False),
+        Tool("guide_highlights", "The important results (findings) that belong in the Scientist Guide, with numbers status and whether "
+             "each is logged/drafted. Read-only.", {}, [], guide_highlights, False),
+        Tool("guide_draft_check", "After writing a guide draft: did you stay within guide.draft.* (words per section, sections, figures) "
+             "and out of human-owned chapters? Read-only; fix every problem it lists.", {}, [],
+             lambda p: __import__("research.guide", fromlist=["x"]).draft_check(p), False),
+        Tool("guide_draft_done", "Record that the given important results (F- ids) now have a draft, then return the limit check. Call it "
+             "only after the guide files are saved.", {"ids": L}, [],
+             lambda p, ids=None: __import__("research.guide", fromlist=["x"]).draft_done(p, ids)),
         Tool("guide_validate", "Validate the Scientist Guide's claim/figure provenance against the live records (missing, "
              "stale, contradicted, superseded, inconsistent). Read-only; provenance only, not a scientific review.",
              {}, [], guide_validate, False),

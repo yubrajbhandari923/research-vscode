@@ -26,7 +26,7 @@ from .util import ResearchError, now_iso
 CATEGORIES = [
     ("project", "Project"), ("policy", "Research policy"), ("verification", "Verification"),
     ("agents", "Agents & orchestration"), ("hooks", "Hooks & skills"), ("git", "Git & workspaces"), ("environment", "Python environment"), ("supervisor", "Supervisor"),
-    ("sandbox", "Execution & sandbox"), ("hpc", "HPC & SLURM"), ("context", "Context & guide"), ("data", "Data & artifacts"),
+    ("sandbox", "Execution & sandbox"), ("hpc", "HPC & SLURM"), ("context", "Context"), ("guide", "Scientist Guide"), ("data", "Data & artifacts"),
 ]
 
 
@@ -217,9 +217,25 @@ OPTIONS: List[Option] = [
        why="Agents read this first; too long wastes their context window.", effect="Lower = terser summaries and more omitted detail."),
     _o("resume.stale_checkpoint_days", "int", "context", "Stale checkpoint after", "A checkpoint older than this is flagged in the resume view.", min_=1, max_=3650, unit="days",
        why="Reminds you to record what you now understand.", effect="Flag only."),
-    _o("guide.enabled", "bool", "context", "Scientist Guide", "Maintain a plain-language guide of the science, and flag it stale when findings change.",
-       why="Records and prose drift apart without a freshness signal.", effect="Off hides guide status; existing guide files are untouched."),
-    _o("guide.model", "str", "context", "Guide writing model", "The model profile the guide-refresh dispatch asks for.", why="Guide prose benefits from the strongest model.", effect="Used on the next refresh only."),
+    _o("guide.enabled", "bool", "guide", "Scientist Guide", "Keep a Quarto book of the science on the main branch (docs/scientist-guide) and flag what needs writing.",
+       why="Records and prose drift apart without a freshness signal.", effect="Off hides guide status and prompts; existing guide files are untouched."),
+    _o("guide.highlights", "enum", "guide", "What counts as an important result", "supported: findings an independent review marked supported. starred: only findings you star. all: every finding that is not superseded.",
+       choices=["supported", "starred", "all"], why="The guide communicates the main results, not every run. Starred findings are always included.",
+       effect="Changes which findings are logged into the guide's Key results chapter and listed on the Guide page.", depends_on="guide.enabled"),
+    _o("guide.auto_log", "bool", "guide", "Log important results automatically", "When a finding becomes an important result, add a short entry (claim, evidence link, one plot) to the Key results chapter. No agent is involved and nothing is ever rewritten.",
+       why="You start from a skeleton that is already tied to the evidence.", effect="Off: add entries yourself with `research guide log`.", depends_on="guide.enabled"),
+    _o("guide.draft.trigger", "enum", "guide", "When to suggest an agent draft", "manual: never prompt. result: Home asks as soon as an important result has no draft. checkpoint: only after you record a checkpoint, so drafts are batched.",
+       choices=["manual", "result", "checkpoint"], why="Drafting costs agent time; you decide how eagerly to be asked.",
+       effect="Only controls the reminder. An agent never writes into the guide until you start a draft.", depends_on="guide.enabled"),
+    _o("guide.draft.max_words", "int", "guide", "Words an agent may add per section", "Upper bound for one draft in one chapter or result entry. A short first draft with the main idea; you add the context.",
+       min_=30, max_=2000, unit="words", why="Keeps the guide yours: the agent proposes, you write.", effect="Written into the agent brief and checked afterwards (`research guide draft check`).", depends_on="guide.enabled"),
+    _o("guide.draft.max_sections", "int", "guide", "Sections an agent may touch per draft", "How many chapters or result entries one draft may change.",
+       min_=1, max_=20, unit="sections", why="Bounds the size of a review.", effect="Written into the agent brief and checked afterwards.", depends_on="guide.enabled"),
+    _o("guide.draft.max_figures", "int", "guide", "Figures an agent may add per section", "How many figures one draft may add to a section. 0 means the agent writes text only.",
+       min_=0, max_=10, unit="figures", why="Figures need captions and axes you will want to choose.", effect="Written into the agent brief and checked afterwards.", depends_on="guide.enabled"),
+    _o("guide.publish.workflow", "bool", "guide", "GitHub Pages workflow", "Keep .github/workflows/publish-guide.yml, which builds the guide's scientific edition and publishes it as a website on every push to main.",
+       why="One push publishes the current text.", effect="Creation only: turning it off never deletes an existing workflow.", depends_on="guide.enabled"),
+    _o("guide.model", "str", "guide", "Guide writing model", "The model profile the guide draft dispatch asks for.", why="Short drafts need a careful model more than a long one.", effect="Used on the next draft only.", depends_on="guide.enabled"),
 
     _o("artifacts.hash_max_bytes", "int", "data", "Hash artifacts up to", "Artifacts at or below this size are content-hashed when registered; larger ones record size only until pinned.", min_=0, unit="bytes",
        why="Hashes prove an artifact is unchanged; hashing huge files is slow.", effect="Larger values give stronger integrity evidence for more files at the cost of registration time."),

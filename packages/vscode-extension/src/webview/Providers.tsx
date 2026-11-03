@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Badge, State, Status, useAsync } from './common';
 import type { Host } from './host';
+import { ToolsSection } from './ToolsSection';
 
 const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'OpenAI Codex', agy: 'Google Antigravity' };
 const yes = (v: any) => (v === true ? 'yes' : v ? String(v) : 'no');
@@ -41,6 +42,7 @@ export function ProvidersPage({ host }: { host: Host }) {
               </div>
             </section>))}
         </div>
+        <ToolsSection host={host} />
         <h2>Recent sessions</h2>
         <p className="muted small">Completed = the agent process exited successfully. It does not mean the task passed: run verification.</p>
         {d.recent.length === 0 ? <p className="muted">Nothing dispatched yet. Open a task and choose Dispatch.</p> :

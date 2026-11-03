@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Badge, Dialog, EmptyState, IdLink, Icon, PageHeader, Progress, Section, Segmented, Stat, State, Status, ago, useAsync } from './common';
 import { HealthBanner } from './Doctor';
 import { NewExperiment } from './NewExperiment';
+import { ReportsSection } from './ReportsSection';
 import type { Host } from './host';
 import type { Attention, Page } from './types';
 
@@ -235,7 +236,7 @@ function CreateWorkspace({ host, onClose, onDone }: { host: Host; onClose: () =>
 const EXP_FILTERS = [{ id: 'all', label: 'All' }, { id: 'active', label: 'Active' }, { id: 'review', label: 'Needs review' }, { id: 'done', label: 'Completed' }] as const;
 type ExpFilter = (typeof EXP_FILTERS)[number]['id'];
 
-export function ResearchPage({ host }: { host: Host }) {
+export function ResearchPage({ host, go }: { host: Host; go: Go }) {
   const a = useAsync<any>(() => host.call('control', { page: 'research' }), []);
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState<ExpFilter>('all');
@@ -251,6 +252,7 @@ export function ResearchPage({ host }: { host: Host }) {
               actions={<button type="button" className="primary" onClick={() => setCreating(true)}><Icon name="plus" /> New experiment</button>} />
             {creating && <NewExperiment host={host} onClose={() => setCreating(false)} onCreated={() => a.reload()} />}
             <div className="stack">
+              <ReportsSection host={host} onGuide={() => go('guide')} />
               <Section id="ex2" title="Experiments" count={d.experiments.length}
                 actions={d.experiments.length > 0 && <Segmented label="Filter experiments" value={filter} onChange={setFilter} options={EXP_FILTERS.map((f) => ({ id: f.id, label: f.label, n: d.experiments.filter((e: any) => match(e, f.id)).length }))} />} boxed>
                 {d.experiments.length === 0 ? <EmptyState icon="flask" title="No experiments yet." actions={<button type="button" className="primary" onClick={() => setCreating(true)}>New experiment</button>}>An experiment states a hypothesis before any run exists, so results can be interpreted honestly.</EmptyState> :

@@ -21,6 +21,7 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
   const [removing, setRemoving] = useState(false);
   const a = useAsync<SettingsPayload>(() => host.call('settings'), []);
   const diag = useAsync<any>(() => host.call('config_check'), []);
+  const about = useAsync<any>(() => host.call('ping'), []);
 
   const remember = (c: string, q: string) => host.setState({ ...host.getState(), cat: c, query: q });
   const pendingKeys = Object.keys(draft);
@@ -89,6 +90,9 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
               actions={<><button type="button" onClick={() => host.openFile(d.project_config_rel)}><Icon name="file" /> Open configuration file</button>
                 {d.machine_config && <button type="button" onClick={() => host.openFile(d.machine_config!)} title={d.machine_config}>Machine file</button>}
                 <button type="button" className="ghost icon-btn" aria-label="Reload settings from disk" title="Reload from disk" onClick={reloadAll}><Icon name="refresh" /></button></>} />
+            <p className="meta" data-testid="about" style={{ margin: '0 0 8px' }}>Research OS <b>{about.data?.version || '…'}</b>
+              {about.data?.python && <> · core running from <code title={about.data.python}>{String(about.data.python).split('/').slice(-4).join('/')}</code></>}
+              {' '}· the version is the same in the extension and its bundled core; compare it with the latest release on GitHub (yubrajbhandari923/research-vscode) to confirm you are up to date.</p>
             <div className="cfgbar">
               <label className="search"><span className="sr">Search settings</span><Icon name="search" />
                 <input id="setting-search" type="search" placeholder="Search settings (e.g. budget, review, sandbox)" value={query}

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 
 import pytest
 
@@ -73,18 +74,13 @@ def test_init_fresh_project_creates_complete_guide_and_is_idempotent(proj):
     assert again["created"] == [] and snapshot(proj) == before
 
 
-def test_init_never_touches_existing_files_or_the_legacy_guide(proj):
-    legacy = os.path.join(proj.root, "docs", "SCIENTIST_GUIDE.md")
-    os.makedirs(os.path.dirname(legacy))
-    open(legacy, "w").write("# My careful notes\n\nHuman text F-001 EXP-002.\n")
+def test_init_never_touches_existing_files(proj):
     gd = PV.guide_dir(proj)
     os.makedirs(gd)
     open(os.path.join(gd, "index.qmd"), "w").write("# Mine\n\nHand-written preface.\n")
     r = GQ.init_quarto(proj)
     assert "docs/scientist-guide/index.qmd" in r["left_untouched"]
     assert open(os.path.join(gd, "index.qmd")).read() == "# Mine\n\nHand-written preface.\n"
-    assert open(legacy).read() == "# My careful notes\n\nHuman text F-001 EXP-002.\n"
-    assert r["legacy_guide"] == "docs/SCIENTIST_GUIDE.md"
 
 
 def test_interrupted_init_resumes(proj):
@@ -249,3 +245,76 @@ def test_researcher_pdf_is_skipped_with_a_warning_and_html_is_unaffected(proj, s
     assert r["ok"] and "pdf" not in r and any("scientific edition" in w for w in r["warnings"])
     html = open(os.path.join(PV.guide_dir(proj), "_output", "researcher", "investigations", "sensitivity.html"), encoding="utf-8").read()
     assert "#ev-clm-0001" in html  # HTML keeps the claim → evidence links
+
+
+# ------------------------------------------------------------------ 2.2: default scaffold, logged results, citations, CI command
+
+def _bytes_text(path):
+    return open(path, encoding="utf-8", errors="replace").read()
+
+
+@needs_quarto
+def test_fresh_scaffold_builds_html_as_it_is_and_has_the_project_theme(proj):
+    from research import guide as G
+    G.init(proj)
+    r = GQ.build(proj, "scientific")
+    assert r["ok"] and not r["leaks"], r
+    out = os.path.join(PV.guide_dir(proj), "_output", "scientific")
+    for page in ("index", "briefing", "results", "ideas", "references", "theory", "storyline", "open-questions"):
+        assert os.path.exists(os.path.join(out, page + ".html")), page
+    css = "".join(_bytes_text(os.path.join(dp, f)) for dp, _d, fs in os.walk(os.path.join(out, "site_libs", "bootstrap")) for f in fs if f.endswith(".css"))
+    assert "2a5d8f" in css  # theme.scss is applied, so a project can restyle the book by editing it
+
+
+@needs_quarto
+def test_logged_results_citations_and_figures_render_cleanly_in_both_editions(proj, story):
+    from research import guide as G
+    G.init(proj)
+    G.log(proj)
+    G.cite_add(proj, bibtex="@article{lee2021alpha, author={Lee, Wei and Smith, Jane}, title={Alpha in CT}, journal={J. Imaging}, year={2021}}")
+    p = os.path.join(PV.guide_dir(proj), "results.qmd")
+    text = open(p).read()
+    open(p, "w").write(text.replace("<!-- DRAFT", "Choosing alpha is a classic problem [@lee2021alpha]. <!-- DRAFT", 1))
+    v = PV.validate(proj)
+    assert v["errors"] == 0, [i["message"] for i in v["prose"]] + [i["message"] for r in list(v["claims"].values()) + list(v["figures"].values()) for i in r["issues"]]
+    sci = GQ.build(proj, "scientific")
+    assert sci["ok"] and sci["validation"]["errors"] == 0 and not sci["leaks"], sci
+    out = os.path.join(PV.guide_dir(proj), "_output", "scientific")
+    html = _bytes_text(os.path.join(out, "results.html"))
+    assert "Lee and Smith 2021" in html and "research:result" not in html and "DRAFT" not in html
+    assert re.search(r"<h2[^>]*>.*Uniform perturbation recoverable", html, re.S) and "CLM-" not in html
+    assert "Lee, Wei" in _bytes_text(os.path.join(out, "references.html")) or "Lee, W" in _bytes_text(os.path.join(out, "references.html"))
+    assert os.path.exists(os.path.join(out, "figures"))
+    res = GQ.build(proj, "researcher")
+    assert res["ok"], res
+    rh = _bytes_text(os.path.join(PV.guide_dir(proj), "_output", "researcher", "results.html"))
+    assert "Evidence for this chapter" in rh and "#ev-clm-0001" in rh and story["f1"] in rh  # the researcher edition keeps the identifiers
+
+
+@needs_quarto
+def test_a_missing_citation_stops_the_scientific_build_with_a_clear_reason(proj):
+    from research import guide as G
+    G.init(proj)
+    open(os.path.join(PV.guide_dir(proj), "ideas.qmd"), "a").write("\nSee [@nobody1999].\n")
+    with pytest.raises(ResearchError, match="Provenance validation has"):
+        GQ.build(proj, "scientific")
+    assert any("nobody1999" in i["message"] for i in PV.validate(proj)["prose"])
+
+
+@needs_quarto
+def test_the_ci_workflow_command_renders_the_committed_files_from_the_repository_root(proj, repo):
+    """The published site comes from exactly the command in the workflow, run from the repository root on a clean checkout."""
+    import shutil
+    import subprocess
+    from research import guide as G
+    G.init(proj)
+    wf = (repo / ".github" / "workflows" / "publish-guide.yml").read_text()
+    cmd = re.search(r"run: (quarto render \S+ .*)", wf).group(1)
+    assert cmd == "quarto render docs/scientist-guide --profile scientific --to html --no-execute"
+    assert "path: docs/scientist-guide/_output/scientific" in wf
+    clone = repo.parent / "ci"
+    shutil.copytree(repo / "docs", clone / "docs")  # a clean checkout: no _output, no _generated, no .research
+    q = GQ.find_quarto()
+    r = subprocess.run([q, *cmd.split()[1:]], cwd=clone, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-800:]
+    assert (clone / "docs/scientist-guide/_output/scientific/index.html").exists()
