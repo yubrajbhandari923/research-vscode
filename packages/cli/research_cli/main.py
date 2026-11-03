@@ -1657,6 +1657,23 @@ def cmd_hook(a, p) -> int:
                   + (dim(("passed" if last["ok"] else "FAILED") + " " + last["ts"][:16]) if last else dim("never run")))
             print(dim(f"      {h['command']}  (timeout {h['timeout']:g}s{'' if h['required'] else ', advisory'})"))
         return 0
+    if act == "recommend":
+        r = HK.recommended(p)
+        if a.json:
+            out_json(r)
+            return 0
+        print(dim("detected: " + (", ".join(r["stacks"]) or "nothing yet (no code in this checkout)")))
+        for h in r["hooks"]:
+            st = green("approved") if h["approved"] else yellow("installed, needs approval") if h["installed"] else (dim("not installed") if h["applies"] else dim("not applicable here"))
+            print(f"  {h['name'].ljust(20)} {h['stage'].ljust(20)} {h['tier'].ljust(6)} {st}")
+            print(dim(f"      {h['description']}"))
+        print(dim("`research hook install` adds every cheap hook that applies here; `research hook install NAME` adds one (costly ones such as tests run project code, so approve them deliberately); add --approve to approve as you install"))
+        return 0
+    if act == "install":
+        r = HK.install(p, [a.name] if a.name else None, a.approve)
+        _done(a, r, msg=("added: " + ", ".join(r["added"]) if r["added"] else "nothing to add")
+              + (f"; approved: {', '.join(r['approved'])}" if r["approved"] else "; they run only after `research hook approve`"))
+        return 0
     if act == "results":
         r = HK.results(p, a.name, a.limit)
         if a.json:
@@ -2974,6 +2991,74 @@ def cmd_skills_audit(a, p) -> int:
     return 0
 
 
+def cmd_skills_catalog(a, p) -> int:
+    from research import packs as PK
+    st = PK.state(p)
+    q = a.search or ""
+    rows = [r for r in st["catalog"] if (not q or PK.matches(r, q)) and (not a.pack or a.pack in (r["packs"] or []))
+            and (not a.kind or r["kind"] == a.kind)]
+    if a.json:
+        out_json(rows)
+        return 0
+    for r in rows:
+        flag = green("on ") if r["enabled"] else yellow("off") if r["installed"] else dim("   ")
+        print(f"{flag} {bold(r['name']):32} {r['kind']:11} {(r['license'] or '?')[:10]:10} {dim(','.join(r['packs'] or []))}")
+        if a.verbose:
+            print(dim(f"      {(r['description'] or '')[:160]}"))
+    print(dim(f"{len(rows)} skill(s). on = installed and enabled · off = installed, disabled · blank = in the catalog, not installed (`research skills install NAME`)"))
+    return 0
+
+
+def cmd_skills_packs(a, p) -> int:
+    from research import packs as PK
+    act, pid = a.verb, a.pack_id
+    if act in ("enable", "disable"):
+        if not pid:
+            raise ResearchError(f"usage: research skills packs {act} PACK-ID")
+        r = PK.enable_pack(p, pid, a.optional) if act == "enable" else PK.disable_pack(p, pid)
+        if act == "enable":
+            bad = [x for x in r["results"] if x["state"] == "failed"]
+            _done(a, r, msg=f"pack {pid}: " + ", ".join(f"{x['name']} {x['state']}" for x in r["results"]) + ("" if not bad else red("  (failed: " + "; ".join(x['why'] for x in bad) + ")")))
+        else:
+            _done(a, r, msg=f"pack {pid} off; skills disabled: {', '.join(r['disabled']) or 'none'} (files kept)")
+        return 0
+    st = PK.state(p)
+    if a.json:
+        out_json(st["packs"])
+        return 0
+    for x in st["packs"]:
+        print(f"{green('on ') if x['enabled'] else dim('off')} {bold(x['id']):22} {x['installed']}/{x['total']} installed  {dim(x['description'])}")
+    print(dim("`research skills packs enable ID` installs a pack (add --optional for skills installed from their source); the project or machine config key is skills.packs"))
+    return 0
+
+
+@mut
+def cmd_skills_install(a, p) -> int:
+    from research import packs as PK
+    from research import skills as SKL
+    out = [PK.install_skill(p, n, None, a.force) for n in a.names]
+    SKL.link_skills(p)
+    _done(a, out, msg="; ".join(f"{x['name']}: {x['state']}" + (f" ({x['why']})" if x.get("why") else "") for x in out))
+    return 0
+
+
+@mut
+def cmd_skills_toggle(a, p) -> int:
+    from research import packs as PK
+    r = [PK.set_enabled(p, n, a.cmd_name == "enable") for n in a.names]
+    _done(a, r, msg=f"{', '.join(a.names)} {'enabled' if a.cmd_name == 'enable' else 'disabled'} (files kept; `research skills link` already refreshed)")
+    return 0
+
+
+@mut
+def cmd_skills_upgrade(a, p) -> int:
+    from research import packs as PK
+    r = PK.update(p)
+    _done(a, r, msg=("updated " + ", ".join(r["updated"]) if r["updated"] else "bundled skills are current")
+          + (yellow(f"; left alone because you changed them: {', '.join(r['kept_yours'])}") if r["kept_yours"] else ""))
+    return 0
+
+
 def cmd_skills_link(a, p) -> int:
     from research import skills as SKL
     r = SKL.link_skills(p, a.target)
@@ -3279,9 +3364,10 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--profile")
     x.add_argument("--agent-model")
 
-    x = add(sub, "hook", cmd_hook, "project harness hooks: list | add | enable | disable | approve | revoke | run | results")
-    x.add_argument("action", choices=["list", "add", "enable", "disable", "approve", "revoke", "run", "results"])
+    x = add(sub, "hook", cmd_hook, "project harness hooks: list | add | enable | disable | approve | revoke | run | results | recommend | install")
+    x.add_argument("action", choices=["list", "add", "enable", "disable", "approve", "revoke", "run", "results", "recommend", "install"])
     x.add_argument("name", nargs="?")
+    x.add_argument("--approve", action="store_true", help="install: approve what was installed (a human decision)")
     x.add_argument("--stage", help="add/run: preflight | post_implementation | pre_experiment | post_experiment")
     x.add_argument("--command")
     x.add_argument("--timeout", type=float)
@@ -3631,6 +3717,25 @@ def build_parser() -> argparse.ArgumentParser:
     add(g, "audit", cmd_skills_audit, "which skills gate managed dispatch, and what direct Claude Code/Codex sessions can see")
     x = add(g, "link", cmd_skills_link, "(re)create .claude/skills and .agents/skills links")
     x.add_argument("--target", action="append", help="claude, agents, or a folder")
+    x = add(g, "catalog", cmd_skills_catalog, "the skills catalog: first-party, bundled (attributed copies) and install-from-source entries")
+    x.add_argument("--search")
+    x.add_argument("--pack")
+    x.add_argument("--kind", choices=["first-party", "bundled", "external"])
+    x.add_argument("-v", "--verbose", action="store_true")
+    x = add(g, "packs", cmd_skills_packs, "skill packs: list | enable ID [--optional] | disable ID")
+    x.add_argument("verb", nargs="?", choices=["list", "enable", "disable"], default="list")
+    x.add_argument("pack_id", nargs="?")
+    x.add_argument("--optional", action="store_true", help="enable: also install the pack's install-from-source skills (network, pinned commit)")
+    x = add(g, "install", cmd_skills_install, "install catalog skill(s) (bundled copy, or fetched from the source at the pinned commit)")
+    x.add_argument("names", nargs="+")
+    x.add_argument("--force", action="store_true", help="replace a copy you changed (it is kept in .research/cache/removed-skills)")
+    x = add(g, "enable", cmd_skills_toggle, "turn a skill on (it stays on disk either way)")
+    x.add_argument("names", nargs="+")
+    x.set_defaults(cmd_name="enable")
+    x = add(g, "disable", cmd_skills_toggle, "turn a skill off: not suggested, not linked; files kept")
+    x.add_argument("names", nargs="+")
+    x.set_defaults(cmd_name="disable")
+    add(g, "upgrade", cmd_skills_upgrade, "bring bundled and first-party skills to this release's version (never replaces a skill you changed)")
     x = add(g, "new", cmd_skills_new, "create a skill", aliases=["create"])
     x.add_argument("name")
     x.add_argument("-d", "--description")

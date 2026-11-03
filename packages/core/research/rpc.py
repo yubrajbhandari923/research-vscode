@@ -834,7 +834,7 @@ class Server:
 
     def m_init_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         from . import initproject
-        return initproject.apply(self.root, spec)
+        return initproject.apply(self.root, spec, author=self.author)
 
     def m_hpc_discover(self) -> Dict[str, Any]:
         """SSH aliases from ~/.ssh/config. Reads a local file; contacts nothing."""
@@ -926,23 +926,54 @@ class Server:
         return out
 
     def m_tools(self) -> Dict[str, Any]:
-        """What the agents get from Research OS besides records: skills (and whether they are exposed to the agent CLIs), approved hooks,
-        and the MCP server. Read-only."""
+        """What the agents get from Research OS besides records: the skills catalog and packs (with install, enable and update state), the
+        links into the agent CLIs, hooks (installed and recommended for this project) and the MCP command. Read-only."""
         from . import hooks as HK
+        from . import packs as PK
         from . import skills as SK
         p = self.project(sync=False)
         p.config = p.load_config()
-        sk = SK.list_skills(p)
+        st = PK.state(p)
+        installed = [s for s in SK.list_skills(p) if s.get("enabled", True)]
         links = {}
         for key, rel in SK.LINK_TARGETS.items():
             d = os.path.join(p.root, rel)
-            links[key] = {"dir": rel, "linked": sorted(n["name"] for n in sk if os.path.exists(os.path.join(d, n["dir"] or n["name"])))}
-        return {"skills": [{"name": s["name"], "dir": s["dir"], "description": s.get("description"), "level": s["level"], "always": s["always"],
-                            "applies_to": s["applies_to"], "source": s.get("source")} for s in sk],
-                "links": links, "link_targets": list((p.config.get("skills") or {}).get("link") or []),
-                "hooks": HK.listing(p), "starters": {n: {"stage": s["stage"], "command": s["command"], "description": s["description"],
-                                                         "installed": n in HK.specs(p)} for n, s in HK.STARTERS.items()},
+            links[key] = {"dir": rel, "linked": sorted(n["name"] for n in installed if os.path.exists(os.path.join(d, n["dir"] or n["name"])))}
+        rec = HK.recommended(p)
+        return {"catalog": st["catalog"], "packs": st["packs"], "own": st["own"], "enabled_packs": st["enabled_packs"], "disabled": st["disabled"],
+                "skills": [{"name": s["name"], "dir": s["dir"], "description": s.get("description"), "level": s["level"], "always": s["always"],
+                            "applies_to": s["applies_to"], "source": s.get("source"), "enabled": s.get("enabled", True)} for s in SK.list_skills(p)],
+                "enabled_skill_count": len(installed), "links": links, "link_targets": list((p.config.get("skills") or {}).get("link") or []),
+                "hooks": HK.listing(p), "recommended_hooks": rec["hooks"], "stacks": rec["stacks"],
+                "starters": {n: {"stage": s["stage"], "command": s["command"], "description": s["description"], "installed": n in HK.specs(p)}
+                             for n, s in HK.STARTERS.items()},
+                "config_files": {"project": p.rel(p.config_path), "machine": __import__("research.configfile", fromlist=["x"]).machine_path()},
                 "mcp_command": __import__("research.providers", fromlist=["x"])._server_cmd(self.root)}
+
+    def m_pack_set(self, id: str, enabled: bool = True, optional: bool = False) -> Dict[str, Any]:
+        from . import packs as PK
+        p = self.project(sync=False)
+        return PK.enable_pack(p, id, optional) if enabled else PK.disable_pack(p, id)
+
+    def m_skill_install(self, names: Any, force: bool = False) -> Dict[str, Any]:
+        from . import packs as PK
+        from . import skills as SK
+        p = self.project(sync=False)
+        out = [PK.install_skill(p, n, None, force) for n in (names if isinstance(names, list) else [names])]
+        SK.link_skills(p)
+        return {"results": out}
+
+    def m_skill_toggle(self, name: str, enabled: bool) -> Dict[str, Any]:
+        from . import packs as PK
+        return PK.set_enabled(self.project(sync=False), name, enabled)
+
+    def m_skills_upgrade(self) -> Dict[str, Any]:
+        from . import packs as PK
+        return PK.update(self.project(sync=False))
+
+    def m_hook_install(self, names: Any = None, approve: bool = False) -> Dict[str, Any]:
+        from . import hooks as HK
+        return HK.install(self.project(sync=False), names, approve)
 
     def m_hook_install_starters(self, approve: bool = True) -> Dict[str, Any]:
         from . import hooks as HK
@@ -1012,7 +1043,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

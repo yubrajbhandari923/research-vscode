@@ -1,0 +1,122 @@
+# Skill packs. A pack installs its skills into .research/skills; `optional` skills are external and are installed only when you choose them.
+version: 1
+packs:
+- id: core-research
+  title: Core Research
+  description: Research workflow, verification and good scientific method. Always on; the default for every new project.
+  default: true
+  skills:
+  - clean-dataset
+  - engineering-loop
+  - failure-triage
+  - hpc-setup
+  - hypothesis-design
+  - independent-review
+  - literature-evidence
+  - parameter-tuning
+  - promote-validated-work
+  - reproduce-paper
+  - reproducibility-audit
+  - research-context
+  - run-experiment
+  - scientific-briefing
+  - scientific-handoff
+  - scientific-visualization
+  - synthesize-experiment
+  - uncertainty-analysis
+  - validation-oracles
+  - systematic-debugging
+  - verification-before-completion
+  - requesting-code-review
+  - receiving-code-review
+  - experimental-design
+  - scientific-critical-thinking
+  - hypothesis-generation
+  optional: []
+- id: scientific-python
+  title: Scientific Python
+  description: Statistics, exploratory analysis, plotting, symbolic maths and code-quality skills for Python research code.
+  default: false
+  skills:
+  - ponytail
+  - ponytail-review
+  - statistical-analysis
+  - statistical-power
+  - exploratory-data-analysis
+  - matplotlib
+  - scientific-visualization-kdense
+  - sympy
+  optional:
+  - modern-python
+  - property-based-testing
+  - mutation-testing
+- id: machine-learning
+  title: Machine Learning
+  description: Training, evaluation, explanation and honest comparison of models.
+  default: false
+  skills:
+  - pytorch-lightning
+  - scikit-learn
+  - shap
+  - statistical-power
+  - exploratory-data-analysis
+  optional: []
+- id: physics-numerical
+  title: Physics / Numerical Simulation
+  description: Symbolic derivation, discrete-event and numerical simulation, units and convergence checks.
+  default: false
+  skills:
+  - sympy
+  - simpy
+  - matplotlib
+  optional:
+  - dimensional-analysis
+- id: medical-imaging
+  title: Medical Imaging
+  description: DICOM handling and imaging-specific data care.
+  default: false
+  skills:
+  - pydicom
+  - exploratory-data-analysis
+  - scientific-visualization-kdense
+  optional: []
+- id: quantum-computing
+  title: Quantum Computing
+  description: Qiskit, Cirq and PennyLane circuits, simulation and variational methods.
+  default: false
+  skills:
+  - qiskit
+  - cirq
+  - pennylane
+  - sympy
+  optional: []
+- id: hpc
+  title: HPC
+  description: Remote execution on Slurm clusters and parallel data processing.
+  default: false
+  skills:
+  - hpc-setup
+  - dask
+  optional: []
+- id: frontend
+  title: Frontend Development
+  description: Distinctive UI design and browser testing for research tools and dashboards.
+  default: false
+  skills:
+  - frontend-design
+  - webapp-testing
+  optional:
+  - web-design-guidelines
+  - react-best-practices
+- id: scientific-writing
+  title: Scientific Writing
+  description: Papers, reviews, citations and reproducibility statements, for the Scientist Guide and beyond.
+  default: false
+  skills:
+  - scientific-writing
+  - literature-review
+  - citation-management
+  - peer-review
+  - reproducibility-statement
+  - scientific-visualization-kdense
+  optional: []

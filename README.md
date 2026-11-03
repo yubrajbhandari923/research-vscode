@@ -5,7 +5,7 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 2.2.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
+**Version 2.3.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
 (see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
@@ -22,7 +22,7 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> **New in 2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
+> **New in 2.3:** a curated skill catalog with packs and project-aware hooks ([docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md)). **2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
 > and skills, hooks and the MCP server loaded by default. [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
 > [Supervisor](docs/SUPERVISOR.md) · [Changelog](CHANGELOG.md).
 
@@ -77,24 +77,26 @@ Quarto is needed only to build ([install or update it](docs/GUIDE.md#updating-qu
 ## Skills, hooks and MCP
 
 Skills tell an agent *how* to work, hooks are programs *you approve* that check its work, and the MCP server lets it read and write the
-records instead of guessing. New projects get all three: skills linked for Claude Code and Codex, two starter hooks, and the MCP server registered.
-Agents → **Skills, hooks and MCP** shows what is loaded and fixes it in one click. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
+records instead of guessing. Every new project is equipped out of the box:
 
-**Files are authoritative.** The Control Center edits the same YAML the CLI and agents read, keeps your comments, refuses to
-overwrite a file that changed underneath it, and shows a reviewable diff before every save. See [Configuration](docs/CONFIGURATION.md).
+- **Skills:** the *Core Research* pack (hypothesis design, validation oracles, failure triage, reproducibility audit, uncertainty analysis, literature evidence, scientific visualization, independent review, promotion of validated work, plus curated debugging, review and experimental-design skills), and any of eight field packs you pick in the wizard: Scientific Python, Machine Learning, Physics/Numerical, Medical Imaging, Quantum Computing, HPC, Frontend, Scientific Writing. Third-party skills (Ponytail, Superpowers, K-Dense, Anthropic, Kalaris) are curated, attributed copies with pinned commits and licenses ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)); Trail of Bits and Vercel skills, whose licenses do not allow bundling, are install-from-source. A skill reaches an agent's brief only when the task type or role matches.
+- **Hooks:** nine cheap starter checks (syntax, whitespace, git integrity, secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity), approved by you; project-aware extras (lint, format, pytest, tsc) are detected and offered, never automatic.
+- **MCP:** registered for each enabled agent.
+
+Agents → **Skills, hooks and MCP** has a searchable catalog with one-click install, packs, per-skill activation, enable/disable, hook approval and test results, and updates; `research skills …` and `research hook …` do the same, and `skills.packs` in the machine config sets the default for every new project. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
 
 ## Install
 
 Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
 
-- `research-panel-2.2.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
-- `research_panel-2.2.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
+- `research-panel-2.3.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
+- `research_panel-2.3.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
 - `SHA256SUMS` — checksums for the files above
 
 ```bash
-code --install-extension research-panel-2.2.0.vsix
+code --install-extension research-panel-2.3.0.vsix
 # optional, CLI outside VS Code:
-python3 -m pip install research_panel-2.2.0-py3-none-any.whl
+python3 -m pip install research_panel-2.3.0-py3-none-any.whl
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.

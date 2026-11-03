@@ -268,6 +268,13 @@ test('Initialize Project: teaches first, previews the layout, creates main/ledge
     assert.match(el.textContent, /sonnet_first/);
     await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
     await click(byText(el, 'button', 'Next'));
+    // the Skills step: packs with descriptions, Core Research always on, nine cheap hooks, nothing injected into every prompt
+    assert.match(el.textContent, /what your agents are equipped with/); assert.match(el.textContent, /so a bigger toolbox does not mean a bigger prompt/);
+    assert.equal(q(el, 'input[aria-label="Core Research"]').disabled, true); assert.equal(q(el, 'input[aria-label="Core Research"]').checked, true);
+    for (const t of ['Scientific Python', 'Machine Learning', 'Physics / Numerical Simulation', 'Medical Imaging', 'Quantum Computing', 'HPC', 'Frontend Development', 'Scientific Writing']) assert.ok(q(el, `input[aria-label="${t}"]`), t);
+    await click(q(el, 'input[aria-label="Scientific Python"]'));
+    assert.match(el.textContent, /nine cheap starter hooks/);
+    await click(byText(el, 'button', 'Next'));
     // the Guide step teaches what the guide is, how citations work, and when an agent writes
     assert.match(el.textContent, /Scientist Guide: where you explain the science/); assert.match(el.textContent, /references\.bib/);
     assert.match(el.textContent, /Quarto/); assert.match(el.textContent, /never writes into the guide until you press/);
@@ -276,14 +283,16 @@ test('Initialize Project: teaches first, previews the layout, creates main/ledge
     await type(q(el, '#g-w'), '120');
     await click(byText(el, 'button', 'Next'));
     await waitFor(() => /do exactly this/.test(el.textContent));
-    assert.match(el.textContent, /Scientist Guide \(a Quarto book/); assert.match(el.textContent, /at most 120 words per section/); assert.match(el.textContent, /publishes it as a website on every push/);
+    assert.match(el.textContent, /Scientist Guide \(a Quarto book/); assert.match(el.textContent, /packs: Scientific Python/); assert.match(el.textContent, /nine cheap starter hooks/); assert.match(el.textContent, /at most 120 words per section/); assert.match(el.textContent, /publishes it as a website on every push/);
     assert.ok(!fs.existsSync(path.join(dir, 'main')), 'nothing is written before Create');
     await click(byText(el, 'button', 'Create project'));
     await waitFor(() => /Project created/.test(el.textContent), 30000);
     assert.match(el.textContent, /Your first 5 minutes/); assert.match(el.textContent, /Scientist Guide created/);
     for (const d of ['main/.git', 'ledger/.research/config.yaml', 'experiments', 'main/docs/scientist-guide/_quarto.yml', 'main/docs/scientist-guide/references.bib', 'main/.github/workflows/publish-guide.yml']) assert.ok(fs.existsSync(path.join(dir, d)), d);
     const cfg = fs.readFileSync(path.join(dir, 'ledger/.research/config.yaml'), 'utf8');
-    assert.match(cfg, /max_words: 120/); assert.match(cfg, /trigger: checkpoint/);
+    assert.match(cfg, /max_words: 120/); assert.match(cfg, /trigger: checkpoint/); assert.match(cfg, /scientific-python/);
+    for (const n of ['research-context', 'systematic-debugging', 'statistical-analysis']) assert.ok(fs.existsSync(path.join(dir, 'main/.claude/skills', n, 'SKILL.md')), n);
+    assert.match(cfg, /hooks_approved:[\s\S]*secrets:/, 'the human who pressed Create approved the starter hooks');
     assert.deepEqual(fs.readdirSync(path.join(dir, 'experiments')), []);
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -505,30 +514,77 @@ function freshProject(name) {
   return dir;
 }
 
-test('agents page: skills, hooks and MCP are explained, loaded, and fixable in one click', async () => {
-  const dir = freshProject('tools'); const core = startCore(dir); const host = hostFor(core);
+test('agents page: a searchable skills catalog, packs, activation and hooks that fit the project, all fixable in one click', async () => {
+  const dir = freshProject('tools'); fs.writeFileSync(path.join(dir, 'tsconfig.json'), '{}'); fs.writeFileSync(path.join(dir, 'pyproject.toml'), '[project]\ndependencies = ["numpy"]\n');
+  const core = startCore(dir); const host = hostFor(core);
   const { el, unmount } = await lib.mount(host, { page: 'agents' });
   try {
     await waitFor(() => q(el, '#tools'), 15000);
     const sec = () => q(el, '#tools').closest('section');
-    assert.match(sec().textContent, /Skills tell it how to work, hooks are programs that check its work/);
-    await waitFor(() => /run-experiment/.test(sec().textContent), 15000);
-    assert.match(sec().textContent, /scientific-briefing/);
-    // a classic project that never linked its skills is told, and fixed with one button
+    const skill = (n) => qa(sec(), 'tbody tr').find((r) => q(r, 'td b') && q(r, 'td b').textContent === n);
+    assert.match(sec().textContent, /Skills tell it how to work, hooks are programs that check its work/); assert.match(sec().textContent, /only when the task type or role matches/);
+    await waitFor(() => /research-context/.test(sec().textContent), 15000);
+    // skills tab: what is installed, where it came from, its licence, and when it activates
+    assert.match(sec().textContent, /systematic-debugging/); assert.match(sec().textContent, /MIT/); assert.match(sec().textContent, /bundled/); assert.match(sec().textContent, /Research OS/);
     assert.match(sec().textContent, /claude: 0 of \d+ linked/);
     await clickText(el, 'Link skills now');
     await waitFor(() => /claude: (\d+) of \1 linked/.test(sec().textContent), 15000);
-    assert.ok(fs.existsSync(path.join(dir, '.claude/skills/run-experiment/SKILL.md')));
-    // hooks: none yet; starters are added and approved by the human pressing the button, then can be disabled and run
-    assert.match(sec().textContent, /No hooks yet/);
-    await clickText(el, 'Add starter hooks');
-    await waitFor(() => !/No hooks yet/.test(sec().textContent) && q(sec(), 'table + p, tbody td .badge.k-ok'), 15000);
-    assert.match(sec().textContent, /never blocks/); assert.match(sec().textContent, /git diff --check/);
-    await clickText(el, 'Run now');
-    await waitFor(() => /syntax-check: true|whitespace-check: true/.test(sec().textContent), 20000);
-    await clickText(el, 'Disable');
-    await waitFor(() => /disabled/.test(sec().textContent), 15000);
-    assert.match(sec().textContent, /MCP server/); assert.match(sec().textContent, /research_current/);
+    assert.ok(fs.existsSync(path.join(dir, '.claude/skills/research-context/SKILL.md')));
+    // search the whole catalog (stem-aware) and install one that is not there yet
+    await type(q(el, '#sk-q'), 'statistics');
+    await waitFor(() => /statistical-analysis/.test(sec().textContent) && !/research-context/.test(sec().textContent), 10000);
+    await waitFor(() => skill('statistical-analysis'), 10000);
+    assert.match(skill('statistical-analysis').textContent, /not installed/);
+    await clickText(skill('statistical-analysis'), 'Install');
+    await waitFor(() => fs.existsSync(path.join(dir, '.research/skills/statistical-analysis/SOURCE.yaml')), 15000);
+    assert.ok(fs.existsSync(path.join(dir, '.research/skills/statistical-analysis/LICENSE')) && fs.existsSync(path.join(dir, '.research/skills/statistical-analysis/SKILL.md')));
+    // an install-from-source skill is labelled as such (network, pinned commit, licence shown), never silently fetched
+    await type(q(el, '#sk-q'), 'modern-python');
+    await waitFor(() => /modern-python/.test(sec().textContent), 10000);
+    assert.match(sec().textContent, /from source/); assert.match(sec().textContent, /CC-BY-SA-4\.0/); assert.match(sec().textContent, /Install from source/);
+    assert.ok(!fs.existsSync(path.join(dir, '.research/skills/modern-python')));
+    await type(q(el, '#sk-q'), 'cirq');
+    await waitFor(() => /cirq/.test(sec().textContent), 10000);
+    // activation is editable and written to .research/skills.yaml
+    await type(q(el, '#sk-q'), 'statistical-analysis');
+    await waitFor(() => skill('statistical-analysis') && byText(skill('statistical-analysis'), 'button', 'edit'), 10000);
+    await clickText(skill('statistical-analysis'), 'edit');
+    await type(q(sec(), 'input[id^=ap-]'), 'analysis, verifier');
+    await clickText(sec(), 'Save');
+    await waitFor(() => /statistical-analysis:?\s*\n?[\s\S]*applies_to:\s*\n\s*- analysis\s*\n\s*- verifier/.test(fs.readFileSync(path.join(dir, '.research/skills.yaml'), 'utf8')), 15000);
+    // disable / enable a skill: files stay, the config records it
+    await clickText(skill('statistical-analysis'), 'Disable');
+    await waitFor(() => /disabled/.test(skill('statistical-analysis').textContent), 15000);
+    assert.match(fs.readFileSync(path.join(dir, '.research/config.yaml'), 'utf8'), /disabled:[\s\S]*statistical-analysis/);
+    assert.ok(fs.existsSync(path.join(dir, '.research/skills/statistical-analysis/SKILL.md')) && !fs.existsSync(path.join(dir, '.claude/skills/statistical-analysis')));
+    await clickText(skill('statistical-analysis'), 'Enable');
+    // packs tab
+    await type(q(el, '#sk-q'), '');
+    await clickText(sec(), 'Packs');
+    await waitFor(() => /Quantum Computing/.test(sec().textContent), 10000);
+    assert.match(sec().textContent, /Core Research[\s\S]*always on/); assert.match(sec().textContent, /install from source \(network\)/i);
+    const card = () => q(sec(), 'section[aria-label="Quantum Computing"]');
+    await clickText(card(), 'Enable pack');
+    await waitFor(() => fs.existsSync(path.join(dir, '.research/skills/qiskit/SKILL.md')) && /skills.packs|packs:/.test(fs.readFileSync(path.join(dir, '.research/config.yaml'), 'utf8')), 20000);
+    await waitFor(() => /Disable pack/.test(card().textContent), 10000);
+    assert.match(fs.readFileSync(path.join(dir, '.research/config.yaml'), 'utf8'), /quantum-computing/);
+    // hooks tab: nothing yet; recommendations are project-aware (TypeScript and Python detected); costly ones say they run your code
+    await clickText(sec(), 'Hooks');
+    await waitFor(() => /No hooks yet/.test(sec().textContent), 10000);
+    assert.match(sec().textContent, /Detected here:\s*python, typescript/); assert.match(sec().textContent, /runs your code/);
+    await waitFor(() => /secrets/.test(sec().textContent), 10000);
+    const row = (n) => qa(sec(), 'tbody tr').find((r) => q(r, 'td b') && q(r, 'td b').textContent === n);
+    await clickText(row('secrets'), 'Add and approve');
+    await waitFor(() => /approved/.test(sec().textContent) && /Test now/.test(sec().textContent), 15000);
+    await clickText(sec(), 'Test now');
+    await waitFor(() => /secrets: passed/.test(el.textContent), 20000);
+    await clickText(row('tests'), 'Add');   // a costly hook is added but waits for approval
+    await waitFor(() => /needs your approval/.test(sec().textContent), 15000);
+    assert.match(sec().textContent, /wait for your approval and will not run/);
+    // files tab: where the settings live
+    await clickText(sec(), 'MCP & files');
+    await waitFor(() => /skills\.packs/.test(sec().textContent), 10000);
+    assert.match(sec().textContent, /research_current/); assert.match(sec().textContent, /\.research\/skills\.yaml/);
   } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
