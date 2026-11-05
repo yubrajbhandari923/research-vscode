@@ -579,7 +579,8 @@ def cmd_doctor(a) -> int:
         if c["detail"]:
             print(dim("      " + c["detail"]))
         if c["fix"]:
-            print("      → " + c["fix"]["text"] + (f"   (apply: research doctor --fix {c['id']})" if c["fix"].get("safe") else ""))
+            fx = c["fix"]
+            print("      → " + (fx.get("text") or (f"Run `{fx['command']}`." if fx.get("command") else "")) + (f"   (apply: research doctor --fix {c['id']})" if fx.get("safe") else ""))
     s = r["summary"]
     print(f"\n{s['errors']} error(s), {s['warnings']} warning(s), {s['info']} optional, {s['ok']} ok" + dim("   (--all lists the passing checks)"))
     return 1 if s["errors"] else 0
@@ -707,6 +708,8 @@ def cmd_question_update(a, p) -> int:
 # experiments
 @mut
 def cmd_experiment_create(a, p) -> int:
+    from research import governance
+    governance.confirm_human_experiment(p)
     e = S.create_experiment(p, a.title, question=a.question, hypothesis=a.hypothesis, motivation=a.motivation,
                             method=a.method, expected_outcome=a.expected, success_criteria=a.success,
                             stop_conditions=a.stop, parameters=parse_kv(a.param), metrics=a.metric,

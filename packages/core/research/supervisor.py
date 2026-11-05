@@ -1044,19 +1044,32 @@ def classify_change(p: Project, text: str) -> Dict[str, Any]:
     return {"classification": "operational" if kinds and not sci else "scientific", "operations": sorted(kinds), "conflicts": d["conflicts"]}
 
 
+def _auto_ok(p: Project, c: Dict[str, Any], st: Optional[Dict[str, Any]], doc: Dict[str, Any], cl: Dict[str, Any]) -> bool:
+    """Auto-apply needs governance (type allow-list, cap) AND the legacy supervisor switches; the stricter always wins."""
+    from . import governance as G
+    g = G.cfg(p)["tasks"]
+    tasks = [t for pl in doc["plans"] for t in pl["tasks"]]
+    n = len(tasks)
+    return (cl["classification"] == "operational" and not cl["conflicts"] and G.auto_apply_allowed(p) and c["auto_apply_operational"]
+            and all((t.get("task_type") or "") in g["allowed_auto_types"] for t in tasks)
+            and n <= int(g["max_auto_per_experiment"])
+            and (st or {}).get("auto_tasks", 0) + n <= int(c["max_auto_tasks"]))
+
+
 def propose(p: Project, tid: Optional[str], text: str, rationale: str, source: str = "agent") -> Dict[str, Any]:
+    from . import governance as G
+    if G.is_agent(p) and G.cfg(p)["tasks"]["agent_creation"] == "human_only":
+        raise PolicyBlocked("Policy is human_only: agents may not propose plan changes", hint="Tell the researcher what you found instead.")
     PS.validate(text, p)
     cl = classify_change(p, text)
     doc = PS.normalize(PS.parse(text), PS._known(p))
     plan_key = doc["plans"][0]["key"]
-    n = len(list_proposals(p)) + 1
-    pr = {"id": f"PROP-{n:04d}", "ts": now_iso(), "task": tid, "plan_key": plan_key, "rationale": taskprompt.redact(rationale), "patch": text,
+    pr = {"id": _next_prop_id(p), "kind": "plan", "rev": 1, "ts": now_iso(), "task": tid, "plan_key": plan_key, "rationale": taskprompt.redact(rationale), "patch": text,
           "classification": cl["classification"], "operations": cl["operations"], "conflicts": cl["conflicts"], "status": "pending", "source": source}
     st = PS.load_state(p, plan_key)
     c = cfg(p, st)
-    auto = (cl["classification"] == "operational" and c["auto_apply_operational"] and not cl["conflicts"]
-            and (st or {}).get("auto_tasks", 0) + sum(len(pl["tasks"]) for pl in doc["plans"]) <= int(c["max_auto_tasks"]))
-    if cl["classification"] == "scientific" and not c["require_approval_for_scientific_changes"] and not cl["conflicts"]:
+    auto = _auto_ok(p, c, st, doc, cl)
+    if cl["classification"] == "scientific" and not c["require_approval_for_scientific_changes"] and not G.cfg(p)["scientific_changes"]["require_human_approval"] and not cl["conflicts"]:
         auto = True
     if auto:
         _apply_proposal(p, pr, "auto (policy)")
@@ -1066,27 +1079,93 @@ def propose(p: Project, tid: Optional[str], text: str, rationale: str, source: s
     return pr
 
 
-def _apply_proposal(p: Project, pr: Dict[str, Any], who: str) -> None:
-    res = PS.apply(p, pr["patch"], source=f"proposal:{pr['id']} {who}")
-    pr.update(status="applied", decided_by=who, decided_at=now_iso(), result=res["plans"])
-    st = PS.load_state(p, pr["plan_key"])
-    if st and pr["classification"] == "operational":
-        st["auto_tasks"] = st.get("auto_tasks", 0) + sum(1 for op in pr.get("operations", []) if op == "create_task")
-        PS.save_state(p, st)
+def _next_prop_id(p: Project) -> str:
+    return f"PROP-{len(list_proposals(p)) + 1:04d}"
+
+
+EXP_FIELDS = ("title", "hypothesis", "rationale", "method", "expected_outputs", "related")
+
+
+def propose_experiment(p: Project, fields: Dict[str, Any], source: str = "agent") -> Dict[str, Any]:
+    """An agent's experiment proposal. It always waits for a human: nothing is created until approved with the PIN."""
+    from . import governance as G
+    if G.is_agent(p) and G.cfg(p)["experiments"]["agent_creation"] == "human_only":
+        raise PolicyBlocked("Policy is human_only: agents may not propose experiments")
+    miss = [k for k in EXP_FIELDS if not str(fields.get(k) or "").strip()]
+    if miss:
+        raise ResearchError("An experiment proposal needs: " + ", ".join(miss), hint="Give hypothesis, rationale, method, expected outputs and how it relates to existing work.")
+    pr = {"id": _next_prop_id(p), "kind": "experiment", "rev": 1, "ts": now_iso(), "task": None, "plan_key": None,
+          "fields": {k: taskprompt.redact(str(fields[k])) for k in EXP_FIELDS}, "rationale": taskprompt.redact(str(fields["rationale"])),
+          "classification": "scientific", "operations": ["create_experiment"], "conflicts": [], "status": "pending", "source": source}
+    _prop_save(p, pr)
+    p.event("experiment", None, "experiment_proposal", f"{pr['id']} proposed by {source}: {fields['title'][:120]}")
+    return pr
+
+
+def _apply_proposal(p: Project, pr: Dict[str, Any], who: str, status: str = "applied") -> None:
+    from . import governance as G, services
+    with G.approved(pr["id"]):
+        if pr.get("kind") == "experiment":
+            f = pr["fields"]
+            res = [services.create_experiment(p, f["title"], hypothesis=f["hypothesis"], motivation=f["rationale"], method=f["method"],
+                                              expected_outcome=f["expected_outputs"], notes="Relation to existing work: " + f["related"])["id"]]
+        else:
+            res = PS.apply(p, pr["patch"], source=f"proposal:{pr['id']} {who}")["plans"]
+    pr.update(status=status, decided_by=who, decided_at=now_iso(), result=res)
+    if pr.get("kind") != "experiment":
+        st = PS.load_state(p, pr["plan_key"])
+        if st and pr["classification"] == "operational":
+            st["auto_tasks"] = st.get("auto_tasks", 0) + sum(1 for op in pr.get("operations", []) if op == "create_task")
+            PS.save_state(p, st)
     _prop_save(p, pr)
 
 
-def decide_proposal(p: Project, pid: str, approve: bool, note: Optional[str] = None) -> Dict[str, Any]:
+def decide_proposal(p: Project, pid: str, approve: Any, note: Optional[str] = None, pin: Optional[str] = None, rev: Optional[int] = None) -> Dict[str, Any]:
+    """Decide one proposal: approve (bool True / "approve"), reject, or "revise" (ask the agent to change it).
+    Approving needs the PIN; it is applied exactly once, under the supervisor lock, and only if nothing changed since `rev`."""
+    from . import approval, governance as G
+    action = "approve" if approve is True else "reject" if approve is False else str(approve)
+    if action not in ("approve", "reject", "revise"):
+        raise ResearchError(f"Unknown decision {action!r}: approve, reject or revise")
     require_human(p, "Approving or rejecting a plan change")
-    pr = _prop_load(p, pid)
-    if pr["status"] != "pending":
-        raise ResearchError(f"{pid} is already {pr['status']}")
-    if approve:
-        _apply_proposal(p, pr, "human" + (f": {note}" if note else ""))
-    else:
-        pr.update(status="rejected", decided_by="human", decided_at=now_iso(), note=note)
-        _prop_save(p, pr)
+    with _lock(p):
+        pr = _prop_load(p, pid)
+        if pr["status"] != "pending":
+            raise ResearchError(f"{pid} is already {pr['status']}")
+        if rev is not None and int(rev) != pr.get("rev", 1):
+            raise ResearchError(f"{pid} changed since you opened it (now revision {pr.get('rev', 1)}): review it again")
+        if action == "approve":
+            approval.confirm(p, f"Approve {pid}", note, pin)
+            if pr.get("kind") != "experiment":
+                cl = classify_change(p, pr["patch"])
+                if cl["conflicts"]:
+                    raise ResearchError(f"{pid} no longer applies cleanly: " + "; ".join(cl["conflicts"]), hint="Ask the agent to revise it.")
+            _apply_proposal(p, pr, "human" + (f": {note}" if note else ""), status="approved")
+        else:
+            if action == "revise" and not (note or "").strip():
+                raise ResearchError("Say what should change (--note)")
+            pr.update(status="rejected" if action == "reject" else "revision_requested", decided_by="human", decided_at=now_iso(), note=note)
+            if G.cfg(p)["approval"]["record_rejections"]:
+                p.event("plan", None, "proposal_" + pr["status"], f"{pid}: {(note or '')[:300]}")
+            _prop_save(p, pr)
     p.event("plan", None, "plan_proposal_" + pr["status"], f"{pid} {pr['status']}")
+    return pr
+
+
+def revise_proposal(p: Project, pid: str, text: Optional[str] = None, fields: Optional[Dict[str, Any]] = None, rationale: Optional[str] = None) -> Dict[str, Any]:
+    """The agent's answer to a revision request: same proposal, new content, back to pending (revision + 1)."""
+    with _lock(p):
+        pr = _prop_load(p, pid)
+        if pr["status"] != "revision_requested":
+            raise ResearchError(f"{pid} is {pr['status']}; only a proposal with a revision request can be revised")
+        if pr.get("kind") == "experiment":
+            pr["fields"].update({k: v for k, v in (fields or {}).items() if k in EXP_FIELDS})
+        else:
+            PS.validate(text, p)
+            cl = classify_change(p, text)
+            pr.update(patch=text, classification=cl["classification"], operations=cl["operations"], conflicts=cl["conflicts"])
+        pr.update(status="pending", rev=pr.get("rev", 1) + 1, rationale=taskprompt.redact(rationale or pr["rationale"]))
+        _prop_save(p, pr)
     return pr
 
 

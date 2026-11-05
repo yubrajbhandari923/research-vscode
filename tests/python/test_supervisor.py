@@ -291,7 +291,7 @@ def test_proposals_are_classified_and_applied_through_the_same_engine(proj):
               - key: exp1
                 title: First experiment
                 tasks:
-                  - {key: diag, title: Diagnose, prompt: Look at it, depends_on: [a]}
+                  - {key: diag, title: Diagnose, task_type: diagnostic, prompt: Look at it, depends_on: [a]}
         """)
     pr = SV.propose(proj, None, add, "diagnostic needed")
     assert pr["classification"] == "operational" and pr["status"] == "applied"
@@ -300,7 +300,7 @@ def test_proposals_are_classified_and_applied_through_the_same_engine(proj):
     pr2 = SV.propose(proj, None, sci, "change the hypothesis")
     assert pr2["classification"] == "scientific" and pr2["status"] == "pending"
     assert "d2" not in PS.load_state(proj, "demo-plan")["tasks"]
-    SV.decide_proposal(proj, pr2["id"], True)
+    SV.decide_proposal(proj, pr2["id"], True, "hypothesis reviewed")
     assert "d2" in PS.load_state(proj, "demo-plan")["tasks"]
 
 
@@ -584,6 +584,7 @@ def test_an_agent_can_propose_a_follow_up_task_and_it_runs(lproj, tmp_path):
                 title: E
                 tasks:
                   - key: diag
+                    task_type: diagnostic
                     title: Diagnose
                     depends_on: [main]
                     agent: {role: implementer, profile: fake}

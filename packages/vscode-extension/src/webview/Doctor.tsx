@@ -30,7 +30,7 @@ export function Doctor({ host, embedded }: { host: Host; embedded?: boolean }) {
                   <span className="mark" aria-hidden>{ICON[c.level]}</span>
                   <div className="grow"><b>{c.title}</b> <Badge kind={c.level === 'error' || c.level === 'warn' ? 'warn' : c.level === 'ok' ? 'ok' : ''}>{c.level === 'info' ? 'optional' : c.level}</Badge> <span className="muted small">{c.area}</span>
                     {c.detail && <div className="muted small">{c.detail}</div>}
-                    {c.fix && <div className="small">{c.fix.text}{c.fix.safe && <> <button type="button" onClick={() => fix(c.id)}>Fix now</button></>}</div>}</div>
+                    {c.fix && <div className="small">{c.fix.text || (c.fix.command ? `Run ${c.fix.command}` : '')}{c.fix.safe && <> <button type="button" onClick={() => fix(c.id)}>Fix now</button></>}</div>}</div>
                 </li>))}
             </ul>
             <button type="button" onClick={a.reload}>Check again</button>

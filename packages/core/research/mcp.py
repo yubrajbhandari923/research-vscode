@@ -189,11 +189,16 @@ def _tools() -> List[Tool]:
                  p, title, objective=objective, success_criteria=success_criteria, question=question, skills=skills)),
         Tool("question_create", "Create a research question.", {"title": S, "description": S, "parent": S}, ["title"],
              lambda p, title, description=None, parent=None: SV.create_question(p, title, description, parent)),
-        Tool("experiment_create", "Register an experiment BEFORE running it: hypothesis, parameters (lists = sweep), "
+        Tool("experiment_create", "Register an experiment BEFORE running it (humans only; agents use experiment_propose): hypothesis, parameters (lists = sweep), "
              "metrics, planned runs, success criteria, stop conditions.",
              {"title": S, "question": S, "hypothesis": S, "motivation": S, "method": S, "parameters": O, "metrics": L,
               "planned_runs": I, "success_criteria": S, "stop_conditions": S}, ["title"],
              lambda p, title, **kw: SV.create_experiment(p, title, **kw)),
+        Tool("experiment_propose", "You may NOT create experiments. Submit a proposal; the researcher approves it with a PIN. "
+             "All fields are required.",
+             {"title": S, "hypothesis": S, "rationale": S, "method": S, "expected_outputs": S, "related": S},
+             ["title", "hypothesis", "rationale", "method", "expected_outputs", "related"],
+             lambda p, **kw: __import__("research.supervisor", fromlist=["x"]).propose_experiment(p, kw, source=(p.author or {}).get("author_name") or "agent")),
         Tool("run_start", "Start a tracked run of an experiment in the background (returns the run id; poll run_status). "
              "Use metric_log / artifact_register or research.log_metric() inside the code.",
              {"experiment": S, "command": S, "parameters": O, "label": S, "cwd": S}, ["experiment", "command"],

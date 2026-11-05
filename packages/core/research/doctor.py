@@ -19,12 +19,25 @@ from .util import IncompatibleProject, NotInitialized, ResearchError
 SAFE_FIXES = {"context.stale", "agents_md.stale", "bin.stale"}
 
 
+def normalize_fix(fix: Any) -> Optional[Dict[str, Any]]:
+    """The one `fix` shape every consumer can rely on: {text: str, command?: str, safe?: bool}. Accepts a bare string or a command-only dict."""
+    if not fix:
+        return None
+    if isinstance(fix, str):
+        fix = {"text": fix}
+    out = dict(fix)
+    cmd = out.get("command")
+    if not out.get("text"):
+        out["text"] = f"Run `{cmd}`." if cmd else ""
+    return out if out["text"] or cmd else None
+
+
 class _Report:
     def __init__(self) -> None:
         self.checks: List[Dict[str, Any]] = []
 
     def add(self, id_: str, area: str, level: str, title: str, detail: str = "", fix: Optional[Dict[str, Any]] = None) -> None:
-        self.checks.append({"id": id_, "area": area, "level": level, "title": title, "detail": detail, "fix": fix})
+        self.checks.append({"id": id_, "area": area, "level": level, "title": title, "detail": detail, "fix": normalize_fix(fix)})
 
     def result(self, root: str) -> Dict[str, Any]:
         n = lambda lv: sum(1 for c in self.checks if c["level"] == lv)

@@ -166,6 +166,8 @@ def create_experiment(p: Project, title: str, question: Optional[str] = None, hy
                       _param_delta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not title or not title.strip():
         raise ResearchError("An experiment needs a title")
+    from . import governance
+    governance.check_experiment_create(p)
     warnings = check_new_experiment_allowed(p, override)
     qid = _ids(p, question, "Q")[0] if question else None
     pid = _ids(p, parent, "EXP")[0] if parent else None
