@@ -319,6 +319,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
                             "guide.draft.max_sections": int(gs.get("max_sections", 3)), "guide.draft.max_figures": int(gs.get("max_figures", 1)),
                             "guide.auto_log": bool(gs.get("auto_log", True)), "guide.highlights": gs.get("highlights", "supported"),
                             "guide.publish.workflow": bool(gs.get("publish", True))})
+            cfg.update(spec.get("config") or {})   # bootstrap-file settings (supervisor, governance, handoff), validated by bootstrap.to_spec
             p.save_config(cfg)
             p.config = p.load_config()
             from . import registry
@@ -329,6 +330,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
             if tl.get("packs") is not None:   # the wizard's choice replaces the default pack list (Core Research is always on)
                 p.save_config({"skills.packs": ["core-research"] + want})
                 p.config = p.load_config()
+                registry.write_policy(p)   # the fingerprint covers skills.packs: regenerate so the doctor starts clean
             for pid in want:
                 r_ = _packs.install_pack(p, pid, link=False)
                 bad = [x["name"] for x in r_["results"] if x["state"] == "failed"]

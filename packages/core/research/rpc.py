@@ -855,6 +855,22 @@ class Server:
         from . import initproject
         return initproject.plan(self.root, spec)
 
+    def m_init_yaml_template(self) -> Dict[str, Any]:
+        from . import bootstrap
+        return {"text": bootstrap.TEMPLATE}
+
+    def m_init_yaml_check(self, text: str) -> Dict[str, Any]:
+        from . import bootstrap
+        return bootstrap.check(text, self.root)
+
+    def m_init_yaml_apply(self, text: str) -> Dict[str, Any]:
+        from . import bootstrap
+        return bootstrap.apply(text, self.root, author=self.author)
+
+    def m_init_yaml_export(self) -> Dict[str, Any]:
+        from . import bootstrap
+        return {"text": bootstrap.export(self.project(sync=False))}
+
     def m_init_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         from . import initproject
         return initproject.apply(self.root, spec, author=self.author)
@@ -1066,7 +1082,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "init_yaml_apply", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

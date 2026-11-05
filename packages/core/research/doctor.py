@@ -208,6 +208,13 @@ def _agents(r: _Report, p) -> None:
             r.add("skills", "Agents", "ok", f"{len(SK.list_skills(p))} skills installed")
     except Exception as e:
         r.add("skills", "Agents", "warn", "Skills could not be inspected", str(e))
+    from . import approval
+    if approval.is_set():
+        r.add("approval.pin", "Agents", "ok", "Approval PIN is set (stored on this machine only)")
+    else:
+        r.add("approval.pin", "Agents", "info", "No approval PIN set",
+              "Approving agent proposals, changing policy and promoting to main are not PIN-gated until you set one. Agents still cannot do them.",
+              {"command": "research approval set-pin"})
     from . import mcp as MCP
     st = MCP.status(p.root)
     reg = [c["client"] for c in st["clients"] if c["registered"]]

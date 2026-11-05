@@ -621,7 +621,41 @@ def _done(a, obj: Any, printer=None, msg: Optional[str] = None) -> None:
         printer(obj)
 
 
+def cmd_init_from(a) -> int:
+    """`research init --from research-os.yaml` previews by default; --apply does it. Same initializer as the wizard and `project-init`."""
+    from research import bootstrap as BS
+    root = os.path.abspath(a.path or os.getcwd())
+    text = open(a.from_file, encoding="utf-8").read()
+    r = BS.check(text, root)
+    if a.json and not a.apply:
+        out_json(r)
+        return 0 if r["ok"] else 1
+    if not r["ok"]:
+        for e in r["errors"]:
+            print(red("  ✗ ") + e)
+        return 1
+    if not a.apply:
+        for x in r["plan"]["actions"]:
+            print("  • " + x)
+        print("\n" + "\n".join(r["plan"]["tree"]) + dim("\n\n  add --apply to do it (nothing was written)"))
+        return 0
+    res = BS.apply(text, root)
+    out_json(res) if a.json else ([print(green("✓ ") + x) for x in res["done"]], print(dim("  next: research approval set-pin  (protects approving agent proposals and promotion)")))
+    return 0
+
+
 def cmd_init(a) -> int:
+    if a.template:
+        from research import bootstrap as BS
+        print(BS.TEMPLATE, end="")
+        return 0
+    if a.export:
+        from research import bootstrap as BS
+        with Project.find() as p:
+            print(BS.export(p), end="")
+        return 0
+    if a.from_file:
+        return cmd_init_from(a)
     p = Project.init(a.path or ".", name=a.name, goal=a.goal, description=a.description, agents_md=not a.no_agents_md)
     if a.json:
         out_json({"root": p.root, "name": p.name})
@@ -3117,7 +3151,12 @@ def build_parser() -> argparse.ArgumentParser:
         g.set_defaults(fn=None, _group=g)
         return gs
 
-    x = add(sub, "init", cmd_init, "initialize .research/ in a project (and AGENTS.md)")
+    x = add(sub, "init", cmd_init, "initialize .research/ in a project (and AGENTS.md); or --from research-os.yaml for a whole project")
+    x.add_argument("--from", dest="from_file", metavar="YAML", help="set up a whole project from a bootstrap file (previews unless --apply)")
+    x.add_argument("--apply", action="store_true", help="with --from: perform the setup")
+    x.add_argument("--dry-run", action="store_true", help="with --from: preview only (the default)")
+    x.add_argument("--template", action="store_true", help="print a complete documented bootstrap file")
+    x.add_argument("--export", action="store_true", help="print this project's portable settings as a bootstrap file")
     x.add_argument("path", nargs="?")
     x.add_argument("--name")
     x.add_argument("--goal")
