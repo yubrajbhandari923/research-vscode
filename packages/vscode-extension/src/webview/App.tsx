@@ -7,7 +7,7 @@ import { ProvidersPage } from './Providers';
 import { PlansPage } from './PlansPage';
 import { GuidePage } from './GuidePage';
 import { NewExperiment } from './NewExperiment';
-import { Banner, Icon, useAsync } from './common';
+import { Banner, Icon, PinHost, useAsync } from './common';
 import { SettingsPage } from './SettingsPage';
 import type { Page } from './types';
 
@@ -58,6 +58,7 @@ function Shell({ host, initial, name }: { host: Host; initial?: { page?: Page; t
   };
   return (
     <div className="shell">
+      <PinHost />
       <header className="topbar">
         <div className="brand" title="Research OS project"><span className="mark" aria-hidden /><span className="proj">{name}</span></div>
         <div role="tablist" aria-label="Research areas">

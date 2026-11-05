@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Badge, Banner, Dialog, EmptyState, Icon, PageHeader, Progress, Section, State, useAsync } from './common';
+import { Badge, Banner, Dialog, callPin, EmptyState, Icon, PageHeader, Progress, Section, State, useAsync } from './common';
 import type { Host } from './host';
 
 /** What each supervisor phase means for the researcher. "verifying" and "waiting_hpc" are real work in flight; "running" only appears
@@ -32,6 +32,7 @@ export function PlansPage({ host }: { host: Host }) {
         actions={<><button type="button" onClick={() => host.run('research.plan.yaml.import')}><Icon name="plus" /> Import YAML</button>
           <button type="button" onClick={() => host.run('research.plan.yaml.new')}>New from template</button></>} />
       {msg && <Banner kind={msg.ok ? 'ok' : 'bad'} role="status" onDismiss={() => setMsg(null)}>{msg.text}</Banner>}
+      <Proposals host={host} act={act} tick={list.data} />
       <State a={list}>{(plans) => plans.length === 0 ? (
         <EmptyState icon="tasks" title="No YAML plans yet." actions={<><button type="button" className="primary" onClick={() => host.run('research.plan.yaml.new')}>Create from template</button>
           <button type="button" onClick={() => host.run('research.plan.yaml.import')}>Import a plan</button></>}>
@@ -64,6 +65,7 @@ export function PlansPage({ host }: { host: Host }) {
 function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: () => Promise<any>, ok: string) => Promise<void>; }) {
   const a = useAsync<any>(() => host.call('supervisor_status', { plan }), [plan]);
   const [detail, setDetail] = useState<string | null>(null);
+  const [cont, setCont] = useState<string | null>(null);
   const [now, setNow] = useState(0);
   useEffect(() => { const t = setInterval(() => { if (document.visibilityState !== 'hidden') { a.reload(); setNow((n) => n + 1); } }, 3000); return () => clearInterval(t); }, [plan]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -84,22 +86,15 @@ function PlanDetail({ host, plan, act }: { host: Host; plan: string; act: (fn: (
               <td className="min"><button type="button" className="sm" onClick={() => setDetail(t.id)}>Details</button>
                 {t.phase === 'awaiting_approval' && <button type="button" className="sm primary" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'approve' }), `${t.id} approved`)}>Approve</button>}
                 {t.phase === 'attention' && <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'retry' }), `${t.id} queued for another attempt`)}>Retry</button>}
+                {['attention', 'blocked', 'repair_pending'].includes(t.phase) && t.attempts > 0 && <button type="button" className="sm" title="Hand this task to another agent, in the same worktree" onClick={() => setCont(t.id)}>Continue with another agent</button>}
                 {t.phase === 'blocked' && <button type="button" className="sm" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'unblock' }), `${t.id} unblocked`)}>Unblock</button>}
                 {['blocked', 'attention'].includes(t.phase) && t.attempts > 0 && <button type="button" className="sm" title="Run the checks again on the work as it stands (no new agent)" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'completed', note: 're-verify requested' }), `${t.id}: verifying again`)}>Re-verify</button>}
                 {['blocked', 'attention'].includes(t.phase) && t.attempts > 0 && <button type="button" className="sm" title="Use when the failure was Research OS's fault, not the agent's: the old attempts stay as evidence but stop counting" onClick={() => act(() => host.call('supervisor_task', { task: t.id, action: 'void', note: 'voided by the researcher: the failure was not the agent\'s' }), `${t.id}: attempts voided, queued again`)}>Retry fresh</button>}</td>
             </tr>); })}</tbody></table></div>
         <p className="muted small">Attempts {s.budgets.attempts || 0} of {s.budgets.max_total_attempts} · wall time {Math.round((s.budgets.wall_seconds || 0) / 60)} of {s.budgets.max_wall_minutes} min · limits are in Settings → Supervisor</p>
       </Section>
-      {s.proposals.length > 0 && <Section title="Proposed plan changes" count={s.proposals.length} hint="Agents propose; only additions of new tasks may apply automatically. Everything else waits for you.">
-        {s.proposals.map((pr: any) => (
-          <div key={pr.id} className="card" style={{ margin: '6px 0', padding: 10 }}>
-            <div><b>{pr.id}</b> <Badge kind={pr.classification === 'scientific' ? 'warn' : 'info'}>{pr.classification}</Badge> <span className="muted">from {pr.task || 'an agent'}</span></div>
-            <p>{pr.rationale}</p><pre className="diff" tabIndex={0}>{pr.patch}</pre>
-            <div className="row"><button type="button" className="primary" onClick={() => act(() => host.call('proposal_decide', { id: pr.id, approve: true }), `${pr.id} applied through the plan engine`)}>Approve and apply</button>
-              <button type="button" onClick={() => act(() => host.call('proposal_decide', { id: pr.id, approve: false }), `${pr.id} rejected`)}>Reject</button></div>
-          </div>))}
-      </Section>}
       <Promotion host={host} plan={plan} act={act} />
+      {cont && <ContinueDialog host={host} task={cont} onClose={() => { setCont(null); a.reload(); }} />}
       {detail && <AttemptDialog host={host} task={detail} onClose={() => setDetail(null)} tick={now} />}
     </>}</State>
   );
@@ -139,6 +134,64 @@ function AttemptDialog({ host, task, onClose, tick }: { host: Host; task: string
         <pre className="diff" tabIndex={0} style={{ maxHeight: 220, overflow: 'auto' }}>{d.prompt || '(not recorded)'}</pre>
         {d.reports.length > 0 && <><h3>Reports from the agent</h3><ul>{d.reports.map((r: any, i: number) => <li key={i}><b>{r.kind}</b> {r.message || r.summary || r.path || r.run || ''}</li>)}</ul></>}
         {d.logs && <><h3>Agent output</h3><pre className="diff" tabIndex={0} style={{ maxHeight: 180, overflow: 'auto' }}>{(d.logs.err || '') + (d.logs.out || '') || '(none yet)'}</pre></>}
+      </>}</State>
+    </Dialog>);
+}
+
+/** All proposals: agents' plan changes and experiment proposals. Approving needs a reason and (when set) the PIN; rejections and revision requests are kept. */
+function Proposals({ host, act, tick }: { host: Host; act: (fn: () => Promise<any>, ok: string) => Promise<void>; tick: unknown }) {
+  const a = useAsync<any[]>(() => host.call('proposals'), [tick]);
+  const [note, setNote] = useState<Record<string, string>>({});
+  const decide = (pr: any, approve: true | false | 'revise', ok: string) => act(async () => {
+    const params = { id: pr.id, approve, note: note[pr.id] || undefined, rev: pr.rev };
+    if (approve === true) await callPin(host, 'proposal_decide', params, `Approving ${pr.id} needs your PIN.`); else await host.call('proposal_decide', params);
+    a.reload();
+  }, ok);
+  const all = a.data || [];
+  const pending = all.filter((x) => x.status === 'pending');
+  const history = all.filter((x) => x.status !== 'pending');
+  if (!all.length) return null;
+  return <>
+    {pending.length > 0 && <Section title="Proposals" count={pending.length} hint="Agents propose; you decide. Experiments are never created by an agent directly, and only small operational task additions may apply on their own.">
+      {pending.map((pr) => (
+        <div key={pr.id} className="card" style={{ margin: '6px 0', padding: 10 }} aria-label={pr.id}>
+          <div><b>{pr.id}</b> <Badge kind="info">{pr.kind === 'experiment' ? 'experiment' : 'plan change'}</Badge> <Badge kind={pr.classification === 'scientific' ? 'warn' : 'info'}>{pr.classification}</Badge> <span className="muted">from {pr.source || 'an agent'} · revision {pr.rev || 1}</span></div>
+          <p>{pr.rationale}</p>
+          {pr.kind === 'experiment' ? <dl>{[['Title', 'title'], ['Hypothesis', 'hypothesis'], ['Method', 'method'], ['Expected outputs', 'expected_outputs'], ['Relation to existing work', 'related']].map(([l, k]) => <div key={k}><dt>{l}</dt><dd>{pr.fields?.[k]}</dd></div>)}</dl>
+            : <pre className="diff" tabIndex={0}>{pr.patch}</pre>}
+          <label htmlFor={'why-' + pr.id}>Reason <span className="muted">(required to approve or request a revision; kept in the audit trail)</span></label>
+          <textarea id={'why-' + pr.id} rows={2} value={note[pr.id] || ''} onChange={(e) => setNote({ ...note, [pr.id]: e.target.value })} />
+          <div className="row">
+            <button type="button" className="primary" disabled={!(note[pr.id] || '').trim()} onClick={() => decide(pr, true, `${pr.id} approved and applied`)}>Approve</button>
+            <button type="button" onClick={() => decide(pr, false, `${pr.id} rejected`)}>Reject</button>
+            <button type="button" disabled={!(note[pr.id] || '').trim()} onClick={() => decide(pr, 'revise', `${pr.id}: revision requested`)}>Request revision</button></div>
+        </div>))}
+    </Section>}
+    {history.length > 0 && <details><summary>Audit history ({history.length})</summary>
+      <ul>{history.map((pr) => <li key={pr.id}><b>{pr.id}</b> {pr.status.replace('_', ' ')} · {pr.kind === 'experiment' ? pr.fields?.title : pr.classification} · by {pr.decided_by || 'policy'}{pr.decided_at ? ` · ${pr.decided_at}` : ''}{pr.note ? ` · “${pr.note}”` : ''}</li>)}</ul></details>}
+  </>;
+}
+
+function ContinueDialog({ host, task, onClose }: { host: Host; task: string; onClose: () => void }) {
+  const a = useAsync<any>(() => host.call('provider_status', { task }), [task]);
+  const [pick, setPick] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const go = async () => {
+    try { const r = await host.call('supervisor_task', { task, action: 'continue', reason: pick, note: 'continued with another agent from the Plans page' }); setMsg({ ok: true, text: `${task} will continue with ${r.profile}.${r.note ? ' ' + r.note : ''}` }); a.reload(); }
+    catch (e: any) { setMsg({ ok: false, text: e.message }); }
+  };
+  return (
+    <Dialog title={`${task}: continue with another agent`} onClose={onClose} actions={<><button type="button" onClick={onClose}>Close</button>
+      <button type="button" className="primary" disabled={!pick} onClick={go}>Continue with {pick || '…'}</button></>}>
+      <State a={a}>{(d) => <>
+        <p>Current agent: <b>{d.current || 'none yet'}</b>. The next attempt runs in the same worktree with a written hand-over (not the old session).</p>
+        <label htmlFor="cont-pick">Hand over to</label>
+        <select id="cont-pick" data-autofocus value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="">Choose a provider…</option>
+          {d.providers.map((p: any) => <option key={p.profile} value={p.profile} disabled={!p.installed || p.profile === d.current}>{p.profile} — {p.installed ? 'installed' : 'not installed'}{p.profile === d.current ? ' (current)' : ''}</option>)}
+        </select>
+        {msg && <Banner kind={msg.ok ? 'ok' : 'bad'}>{msg.text}</Banner>}
+        {d.handoffs?.length > 0 && <><h3>Handoff history</h3><ul>{d.handoffs.map((h: any, i: number) => <li key={i}>{h.from} → {h.to} · {h.by} · {h.ts} · {h.reason}</li>)}</ul></>}
       </>}</State>
     </Dialog>);
 }

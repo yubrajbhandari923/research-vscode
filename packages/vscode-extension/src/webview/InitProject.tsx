@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { State, useAsync } from './common';
 import type { Host } from './host';
 
@@ -28,7 +28,47 @@ const Learn = ({ title, children }: { title: string; children: any }) => (
 /** Initialize Project: from an empty folder to a working shared-ledger workspace. Nothing is written until the last step. */
 export function InitProject({ host, onDone, onClassic }: { host: Host; onDone: (r: any) => void; onClassic: () => void }) {
   const env = useAsync<Env>(() => host.call('init_environment'), []);
-  return <div className="page-body setup"><State a={env}>{(e) => <Wizard host={host} env={e} onDone={onDone} onClassic={onClassic} />}</State></div>;
+  const [mode, setMode] = useState<'guided' | 'yaml'>('guided');
+  const [done, setDone] = useState<any>(null);
+  const finish = (r: any) => { setDone(r); onDone(r); };
+  if (done) return <div className="page-body setup"><Done r={done} host={host} /></div>;
+  return <div className="page-body setup">
+    <div className="segmented" role="group" aria-label="Setup mode" style={{ marginBottom: 8 }}>
+      <button type="button" aria-pressed={mode === 'guided'} onClick={() => setMode('guided')}>Guided setup</button>
+      <button type="button" aria-pressed={mode === 'yaml'} onClick={() => setMode('yaml')}>Edit YAML</button></div>
+    {mode === 'yaml' ? <YamlInit host={host} onDone={finish} />
+      : <State a={env}>{(e) => <Wizard host={host} env={e} onDone={finish} onClassic={onClassic} />}</State>}
+  </div>;
+}
+
+/** The whole setup as one YAML file. Same backend initializer as the wizard: validate and preview write nothing. */
+function YamlInit({ host, onDone }: { host: Host; onDone: (r: any) => void }) {
+  const [text, setText] = useState('');
+  const [res, setRes] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { host.call('init_yaml_template').then((r: any) => setText(r.text)).catch((e: any) => setErr(e.message)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const check = async () => { setErr(''); try { setRes(await host.call('init_yaml_check', { text })); } catch (e: any) { setErr(e.message); } };
+  const init = async () => { setBusy(true); setErr(''); try { onDone(await host.call('init_yaml_apply', { text })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
+  const load = (f?: File) => { if (!f) return; const r = new FileReader(); r.onload = () => { setText(String(r.result)); setRes(null); }; r.readAsText(f); };
+  return (
+    <div className="wizard">
+      <h1>Initialize from YAML</h1>
+      <p className="muted">Every setting is in this file, with its default and an explanation. Validate and Preview write nothing. The PIN is never part of the file.</p>
+      <label htmlFor="yaml-text" className="sr">Bootstrap YAML</label>
+      <textarea id="yaml-text" rows={26} spellCheck={false} style={{ fontFamily: 'var(--vscode-editor-font-family, monospace)', width: '100%' }} value={text} onChange={(e) => { setText(e.target.value); setRes(null); }} />
+      <div className="row">
+        <button type="button" onClick={check}>Validate</button>
+        <button type="button" onClick={check}>Preview changes</button>
+        <label className="btn">Load file<input type="file" accept=".yaml,.yml" style={{ display: 'none' }} onChange={(e) => load(e.target.files?.[0])} /></label>
+        <button type="button" onClick={() => host.saveText('research-os.yaml', text)}>Save / export</button>
+        <span className="spacer" />
+        <button type="button" className="primary" disabled={busy || !text} onClick={init}>{busy ? 'Creating…' : 'Initialize'}</button></div>
+      {err && <div className="field-error" role="alert">{err}</div>}
+      {res && (res.ok ? <section aria-label="Preview"><p><b>Valid.</b> Research OS will create:</p><pre className="diff">{res.plan.tree.join('\n')}</pre>
+        <ul>{res.plan.actions.map((a: string) => <li key={a}>{a}</li>)}</ul>{res.plan.notes.map((n: string) => <p key={n} className="help-warn">{n}</p>)}</section>
+        : <div className="field-error" role="alert"><b>Fix this first:</b><ul>{res.errors.map((e: string) => <li key={e}>{e}</li>)}</ul></div>)}
+    </div>);
 }
 
 function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone: (r: any) => void; onClassic: () => void }) {
@@ -84,7 +124,6 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
     try { setProbe(await host.call('hpc_test', { ssh_host: h.ssh_host, workspace_root: h.workspace_root, python: h.python, required_packages: h.required_packages, setup: h.setup, partition: h.partition, compute })); } catch (e: any) { setProbe({ error: e.message }); }
   };
 
-  if (result) return <Done r={result} host={host} />;
   const canNext = step === 1 ? name.trim().length > 0 : true;
   const set = (k: string) => (e: any) => setLay({ ...lay, [k]: e.target.value });
 
@@ -291,11 +330,21 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
   );
 }
 
-function Done({ r }: { r: any; host: Host }) {
+function Done({ r, host }: { r: any; host: Host }) {
+  const [pin, setPin] = useState('');
+  const [pinMsg, setPinMsg] = useState('');
+  const savePin = async () => { try { await host.call('approval_set_pin', { new: pin }); setPin(''); setPinMsg('PIN set on this machine.'); } catch (e: any) { setPinMsg(e.message); } };
   return (
     <div className="wizard">
       <h1>Project created</h1>
       <ul>{r.done.map((d: string) => <li key={d}>{d}</li>)}</ul>
+      <section aria-label="Approval PIN">
+        <label htmlFor="init-pin">Set an approval PIN now (optional)</label>
+        <div className="row"><input id="init-pin" type="password" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} />
+          <button type="button" disabled={pin.length < 4} onClick={savePin}>Set PIN</button></div>
+        <p className="muted small">Asked when you approve an agent's proposal, change policy or promote to main. Stored on this machine only. You can also set it later in Settings → Governance.</p>
+        {pinMsg && <p role="status">{pinMsg}</p>}
+      </section>
       <Learn title="Your first 5 minutes">
         <ol>
           <li><b>Research: New experiment</b> — describe the question and hypothesis.</li>

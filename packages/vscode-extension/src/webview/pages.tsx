@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Badge, Dialog, EmptyState, IdLink, Icon, PageHeader, Progress, Section, Segmented, Stat, State, Status, ago, useAsync } from './common';
+import { Badge, Dialog, callPin, EmptyState, IdLink, Icon, PageHeader, Progress, Section, Segmented, Stat, State, Status, ago, useAsync } from './common';
 import { HealthBanner } from './Doctor';
 import { NewExperiment } from './NewExperiment';
 import { ReportsSection } from './ReportsSection';
@@ -300,7 +300,7 @@ function PromotionDialog({ host, candidate, onClose }: { host: Host; candidate: 
   const needCmd = /No test command configured/.test(err);
   const act = async (action: string, extra: any = {}) => {
     setBusy(true); setErr('');
-    try { const r = await host.call('promotion_action', { id: c.id, action, ...extra }); const all = await host.call('promotions', {}).catch(() => []); setC(all.find((x: any) => x.id === c.id) || r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    try { const r = await (['approve', 'integrate'].includes(action) ? callPin(host, 'promotion_action', { id: c.id, action, ...extra }, `${action === 'integrate' ? 'Merging into main' : 'Approving this promotion'} needs your PIN.`) : host.call('promotion_action', { id: c.id, action, ...extra })); const all = await host.call('promotions', {}).catch(() => []); setC(all.find((x: any) => x.id === c.id) || r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
   const g = c.gates;
   const row = (label: string, gate: any, children?: any) => <tr><th scope="row">{label}</th><td><Badge kind={['passed', 'approved'].includes(gate.state) ? 'ok' : ['failed', 'blocked', 'stale'].includes(gate.state) ? 'warn' : ''}>{gate.state.replace('_', ' ')}</Badge></td><td className="muted">{gate.detail || gate.note || ''}{children}</td></tr>;

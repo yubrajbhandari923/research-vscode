@@ -134,9 +134,11 @@ class Server:
         from . import setup
         return setup.new_experiment_plan(self.project(sync=False), spec)
 
-    def m_new_experiment(self, spec: Dict[str, Any]) -> Dict[str, Any]:
-        from . import setup
-        return setup.new_experiment(self.project(), spec)
+    def m_new_experiment(self, spec: Dict[str, Any], pin: Optional[str] = None) -> Dict[str, Any]:
+        from . import governance, setup
+        p = self.project()
+        governance.confirm_human_experiment(p, pin)     # only asks when the optional setting is on
+        return setup.new_experiment(p, spec)
 
     def m_settings(self, category: Optional[str] = None, search: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
@@ -1129,7 +1131,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "hpc_discover", "hpc_test") and not srv.initialized():
+            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "init_yaml_template", "init_yaml_check", "init_yaml_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)
             if method in MUTATING and srv.p is not None:

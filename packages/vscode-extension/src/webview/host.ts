@@ -14,6 +14,8 @@ export interface Host {
   ready?(): void;
   /** Open a file of the Scientist Guide (guide-relative path; `dir` is the absolute guide directory the core reported). */
   openGuide(dir: string, file: string): void;
+  /** Save text to a file the user picks (save dialog). */
+  saveText(suggestedName: string, text: string): void;
   /** Open documentation (a repo-relative path with optional #anchor). */
   openDoc(path: string): void;
   /** Persist small UI state (selected page, search text). */
@@ -40,6 +42,7 @@ export function vscodeHost(api: { postMessage(m: any): void; getState(): any; se
     }),
     openEntity: (id) => api.postMessage({ type: 'open-entity', id }),
     run: (command, arg) => api.postMessage({ type: 'run', command, arg }),
+    saveText: (suggestedName, text) => api.postMessage({ type: 'save-text', suggestedName, text }),
     openDoc: (path) => api.postMessage({ type: 'open-doc', path }),
     openFile: (path) => api.postMessage({ type: 'open-file', path }),
     openReport: (file) => api.postMessage({ type: 'open-report', file }),
