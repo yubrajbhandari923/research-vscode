@@ -687,9 +687,15 @@ class Server:
             return SV.accept(p, task, reason or "")
         if action == "void":
             return SV.void_attempts(p, task, note or reason or "attempts voided by a human", attempts)
+        if action == "continue":
+            return SV.continue_with(p, task, reason or "", note)
         if action in ("failed", "completed", "retry", "unblock"):
             return SV.resolve(p, task, action, note)
         raise ResearchError(f"unknown task action {action!r}")
+
+    def m_provider_status(self, task: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.provider_status(self.project(sync=False), task)
 
     def m_proposals(self) -> List[Dict[str, Any]]:
         from . import supervisor as SV

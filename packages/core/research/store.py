@@ -72,6 +72,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
     "agents": {
         "default_profile": "claude",
+        # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
+        "handoff": {"enabled": False, "fallback_order": ["claude", "codex", "agy"], "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
         "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
         "profiles": {
             "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},

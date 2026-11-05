@@ -81,7 +81,8 @@ def _agy(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
     if effort:
         argv += ["--effort", str(effort)]
     if headless:
-        return argv + ["--output-format", "json", "-p", prompt]
+        # nobody can answer a permission prompt in print mode: accept edits (the same stance as claude's acceptEdits), never --dangerously-skip-permissions
+        return argv + ["--mode", str(prof.get("permission_mode") or "accept-edits"), "--output-format", "json", "-p", prompt]
     return argv + ["-i", prompt]
 
 
@@ -263,10 +264,11 @@ def native_resume_supported(kind: str, command: str) -> bool:
     if key not in _RESUME_PROBE:
         ok = False
         if shutil.which(command):
-            argv = {"claude": [command, "--help"], "codex": [command, "exec", "resume", "--help"]}.get(kind)
+            argv = {"claude": [command, "--help"], "codex": [command, "exec", "resume", "--help"], "agy": [command, "--help"]}.get(kind)
             r = _run(argv, timeout=20) if argv else None
-            if r and r.returncode == 0:
-                ok = (kind != "claude") or "--resume" in (r.stdout + r.stderr)
+            if r and (r.returncode == 0 or kind == "agy"):   # agy prints its usage on stderr / non-zero
+                flag = {"claude": "--resume", "agy": "--conversation"}.get(kind)
+                ok = (flag is None) or flag in (r.stdout + r.stderr)
         _RESUME_PROBE[key] = ok
     return _RESUME_PROBE[key]
 
@@ -277,6 +279,9 @@ def resume_argv(kind: str, argv: List[str], session_id: str) -> Optional[List[st
     claude: `claude -p --resume ID …`. codex (verified against codex-cli 0.163): `codex exec resume --json [-m M] [-c k=v …] ID PROMPT`;
     resume accepts neither -s, -C nor --add-dir, so the sandbox and writable roots go through -c and the working directory is the
     process's own."""
+    if kind == "agy" and "-p" in argv:          # verified against agy 1.5.0: `agy --conversation ID --output-format json -p PROMPT`
+        i = argv.index("-p")
+        return argv[:i] + ["--conversation", session_id] + argv[i:]
     if kind == "claude" and "-p" in argv:
         i = argv.index("-p")
         return argv[:i + 1] + ["--resume", session_id] + argv[i + 1:]
@@ -307,6 +312,14 @@ def resume_argv(kind: str, argv: List[str], session_id: str) -> Optional[List[st
 
 def session_id_of(kind: str, output: str) -> Optional[str]:
     """The provider's own session id from headless output, if the format reports one (claude --output-format json does)."""
+    if kind == "agy":                           # agy --output-format json prints one object with "conversation_id"
+        for line in reversed((output or "").strip().splitlines()):
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("conversation_id"):
+                return str(d["conversation_id"])
     if kind in ("claude", "codex"):
         key = "session_id" if kind == "claude" else "thread_id"      # codex --json: {"type":"thread.started","thread_id":…}
         for line in (reversed((output or "").strip().splitlines()) if kind == "claude" else (output or "").strip().splitlines()):

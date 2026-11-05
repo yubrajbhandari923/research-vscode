@@ -342,6 +342,8 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
             e["phase"] = "attention"
             e["reason"] = f"could not launch: {ex}"
             out["events"].append(f"{tid}: could not launch: {ex}")
+            if "not available" in str(ex) or "not on PATH" in str(ex):
+                _fallback(p, rs, tid, e, None, f"provider unavailable: {ex}", out)
 
 
 def _lease_key(p: Project, st: Dict[str, Any], tid: str) -> str:
@@ -398,7 +400,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     elif task["status"] == "running" and task.get("claimed_by"):
         P.update_task(p, tid, claimed_by=None, claimed_at=None)
     exp_id = task.get("related_experiment_id")
-    attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": ag.get("profile"),
+    attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": e.get("provider_override") or ag.get("profile"),
                "role": role,   # runs that already exist belong to earlier attempts; second-resolution timestamps cannot tell them apart
                "runs_before": [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=?", (exp_id,))] if exp_id else []}
     e["attempts"].append(attempt)
@@ -409,7 +411,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     workspace = None
     try:
         text, sources = taskprompt.assemble(p, tid, st, e, kind, diagnostics, None, c)
-        kw: Dict[str, Any] = dict(role=role, target=tid, profile=ag.get("profile"), model=ag.get("model"), instructions=text, headless=True,
+        kw: Dict[str, Any] = dict(role=role, target=tid, profile=e.get("provider_override") or ag.get("profile"), model=ag.get("model"), instructions=text, headless=True,
                                   create_workspace=(spec.get("execution") or {}).get("workspace", "experiment") == "experiment")
         if ag.get("level"):
             kw["level"] = ag["level"]
@@ -489,6 +491,106 @@ def _resumable_session(p: Project, e: Dict[str, Any], spec: Dict[str, Any], role
             kind = pv.provider_of({"command": cmd}, os.path.basename(cmd))
             return sid if pv.native_resume_supported(kind, cmd) else None
     return None
+
+
+# ----------------------------------------------------------------------------------------------- provider handoff
+def _provider_profiles(p: Project) -> Dict[str, str]:
+    """provider kind -> first installed profile name using it (the profile a fallback to that provider launches)."""
+    pv = _providers()
+    out: Dict[str, str] = {}
+    profs = (p.config.get("agents") or {}).get("profiles") or {}
+    for name, prof in profs.items():
+        try:
+            d = pv.detect(prof, name)
+        except ResearchError:
+            continue
+        if d["installed"] and d["provider"] in ("claude", "codex", "agy") and d["provider"] not in out and name == d["provider"]:
+            out[d["provider"]] = name
+    return out
+
+
+def provider_status(p: Project, tid: Optional[str] = None) -> Dict[str, Any]:
+    """Which providers can take a task over now, the current one, and the handoff history (for the panel and `supervisor continue`)."""
+    pv = _providers()
+    profs = (p.config.get("agents") or {}).get("profiles") or {}
+    rows = []
+    for kind, name in (("claude", "claude"), ("codex", "codex"), ("agy", "agy")):
+        prof = profs.get(name) or {"command": kind}
+        d = pv.detect(prof, name)
+        rows.append({"provider": kind, "profile": name, "installed": d["installed"], "headless": d["capabilities"]["headless"],
+                     "resume": d["capabilities"]["resume"]})
+    res = {"providers": rows, "handoff": {**((p.config.get("agents") or {}).get("handoff") or {})}}
+    if tid:
+        hit = PS.find_task_key(p, tid)
+        rs = load_run(p, hit[0]["plan_id"]) if hit else None
+        e = ((rs or {}).get("tasks") or {}).get(tid) or {}
+        last = (e.get("attempts") or [{}])[-1]
+        res.update(current=e.get("provider_override") or last.get("profile"), handoffs=e.get("handoffs", []), phase=e.get("phase"),
+                   attempts=[{"n": a["n"], "profile": a.get("profile"), "state": a.get("state"), "session_mode": a.get("session_mode")} for a in e.get("attempts", [])])
+    return res
+
+
+def _switch(p: Project, e: Dict[str, Any], tid: str, to_profile: str, why: str, by: str) -> None:
+    a = (e["attempts"] or [{}])[-1]
+    e.setdefault("handoffs", []).append({"ts": now_iso(), "after_attempt": len(e["attempts"]), "from": a.get("profile"), "to": to_profile, "reason": why[:300], "by": by})
+    e["provider_override"] = to_profile
+    failed_verification = bool((a.get("verification") or {}).get("passed") is False and not a.get("voided"))
+    e.update(phase="repair_pending" if failed_verification else "waiting", reason=None)
+    _event(p, tid, "supervisor_handoff", f"{a.get('profile')} → {to_profile} ({by}): {why[:160]}")
+
+
+def _fallback(p: Project, rs: Dict[str, Any], tid: str, e: Dict[str, Any], a: Optional[Dict[str, Any]], why: str, out: Dict[str, Any]) -> bool:
+    """Opt-in automatic fallback to the next provider in agents.handoff.fallback_order. Bounded: each provider at most once per task and
+    only while the supervisor's own attempt limits allow. Never used when the previous attempt's state is unknown."""
+    h = (p.config.get("agents") or {}).get("handoff") or {}
+    if not (h.get("enabled") and h.get("on_provider_unavailable") == "try_next"):
+        return False
+    if a and (a.get("state") == "unknown" or a.get("category") == "unknown_execution_state"):
+        return False
+    avail = _provider_profiles(p)
+    tried = {x.get("profile") for x in e.get("attempts", [])} | {hh["to"] for hh in e.get("handoffs", [])}
+    cur = e.get("provider_override") or (e["attempts"][-1].get("profile") if e.get("attempts") else None)
+    for kind in h.get("fallback_order") or []:
+        name = avail.get(kind)
+        if name and name not in tried and name != cur:
+            _switch(p, e, tid, name, why, "policy (fallback_order)")
+            if rs["state"] in ("attention", "blocked"):
+                rs["state"] = "running"
+            return True
+    return False
+
+
+def continue_with(p: Project, tid: str, profile: str, note: Optional[str] = None) -> Dict[str, Any]:
+    """Human action: continue a stopped or failed task with another agent, in the same worktree, as the next attempt of the same task.
+    The new provider gets a portable context document (never the old provider's session id). Refused while the previous process may still run."""
+    from . import execution as E
+    require_human(p, "Continuing a task with another agent")
+    hit = PS.find_task_key(p, tid)
+    if not hit:
+        raise ResearchError(f"{tid} is not part of a managed plan")
+    prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(profile)
+    if not prof:
+        raise ResearchError(f"No agent profile {profile!r}", hint="`research provider list` shows the profiles.")
+    d = _providers().detect(prof, profile)
+    if not d["installed"]:
+        raise ResearchError(f"`{d['command']}` is not installed on this machine")
+    with _lock(p):
+        rs = load_run(p, hit[0]["plan_id"])
+        e = _entry(rs, tid)
+        if e.get("phase") in ("running", "verifying", "waiting_hpc", "verified", "retired"):
+            raise ResearchError(f"{tid} is {e['phase']}; only a stopped, failed or waiting task can change agent")
+        a = e["attempts"][-1] if e["attempts"] else None
+        if a and a.get("execution"):
+            ex = E.show(p, a["execution"])
+            if ex["state"] in ("prepared", "launched", "running") or ex.get("alive") or a.get("state") == "unknown" or ex["state"] == "unknown":
+                raise ResearchError(f"The previous agent process for {tid} may still be running (state {ex['state']})",
+                                    hint="Stop it, or settle it with `research supervisor resolve` first; nothing was changed.")
+        _switch(p, e, tid, profile, note or e.get("reason") or "continued by the researcher", "human")
+        if rs["state"] in ("attention", "blocked"):
+            rs["state"] = "running"
+        save_run(p, rs)
+    return {"task": tid, "profile": profile, "handoffs": e["handoffs"], "plan_state": rs["state"],
+            "note": "the plan is paused: resume it to start the next attempt" if rs["state"] == "paused" else None}
 
 
 # ----------------------------------------------------------------------------------------------- reconciliation of attempts
@@ -578,6 +680,8 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
             rs["budgets"]["attempts"] = max(0, rs["budgets"]["attempts"] - 1)
             e.update(phase="attention", reason=f"the provider refused the request ({pe}). Nothing was retried; resume the plan or press Retry when it is available again")
             _event(p, tid, "supervisor_provider_error", pe)
+            if _fallback(p, rs, tid, e, a, "provider error: " + pe, out):
+                return
             out["blocked"].append({"task": tid, "reason": e["reason"]})
             return
         code = ex.get("exit_code")

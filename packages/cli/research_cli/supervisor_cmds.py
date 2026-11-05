@@ -167,6 +167,12 @@ def cmd_supervisor(a, p) -> int:
     if act == "void":
         return _emit(a, SV.void_attempts(p, a.target, a.reason or a.note or "attempts voided by a human"),
                      lambda d: [M.green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
+    if act == "continue":
+        if not a.profile:
+            raise ResearchError("continue needs --profile (claude, codex or agy)")
+        return _emit(a, SV.continue_with(p, a.target, a.profile, a.note), lambda d: [M.green("✓ ") + f"{d['task']} will continue with {d['profile']} as its next attempt, in the same worktree"])
+    if act == "providers":
+        return _emit(a, SV.provider_status(p, a.target), lambda d: [f"{r['provider']:<7} {'installed' if r['installed'] else 'NOT installed':<14} headless={r['headless']} native-resume={r['resume']}" for r in d["providers"]])
     if act == "resolve":
         o = "failed" if a.failed else "completed" if a.completed else "retry" if a.retry else "unblock" if a.unblock else None
         if not o:
@@ -305,8 +311,9 @@ def attach_top(sub, add, group) -> None:
     x.add_argument("--path", help="create: where to create the venv (default: .venv next to main/)")
     x.add_argument("--python", help="create: python version/interpreter for uv (for example 3.12)")
     x.add_argument("--package", "-k", action="append", help="packages (repeatable)")
-    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve")
-    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void"])
+    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve | continue (hand a task to another agent) | providers")
+    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void", "continue", "providers"])
+    x.add_argument("--profile", help="continue: the agent profile to hand the task to")
     x.add_argument("target", nargs="?", help="approve/accept/resolve: task id")
     x.add_argument("--foreground", action="store_true", help="start: run in this terminal instead of detaching")
     x.add_argument("--detach", action="store_true", help="start: detach (the default)")
