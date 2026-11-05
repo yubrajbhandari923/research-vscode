@@ -61,6 +61,10 @@ Headless Claude Code runs are started with `--permission-mode acceptEdits` and `
 Headless runs capture stdout/stderr to `.research/orchestration/executions/<id>.out|.err` and the exit status.
 `retry --profile codex` continues the same task with another provider in the same worktree.
 
+## Continuing a task with another provider
+
+A stopped or failed task can be continued by another provider in the same worktree; see [GOVERNANCE.md](GOVERNANCE.md#3-claude-codex-and-antigravity). Antigravity runs headless (`agy -p --output-format json --mode accept-edits`) and resumes with `--conversation`.
+
 ## Adding a provider
 
 Constrained CLI route (no code): add a profile with `command`, `args`, `model_flag`, `prompt_flag` and, for headless, `headless_args`
