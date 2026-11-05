@@ -69,7 +69,7 @@ def check_task_create(p, task_type: Optional[str], exp_id: Optional[str]) -> Non
         return
     pol = task_policy(p, exp_id)
     c = cfg(p)["tasks"]
-    hint = "Propose it instead: `research plan propose` (a human approves)."
+    hint = "Propose it instead: `research agent propose <task> --file patch.yaml --rationale …` (a human approves)."
     if pol != "bounded_auto":
         raise PolicyBlocked(f"Agents may not create tasks (policy: {pol})", hint=hint)
     if task_type not in c["allowed_auto_types"]:
