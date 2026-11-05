@@ -13,8 +13,8 @@ const PY = process.env.RESEARCH_PYTHON || path.join(ROOT, '.venv/bin/python');
 const PYPATH = [path.join(ROOT, 'packages/core'), path.join(ROOT, 'packages/cli')].join(path.delimiter);
 let proj, lib, dom;
 
-function startCore(root) {
-  const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, XDG_CONFIG_HOME: path.join(os.tmpdir(), 'rp-xdg-empty'), PYTHONPATH: PYPATH, XDG_CONFIG_HOME: path.join(os.tmpdir(), 'rp-xdg-empty'), RESEARCH_CONFIG: '' } });
+function startCore(root, xdg = path.join(os.tmpdir(), 'rp-xdg-empty')) {
+  const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, XDG_CONFIG_HOME: xdg, PYTHONPATH: PYPATH, RESEARCH_CONFIG: '' } });
   let buf = '', seq = 0; const waiting = new Map(); let ready;
   const up = new Promise((r) => (ready = r));
   proc.stdout.on('data', (d) => {
@@ -32,7 +32,7 @@ function startCore(root) {
 }
 function hostFor(core) {
   const log = { entities: [], docs: [] }; let state = {};
-  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), openReport: (f) => (log.reports = log.reports || []).push(f), openGuide: (d, f) => (log.guide = log.guide || []).push([d, f]), getState: () => state, setState: (s) => (state = s) };
+  return { log, call: (m, p) => core.call(m, p), openEntity: (id) => log.entities.push(id), run: (c, a) => (log.runs = log.runs || []).push([c, a]), openDoc: (p) => log.docs.push(p), openFile: (p) => (log.files = log.files || []).push(p), openReport: (f) => (log.reports = log.reports || []).push(f), openGuide: (d, f) => (log.guide = log.guide || []).push([d, f]), saveText: (n, t) => (log.saved = [n, t]), getState: () => state, setState: (s) => (state = s) };
 }
 
 before(async () => {
@@ -611,4 +611,49 @@ test('settings shows the Research OS version, and the Research page writes and o
     await waitFor(() => /every record accounted for/.test(r.el.textContent), 30000);
     assert.match(host.log.reports.at(-1), /project-full\.md$/);
   } finally { await r.unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('governance UI: an agent\'s experiment proposal waits, approving asks for the PIN in a dialog and retries, then the audit history shows it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-gov-')); const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-gov-xdg-'));
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync(PY, ['-c', `from research.store import Project; from research import supervisor as SV
+p = Project.init(${JSON.stringify(dir)}, name="gov", goal="g"); p.author = {"author_type": "agent", "author_name": "claude", "author_model": None}
+SV.propose_experiment(p, {"title": "Try lr 0.1", "hypothesis": "faster", "rationale": "loss is flat", "method": "sweep", "expected_outputs": "curve", "related": "EXP-1"}); p.close()`], { env: { ...process.env, PYTHONPATH: PYPATH, XDG_CONFIG_HOME: xdg } });
+  const core = startCore(dir, xdg); const host = hostFor(core);
+  try {
+    await core.call('approval_set_pin', { new: '4321' });
+    const { el, unmount } = await lib.mount(host, { page: 'plans' });
+    try {
+      await waitFor(() => /PROP-0001/.test(el.textContent), 8000);
+      assert.match(el.textContent, /Try lr 0\.1/); assert.match(el.textContent, /loss is flat/);
+      assert.equal(byText(el, 'button', 'Approve').disabled, true, 'approving needs a reason');
+      await type(q(el, '#why-PROP-0001'), 'hypothesis is sound');
+      await click(byText(el, 'button', 'Approve'));
+      await waitFor(() => /Confirm with your PIN/.test(el.textContent), 8000);
+      await type(q(el, '#pin-in'), '4321');
+      await click(byText(el, 'button', 'Confirm'));
+      await waitFor(() => /Audit history/.test(el.textContent), 8000);
+      assert.match(el.textContent, /PROP-0001 approved/); assert.ok(!/4321/.test(el.textContent), 'the PIN is never shown');
+    } finally { await unmount(); }
+  } finally { core.stop(); fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(xdg, { recursive: true, force: true }); }
+});
+
+test('Initialize Project: Edit YAML validates with inline errors, previews the tree, and exports through the host', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-yaml-'));
+  const core = startCore(dir); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host);
+  try {
+    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
+    await click(byText(el, 'button', 'Edit YAML'));
+    await waitFor(() => /schema_version: 1/.test(q(el, '#yaml-text')?.value || ''), 8000);
+    await type(q(el, '#yaml-text'), 'schema_version: 1\nproject:\n  name: yamlui\ngovernance:\n  tasks:\n    agent_creation: nope\n');
+    await click(byText(el, 'button', 'Validate'));
+    await waitFor(() => /governance\.tasks\.agent_creation/.test(el.textContent), 8000);
+    await type(q(el, '#yaml-text'), 'schema_version: 1\nproject:\n  name: yamlui\nguide:\n  enabled: false\n');
+    await click(byText(el, 'button', 'Preview changes'));
+    await waitFor(() => /Valid\./.test(el.textContent), 8000);
+    assert.match(el.textContent, /experiments\//); assert.ok(!fs.existsSync(path.join(dir, 'main')), 'preview writes nothing');
+    await click(byText(el, 'button', 'Save / export'));
+    assert.equal(host.log.saved[0], 'research-os.yaml'); assert.match(host.log.saved[1], /yamlui/);
+  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -174,6 +174,8 @@ yourself; tests, review, approval and the explicit merge confirmation then follo
 existing definitions, hypotheses, checks, parameters or experiments is **scientific** and waits for you in Plans → *Proposed plan changes*.
 Approved changes go through the same `apply` engine, so revisions and history are preserved.
 
+Since 2.4 an operational proposal auto-applies only if `governance.tasks` allows it (type allow-list, per-experiment cap), `supervisor.auto_apply_operational` is on and `max_auto_tasks` holds; approving anything else needs your reason and PIN. Agents can also propose experiments. See [GOVERNANCE.md](GOVERNANCE.md).
+
 ## 10. Recovery and troubleshooting
 
 * State is files in `.research/supervisor/`; the SQLite index is rebuildable. Closing VS Code does not stop the supervisor process.

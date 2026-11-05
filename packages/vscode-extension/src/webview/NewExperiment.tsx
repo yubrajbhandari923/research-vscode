@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, useAsync } from './common';
+import { Dialog, callPin, useAsync } from './common';
 import type { Host } from './host';
 
 /** Guided "new experiment". The title and hypothesis are enough; worktree, task, sandbox and agent are opt-in and creating
@@ -38,7 +38,7 @@ export function NewExperiment({ host, onClose, onCreated }: { host: Host; onClos
   const check = async () => { try { setPlan(await host.call('new_experiment_preview', { spec: spec() })); } catch (e: any) { setErr(e.message); } };
   const create = async () => {
     setBusy(true); setErr('');
-    try { const r = await host.call('new_experiment', { spec: spec() }); setResult(r); onCreated(r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    try { const r = await callPin(host, 'new_experiment', { spec: spec() }, 'Create this experiment'); setResult(r); onCreated(r); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
   if (result) {

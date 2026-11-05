@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SettingRow } from './Controls';
-import { Banner, Dialog, Diff, EmptyState, Icon, PageHeader, Section, State, useAsync } from './common';
+import { Banner, Dialog, callPin, Diff, EmptyState, Icon, PageHeader, Section, State, useAsync } from './common';
 import { Doctor } from './Doctor';
 import type { Host } from './host';
 import type { Preview, SettingOption, SettingsPayload } from './types';
@@ -62,7 +62,7 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
     setBusy(true);
     try {
       const changes = removing ? Object.fromEntries(Object.keys(review.preview.values).map((k) => [k, null])) : draft;
-      const r = await host.call('settings_apply', { changes, scope: review.scope, reason: reason || undefined, confirm, remove: removing, expected: expected(review.scope) });
+      const r = await callPin(host, 'settings_apply', { changes, scope: review.scope, reason: reason || undefined, confirm, remove: removing, expected: expected(review.scope) }, 'Changing a protected policy setting needs your PIN.');
       setNotice({ ok: true, text: r.changed ? `Saved to ${review.scope === 'machine' ? 'the machine' : 'this project'} configuration (${r.path ? r.path.split(/[\\/]/).slice(-2).join('/') : 'config.yaml'}). Agent policy file regenerated.` : 'Nothing changed.' });
       setDraft({}); setReview(null); setRemoving(false); a.reload(); diag.reload();
     } catch (e: any) { fail(e); setReview(null); setRemoving(false); }
@@ -119,6 +119,7 @@ export function SettingsPage({ host, initialCategory }: { host: Host; initialCat
               </nav>
               <section aria-label="Settings" className="list">
                 {!query && cat === 'health' && <Section id="health" title="Project health"><Doctor host={host} embedded /></Section>}
+                {!query && cat === 'governance' && <ApprovalPin host={host} />}
                 {!(cat === 'health' && !query) && (
                   <Section id="opts" title={catLabel} count={options(d).length} boxed>
                     {options(d).length === 0
@@ -176,4 +177,31 @@ function ReviewDialog({ preview: p, initialScope, removing, busy, onScope, onClo
       <input id="why" type="text" value={reason} onChange={(e) => setReason(e.target.value)} />
     </Dialog>
   );
+}
+
+/** Set or change the approval PIN. It guards against accidental autonomous changes; it is not a defence against a hostile agent. */
+export function ApprovalPin({ host }: { host: Host }) {
+  const g = useAsync<any>(() => host.call('governance'), []);
+  const [cur, setCur] = useState('');
+  const [a, setA] = useState('');
+  const [b, setB] = useState('');
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const isSet = !!g.data?.pin?.set;
+  const save = async () => {
+    if (a.length < 4) return setMsg({ ok: false, text: 'Use at least 4 characters.' });
+    if (a !== b) return setMsg({ ok: false, text: 'The two PINs differ.' });
+    try { await host.call('approval_set_pin', { new: a, old: isSet ? cur : undefined }); setMsg({ ok: true, text: isSet ? 'PIN changed.' : 'PIN set.' }); setCur(''); setA(''); setB(''); g.reload(); }
+    catch (e: any) { setMsg({ ok: false, text: e.message }); }
+  };
+  return (
+    <Section id="pin" title="Approval PIN" boxed hint="Approving an agent's proposal, changing policy and promoting to main ask for this PIN. It guards against accidental autonomous changes, is stored on this machine only (never in the project or git), and is not a defence against a hostile agent.">
+      <p>Status: {isSet ? <b>set</b> : <b>not set</b>}{g.data?.pin?.locked_for ? ` · locked for ${g.data.pin.locked_for}s after wrong attempts` : ''}</p>
+      <form onSubmit={(e) => { e.preventDefault(); save(); }}>
+        {isSet && <><label htmlFor="pin-cur">Current PIN</label><input id="pin-cur" type="password" autoComplete="off" value={cur} onChange={(e) => setCur(e.target.value)} /></>}
+        <label htmlFor="pin-new">{isSet ? 'New PIN' : 'PIN'}</label><input id="pin-new" type="password" autoComplete="off" value={a} onChange={(e) => setA(e.target.value)} />
+        <label htmlFor="pin-new2">Repeat PIN</label><input id="pin-new2" type="password" autoComplete="off" value={b} onChange={(e) => setB(e.target.value)} />
+        <div className="row"><button type="submit" className="primary" disabled={!a}>{isSet ? 'Change PIN' : 'Set PIN'}</button></div>
+      </form>
+      {msg && <Banner kind={msg.ok ? 'ok' : 'bad'} onDismiss={() => setMsg(null)}>{msg.text}</Banner>}
+    </Section>);
 }

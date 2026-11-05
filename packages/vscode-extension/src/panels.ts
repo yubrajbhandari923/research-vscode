@@ -9,8 +9,8 @@ import { renderResume } from './render/resume';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
-const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'setup_apply', 'init_apply', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_add', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full']);
+const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'init_yaml_template', 'init_yaml_check', 'init_yaml_apply', 'init_yaml_export', 'governance', 'approval_set_pin', 'provider_status', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
+const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'setup_apply', 'init_apply', 'init_yaml_apply', 'approval_set_pin', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_add', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
@@ -114,6 +114,12 @@ export class Panels implements vscode.Disposable {
   }
 
   /** Open a written report: HTML in the browser, Markdown in the editor. Only files under the project's reports folder. */
+  private async saveText(suggestedName: string, text: string) {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const uri = await vscode.window.showSaveDialog({ defaultUri: root ? vscode.Uri.joinPath(root, suggestedName) : undefined, filters: { YAML: ['yaml', 'yml'] } });
+    if (uri) await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+  }
+
   private async openReport(file: string) {
     const abs = path.resolve(file);
     if (!/[\\/]\.research[\\/]reports[\\/][^\\/]+\.(md|html)$/i.test(abs) || !fs.existsSync(abs)) return void vscode.window.showWarningMessage('Research: that is not a report written by Research OS.');
@@ -153,6 +159,7 @@ export class Panels implements vscode.Disposable {
     w.onDidReceiveMessage(async (m) => {
       if (m.type === 'open-entity') return this.openEntity(String(m.id));
       if (m.type === 'run') return void (['research.plan.create', 'research.task.create', 'research.dispatch', 'research.workspace.open', 'research.hpc.submit', 'research.plan.yaml.import', 'research.plan.yaml.new', 'research.plan.yaml.apply', 'research.plan.yaml.open', 'research.plan.run', 'research.guide.draft', 'research.guide.preview'].includes(m.command) && vscode.commands.executeCommand(m.command, m.arg));
+      if (m.type === 'save-text') return void this.saveText(String(m.suggestedName), String(m.text));
       if (m.type === 'open-doc') return this.openDoc(String(m.path));
       if (m.type === 'open-file') return this.openConfigFile(String(m.path));
       if (m.type === 'shell-ready') { ep.shellReady = true; if (ep.pendingNav) { w.postMessage({ type: 'navigate', ...ep.pendingNav }); ep.pendingNav = undefined; } return; }
@@ -164,7 +171,7 @@ export class Panels implements vscode.Disposable {
         const result = await this.model.client.request(m.method, m.params || {});
         if (m.method === 'settings') for (const f of [result?.machine_config, result?.project_config]) if (f) this.configFiles.add(path.resolve(String(f)));
         if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
-        if (m.method === 'init_apply' && result?.workspace_file) {   // the user approved the reviewed plan; open the new multi-root workspace
+        if ((m.method === 'init_apply' || m.method === 'init_yaml_apply') && result?.workspace_file) {   // the user approved the reviewed plan; open the new multi-root workspace
           await this.ctx.globalState.update('research.justInitialized', result.main);
           setTimeout(() => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(result.workspace_file)), 4000);
         }

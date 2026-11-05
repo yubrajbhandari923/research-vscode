@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.4.0
+
+**Agents propose, you approve: governance, a PIN guardrail, provider handoff and YAML setup** (`docs/GOVERNANCE.md`).
+
+- **Fix: `research doctor` crashed (`KeyError: 'text'`)** when a check carried a command-only fix (the HPC check). Root cause: the producer returned `{command}` while the CLI read `fix["text"]`. `doctor.normalize_fix` now gives every consumer one shape (`text`, optional `command`, `safe`); the CLI and the Doctor page tolerate missing fields. Statuses unchanged.
+- **Governance** (`governance:` settings): agents cannot create experiments (`propose_only` by default; `human_only` forbids proposals); tasks are `bounded_auto` (allowed types, per-experiment cap), `propose_only` or `human_only`; experiment overrides can only tighten. `supervisor.auto_apply_operational` / `max_auto_tasks` can only tighten governance. Enforced in `create_experiment`, `create_task`, proposal decisions, policy changes and promotion, so CLI, MCP, RPC, plan YAML and the supervisor all obey it.
+- **Proposals**: experiment proposals (hypothesis, rationale, method, expected outputs, relation to existing work) and plan proposals share `pending → approved | rejected | revision_requested`; applied exactly once under the supervisor lock with revision and conflict checks; rejections are recorded. New `research proposal experiment|revise`, MCP `experiment_propose`.
+- **Approval PIN** (`research approval set-pin|status|verify`, a dialog in VS Code): a local scrypt verifier outside the project; required for approving proposals, changing policy and promoting to `main`; fails closed without a terminal; rate-limited; the audit trail never holds it. Creating your own experiment needs no PIN unless `governance.approval.confirm_human_experiment_creation` is on. Not a defence against a hostile agent (see the docs).
+- **Provider handoff**: continue a stopped or failed task with Claude, Codex or Antigravity in the same worktree with a portable context document; refused while the previous process may still run; opt-in bounded automatic fallback (`agents.handoff`). Antigravity (`agy` 1.5.0) now runs headless with `--mode accept-edits` and resumes natively with `--conversation`.
+- **YAML setup**: `research init --template|--from FILE [--dry-run|--apply]|--export` and an *Edit YAML* mode in the Initialize Project wizard (validate, preview, load/save), through the same initializer as the guided wizard.
+- Fixed: a new project's `policy.md` was stale right after initialization when skill packs were chosen.
+- Tests: `test_doctor`, `test_governance`, `test_handoff`, `test_bootstrap`, plus the changed supervisor tests (untyped agent tasks no longer auto-apply; approvals need a reason).
+
 ## 2.3.0
 
 **Equipped by default: a curated skills catalog with packs, and project-aware hooks** (`docs/AGENT_TOOLS.md`).

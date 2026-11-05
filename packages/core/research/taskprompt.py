@@ -93,6 +93,22 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
                         + (f"; verification {'passed' if v.get('passed') else 'FAILED'}" if v else "")
                         + (f"; problem category: {a['category']}" if a.get("category") else ""))
         add("Previous attempts on this task", "\n".join(hist), "supervisor attempt ledger")
+    hs = entry.get("handoffs") or []
+    if hs and hs[-1].get("after_attempt") == len(entry.get("attempts") or []) - 1:   # the attempt being launched is already in the ledger
+        h = hs[-1]
+        body = (f"You are taking over this task from `{h['from']}` (now `{h['to']}`; reason: {h['reason']}). Same task, same acceptance checks, same worktree. "
+                "Its work is already in the worktree: run `git status` and `git diff` first, keep what is right, and continue; do not start over. "
+                "No conversation history is available to you, only what is written here and in the task notes.")
+        try:
+            from . import workspace as W
+            ws = W.for_task(p, tid)
+            if ws:
+                import subprocess
+                st = subprocess.run(["git", "status", "--short"], cwd=ws["path"], capture_output=True, text=True, timeout=20).stdout.strip()
+                body += "\n\nChanges currently in the worktree (`git status --short`):\n" + (st[:1500] or "(clean)")
+        except Exception:
+            pass
+        add("Handoff from another agent", body, "supervisor handoff ledger")
     if diagnostics:
         add("What failed verification (fix exactly this)", "\n".join("- " + x for x in diagnostics), "verification diagnostics", cap=per * 2)
     notes = [n["text"] for n in __import__("research.plans", fromlist=["x"]).progress_notes(p, tid, 5)]

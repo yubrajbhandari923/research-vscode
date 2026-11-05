@@ -149,3 +149,36 @@ export function Diff({ text }: { text: string }) {
 export function Breadcrumbs({ trail }: { trail: string[] }) {
   return <nav aria-label="Breadcrumb" className="crumbs">{trail.map((t, i) => <span key={i} aria-current={i === trail.length - 1 ? 'page' : undefined}>{i > 0 && <span className="sep" aria-hidden> / </span>}{t}</span>)}</nav>;
 }
+
+// ---- PIN confirmation: a protected action is tried first; if the core asks for the PIN we prompt once and retry. The PIN lives only in this dialog.
+let askPin: ((why: string) => Promise<string | null>) | null = null;
+
+export function PinHost() {
+  const [req, setReq] = useState<{ why: string; done: (p: string | null) => void } | null>(null);
+  const [pin, setPin] = useState('');
+  useEffect(() => { askPin = (why) => new Promise((done) => setReq({ why, done })); return () => { askPin = null; }; }, []);
+  if (!req) return null;
+  const close = (v: string | null) => { req.done(v); setReq(null); setPin(''); };
+  return (
+    <Dialog title="Confirm with your PIN" onClose={() => close(null)} actions={<>
+      <button type="button" onClick={() => close(null)}>Cancel</button>
+      <button type="button" className="primary" disabled={!pin} onClick={() => close(pin)}>Confirm</button></>}>
+      <form onSubmit={(e) => { e.preventDefault(); if (pin) close(pin); }}>
+        <p>{req.why}</p>
+        <label htmlFor="pin-in">Approval PIN</label>
+        <input id="pin-in" type="password" autoComplete="off" data-autofocus value={pin} onChange={(e) => setPin(e.target.value)} />
+        <p className="muted small">Set or change it in Settings. It is checked on this machine and never saved in the project.</p>
+      </form>
+    </Dialog>);
+}
+
+/** Call a protected method; when the core answers with a PIN error, ask for the PIN once and retry. */
+export async function callPin<T = any>(host: { call(m: string, p?: Record<string, any>): Promise<any> }, method: string, params: Record<string, any>, why: string): Promise<T> {
+  try { return await host.call(method, params); }
+  catch (e: any) {
+    if (!/PIN/.test(String(e?.message)) || !askPin) throw e;
+    const pin = await askPin(why);
+    if (!pin) throw e;
+    return host.call(method, { ...params, pin });
+  }
+}

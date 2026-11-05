@@ -25,7 +25,7 @@ from .util import ResearchError, now_iso
 
 CATEGORIES = [
     ("project", "Project"), ("policy", "Research policy"), ("verification", "Verification"),
-    ("agents", "Agents & orchestration"), ("hooks", "Hooks & skills"), ("git", "Git & workspaces"), ("environment", "Python environment"), ("supervisor", "Supervisor"),
+    ("agents", "Agents & orchestration"), ("hooks", "Hooks & skills"), ("git", "Git & workspaces"), ("environment", "Python environment"), ("supervisor", "Supervisor"), ("governance", "Governance & approval"),
     ("sandbox", "Execution & sandbox"), ("hpc", "HPC & SLURM"), ("context", "Context"), ("guide", "Scientist Guide"), ("data", "Data & artifacts"),
 ]
 
@@ -175,6 +175,22 @@ OPTIONS: List[Option] = [
        effect="Further proposals wait for approval.", min_=0, max_=200, risk="policy"),
     _o("supervisor.require_approval_for_scientific_changes", "bool", "supervisor", "Approve scientific changes", "Proposals that change hypotheses, methods, checks, acceptance, parameters or existing task definitions always wait for you.",
        why="Science is the researcher's decision.", effect="Turning it off lets proposals of any kind apply automatically (not recommended).", risk="policy"),
+    _o("governance.experiments.agent_creation", "enum", "governance", "Agents creating experiments", "human_only: agents cannot even propose. propose_only: agents submit a proposal; you approve it with your PIN. Agents never create experiments directly.",
+       choices=["propose_only", "human_only"], why="Experiments are scientific decisions.", effect="Applies at once, to every creation path.", risk="policy"),
+    _o("governance.tasks.agent_creation", "enum", "governance", "Agents creating tasks", "human_only, propose_only, or bounded_auto (agents add operational tasks of the allowed types inside their own experiment, up to the limit).",
+       choices=["bounded_auto", "propose_only", "human_only"], why="Keeps the plan yours while letting agents add a missing diagnostic.", effect="Applies at once. The older supervisor switches below can only tighten it.", risk="policy"),
+    _o("governance.tasks.allowed_auto_types", "list", "governance", "Task types agents may add themselves", "Under bounded_auto, agents may add tasks of these types themselves; any other type needs a proposal.", why="Operational work only.", effect="Other types need a proposal.", risk="policy"),
+    _o("governance.tasks.max_auto_per_experiment", "int", "governance", "Agent-created tasks per experiment", "Under bounded_auto, the most tasks agents may add to one experiment; further tasks need a proposal.", why="Bounds plan growth.", effect="Further tasks need a proposal.", min_=0, max_=200, risk="policy"),
+    _o("governance.scientific_changes.require_human_approval", "bool", "governance", "Scientific changes need approval", "Changes to hypotheses, methods, checks or acceptance always wait for you.", why="Science is the researcher's decision.", effect="Off (with the supervisor switch) lets them apply automatically.", risk="policy"),
+    _o("governance.approval.require_pin", "bool", "governance", "Ask for the PIN", "Protected actions (approving a proposal, changing policy, promoting to main) ask for your PIN once one is set.", why="Stops accidental autonomous changes. Not a defence against a hostile agent.", effect="Off: protected actions need only a human actor.", risk="policy"),
+    _o("governance.approval.require_rationale", "bool", "governance", "Ask for a reason", "Approving a proposal needs a written reason, recorded in the audit trail.", why="The audit trail explains itself.", effect="Off: the note is optional.", risk="policy"),
+    _o("governance.approval.record_rejections", "bool", "governance", "Record rejections", "Rejected and revision-requested proposals are written to the audit trail.", why="Rejected ideas stay visible.", effect="Off: only the proposal file records it."),
+    _o("governance.approval.confirm_human_experiment_creation", "bool", "governance", "Confirm my own experiments", "Ask for the PIN when you create an experiment yourself. Off by default: creating one interactively needs no PIN.", why="Optional extra care.", effect="Applies to the CLI and the panel."),
+    _o("agents.handoff.enabled", "bool", "agents", "Automatic provider fallback", "When a provider is unavailable or hits its limit, continue the same task with the next provider in the fallback order. Off: the task pauses for you (you can still press Continue with another agent).",
+       why="Keeps long plans moving when one provider runs out of credit.", effect="Bounded by the attempt limits; never used when an attempt's state is unknown.", risk="policy"),
+    _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: claude, codex, agy. Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=["claude", "codex", "agy"]),
+    _o("agents.handoff.on_provider_unavailable", "enum", "agents", "When a provider is unavailable", "try_next continues with the next provider; pause stops the task for you.", choices=["pause", "try_next"], why="Opt-in.", effect="Needs automatic fallback on."),
+    _o("agents.handoff.on_unknown_execution_state", "enum", "agents", "When an attempt's state is unknown", "Always pause: a task is never relaunched while its previous process might still be running.", choices=["pause"], why="Prevents two agents editing one worktree.", effect="Fixed."),
     _o("supervisor.session_resume", "enum", "supervisor", "Continue the agent's own session", "auto continues the provider's native conversation for repairs when the installed CLI proves it can; never always starts fresh with a generated hand-off.",
        choices=["auto", "never"], why="Native sessions keep context cheaply; hand-offs work everywhere.", effect="Applies to later repair attempts.", advanced=True),
     _o("supervisor.context_max_chars", "int", "supervisor", "Prompt context size", "Upper bound for the context the supervisor assembles for an agent attempt (project docs, objectives, prerequisites, history).",
@@ -521,13 +537,16 @@ def preview(p, changes: Dict[str, Any], scope: str = "project", remove: bool = F
 
 
 def apply(p, changes: Dict[str, Any], scope: str = "project", reason: Optional[str] = None, confirm: bool = False,
-          remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
+          remove: bool = False, expected: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
     plan = _plan(p, changes, scope, remove, expected)
     if not plan["ok"]:
         raise ResearchError("; ".join(f"{k}: {e}" for k, e in plan["errors"].items()))
     if plan["policy_keys"] and _is_agent(p):
         raise ResearchError("Agents cannot change project policy settings: " + ", ".join(plan["policy_keys"]),
                             hint="Ask the human to change it (Settings in the panel, or `research config set`).")
+    if plan["policy_keys"] and plan["changed"]:
+        from . import approval
+        approval.confirm(p, "Change policy " + ", ".join(plan["policy_keys"]), reason, pin, rationale_required=False)
     if plan["risky_keys"] and not confirm:
         raise ResearchError("Confirmation required for: " + ", ".join(plan["risky_keys"]),
                             hint="Review `research config set --dry-run`, then repeat with --confirm.")
@@ -597,6 +616,13 @@ def render_policy(p) -> str:
             mark = "" if x["source"] == "default" else f" _(set at {x['source']} level)_"
             L.append(f"- **{x['label']}** (`{x['key']}`): {_fmt(x['value'])}{mark} — {x['help']}")
         L.append("")
+    from . import governance
+    gv = governance.cfg(p)
+    L += ["## Restrictions on you (agents)", "",
+          f"- You may NOT create experiments (policy: {gv['experiments']['agent_creation']}). Submit one with `research proposal experiment --title … --hypothesis … --rationale … --method … --expected-outputs … --related …`.",
+          f"- Tasks: policy {gv['tasks']['agent_creation']}. Under bounded_auto you may add only {', '.join(gv['tasks']['allowed_auto_types'])} tasks, inside your own experiment, at most {gv['tasks']['max_auto_per_experiment']}. Anything else: `research agent propose`.",
+          "- You may NOT approve proposals, change policy, or promote work to main. These need the researcher's PIN; do not ask for it, do not try `--as human`.",
+          "- If a command is refused by policy, submit a proposal and carry on with what remains.", ""]
     info = workspace.info(p)
     g = gitinfo.info(p.root)
     L += ["## Verified now", "",

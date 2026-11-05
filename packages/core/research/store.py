@@ -6,6 +6,7 @@ research.db is an index that can always be rebuilt from them.
 from __future__ import annotations
 
 import contextlib
+import copy
 import json
 import os
 import shutil
@@ -71,6 +72,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
     "agents": {
         "default_profile": "claude",
+        # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
+        "handoff": {"enabled": False, "fallback_order": ["claude", "codex", "agy"], "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
         "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
         "profiles": {
             "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
@@ -125,6 +128,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                    "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True,
                    "auto_apply_operational": True, "max_auto_tasks": 5, "require_approval_for_scientific_changes": True,
                    "session_resume": "auto", "context_max_chars": 24000, "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"], "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1},
+    "governance": copy.deepcopy(__import__("research.governance", fromlist=["x"]).DEFAULTS),   # who may create experiments/tasks; PIN approvals (governance.py)
     "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
     "sandbox": {
         "enabled": False,                         # true → `default_profile` applies to jobs that name no profile

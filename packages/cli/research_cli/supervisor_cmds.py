@@ -7,7 +7,7 @@ import sys
 from typing import Any
 
 from research import planspec as PS, supervisor as SV
-from research.util import ResearchError
+from research.util import PolicyBlocked, ResearchError
 
 from . import main as M
 
@@ -167,6 +167,12 @@ def cmd_supervisor(a, p) -> int:
     if act == "void":
         return _emit(a, SV.void_attempts(p, a.target, a.reason or a.note or "attempts voided by a human"),
                      lambda d: [M.green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
+    if act == "continue":
+        if not a.profile:
+            raise ResearchError("continue needs --profile (claude, codex or agy)")
+        return _emit(a, SV.continue_with(p, a.target, a.profile, a.note), lambda d: [M.green("✓ ") + f"{d['task']} will continue with {d['profile']} as its next attempt, in the same worktree"])
+    if act == "providers":
+        return _emit(a, SV.provider_status(p, a.target), lambda d: [f"{r['provider']:<7} {'installed' if r['installed'] else 'NOT installed':<14} headless={r['headless']} native-resume={r['resume']}" for r in d["providers"]])
     if act == "resolve":
         o = "failed" if a.failed else "completed" if a.completed else "retry" if a.retry else "unblock" if a.unblock else None
         if not o:
@@ -188,11 +194,34 @@ def cmd_proposal(a, p) -> int:
             if x["id"] == a.target:
                 return _emit(a, x, lambda d: [f"{d['id']} [{d['status']}] {d['classification']} on {d['plan_key']}", f"rationale: {d['rationale']}", "", d["patch"]])
         raise ResearchError(f"No proposal {a.target}")
-    r = SV.decide_proposal(p, a.target, a.action == "approve", a.note)
+    if a.action == "experiment":
+        r = SV.propose_experiment(p, {k: getattr(a, k, None) for k in SV.EXP_FIELDS}, source=(p.author or {}).get("author_name") or "human")
+        return _emit(a, r, lambda d: [M.green("✓ ") + f"{d['id']} experiment proposal submitted; it waits for the researcher's approval"])
+    if a.action == "revise" and not a.target:
+        raise ResearchError("Name the proposal")
+    r = SV.decide_proposal(p, a.target, {"approve": True, "reject": False}.get(a.action, a.action), a.note, rev=a.rev)
     return _emit(a, r, lambda d: [M.green("✓ ") + f"{d['id']} {d['status']}"])
 
 
+def cmd_approval(a, p) -> int:
+    from research import approval as AP
+    if a.action == "status":
+        return _emit(a, AP.status(), lambda d: [("PIN is set" if d["set"] else "No PIN set (protected actions are not PIN-gated yet): research approval set-pin")])
+    if p is not None and (p.author or {}).get("author_type") == "agent" or AP.agent_environment():
+        raise PolicyBlocked("Only the researcher can set or check the PIN", hint="Submit a proposal; the researcher approves it.")
+    old = AP.read_pin("Current PIN: ") if AP.is_set() and a.action == "set-pin" else None
+    if a.action == "verify":
+        AP.verify(AP.read_pin())
+        return _emit(a, {"ok": True}, lambda d: [M.green("✓ ") + "PIN accepted"])
+    new = AP.read_pin("New PIN: ")
+    if not new or new != AP.read_pin("Repeat new PIN: "):
+        raise ResearchError("The PINs did not match, or there is no interactive terminal")
+    AP.set_pin(new, old)
+    return _emit(a, {"set": True}, lambda d: [M.green("✓ ") + "PIN saved on this machine (not in the project, git or agent context)"])
+
+
 cmd_proposal = M.mut(cmd_proposal)
+cmd_approval = M.mut(cmd_approval)
 
 
 # ----------------------------------------------------------------------------------------------- agent reports
@@ -282,8 +311,9 @@ def attach_top(sub, add, group) -> None:
     x.add_argument("--path", help="create: where to create the venv (default: .venv next to main/)")
     x.add_argument("--python", help="create: python version/interpreter for uv (for example 3.12)")
     x.add_argument("--package", "-k", action="append", help="packages (repeatable)")
-    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve")
-    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void"])
+    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve | continue (hand a task to another agent) | providers")
+    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void", "continue", "providers"])
+    x.add_argument("--profile", help="continue: the agent profile to hand the task to")
     x.add_argument("target", nargs="?", help="approve/accept/resolve: task id")
     x.add_argument("--foreground", action="store_true", help="start: run in this terminal instead of detaching")
     x.add_argument("--detach", action="store_true", help="start: detach (the default)")
@@ -292,10 +322,15 @@ def attach_top(sub, add, group) -> None:
     x.add_argument("--reason", help="accept: why the task is accepted without verification")
     x.add_argument("--failed", action="store_true"); x.add_argument("--completed", action="store_true")
     x.add_argument("--retry", action="store_true"); x.add_argument("--unblock", action="store_true")
-    x = add(sub, "proposal", cmd_proposal, "plan-change proposals: list | show | approve | reject", aliases=["proposals"])
-    x.add_argument("action", choices=["list", "show", "approve", "reject"])
+    x = add(sub, "proposal", cmd_proposal, "proposals: list | show | approve | reject | revise (ask for changes) | experiment (agents: propose one)", aliases=["proposals"])
+    x.add_argument("action", choices=["list", "show", "approve", "reject", "revise", "experiment"])
     x.add_argument("target", nargs="?")
-    x.add_argument("--note")
+    x.add_argument("--note", help="approve/reject/revise: why (required for approval)")
+    x.add_argument("--rev", type=int, help="the revision you reviewed; refused if the proposal changed since")
+    for f in ("title", "hypothesis", "rationale", "method", "expected_outputs", "related"):
+        x.add_argument("--" + f.replace("_", "-"), dest=f, help="experiment proposal: " + f.replace("_", " "))
+    x = add(sub, "approval", cmd_approval, "the approval PIN: status | set-pin (create or change) | verify")
+    x.add_argument("action", choices=["status", "set-pin", "verify"])
     g = group("agent", "structured reports from a supervised agent (run inside an agent session)")
     for name, h in (("progress", "free-text progress"), ("milestone", "a named milestone"), ("artifact", "an output file (workspace-relative)"),
                     ("metric", "a metric value"), ("run", "a computational run id"), ("hpc-job", "an HPC job id"), ("code", "a commit / changed files"),

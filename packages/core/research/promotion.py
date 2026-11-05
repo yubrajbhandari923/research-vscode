@@ -320,7 +320,7 @@ def review(p, pid: str, verdict: str, note: Optional[str] = None) -> Dict[str, A
     return show(p, pid)
 
 
-def approve(p, pid: str, note: Optional[str] = None) -> Dict[str, Any]:
+def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
     if not _is_human(p):
         raise PolicyBlocked("Only a human can approve a promotion into main", hint="Ask the researcher to run `research promote approve` or use the Work page.")
     c = show(p, pid)
@@ -329,18 +329,22 @@ def approve(p, pid: str, note: Optional[str] = None) -> Dict[str, Any]:
                              ("scientific evidence", g["evidence"]["state"] in ("passed", "info"))) if not ok]
     if open_:
         raise PolicyBlocked("Cannot approve yet; open gates: " + ", ".join(open_), hint="Each gate is shown by `research promote show`.")
+    from . import approval
+    approval.confirm(p, f"Approve promotion {pid}", note, pin, rationale_required=False)
     with p.tx():
         _append(p, {"op": "approve", "promotion": pid, "head": g["head"], "note": note})
         p.event("promotion", pid, "approved", f"{pid} approved at {g['head'][:8]} by {p.author.get('author_name')}")
     return show(p, pid)
 
 
-def integrate(p, pid: str, confirm: bool = False) -> Dict[str, Any]:
+def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> Dict[str, Any]:
     """The only step that moves `main`: a human-confirmed, fast-forward-only merge. Anything else is refused."""
     if not _is_human(p):
         raise PolicyBlocked("Only a human can integrate into main")
     if not confirm:
         raise PolicyBlocked("Integration changes main; repeat with --confirm after reading `research promote diff`")
+    from . import approval
+    approval.confirm(p, f"Merge {pid} into main", None, pin, rationale_required=False)
     c = show(p, pid)
     if c["state"] != "approved" or not c["classification"]["integration_ready"]:
         raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")

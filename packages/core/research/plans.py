@@ -90,6 +90,8 @@ def create_task(
     checks: Any = None,
 ) -> Dict[str, Any]:
     """Create a new task within a plan. `checks` are verification checks (see verification.parse_check)."""
+    from . import governance
+    governance.check_task_create(project, task_type, normalize_id(related_experiment_id, "EXP") if related_experiment_id else None)
     # Validate status
     if status not in STATUSES["task"]:
         raise ResearchError(f"Invalid task status: {status}. Valid: {STATUSES['task']}")

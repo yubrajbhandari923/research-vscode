@@ -110,3 +110,20 @@ def test_cli_exit_codes_and_json(repo):
     v1_project(str(v1))
     r = subprocess.run([sys.executable, "-m", "research_cli", "doctor"], cwd=v1, capture_output=True, text=True)
     assert r.returncode == 1 and "Project format is not v2" in r.stdout
+
+
+def test_fix_objects_are_normalised_and_the_cli_survives_command_only_fixes(proj, capsys):
+    assert DR.normalize_fix({"command": "research hpc doctor"})["text"] == "Run `research hpc doctor`."
+    assert DR.normalize_fix("do it") == {"text": "do it"}
+    assert DR.normalize_fix({"text": "t", "safe": True}) == {"text": "t", "safe": True}
+    assert DR.normalize_fix(None) is None and DR.normalize_fix({}) is None
+    from research_cli import main as M
+    real = DR.run
+    DR.run = lambda root: {"root": root, "healthy": True, "summary": {"errors": 0, "warnings": 1, "info": 0, "ok": 0}, "checks": [
+        {"id": "x", "area": "A", "level": "warn", "title": "t", "detail": "", "fix": {"command": "research sync"}}]}
+    try:
+        a = type("A", (), {"root": proj.root, "fix": None, "json": False, "all": True})()
+        assert M.cmd_doctor(a) == 0
+    finally:
+        DR.run = real
+    assert "research sync" in capsys.readouterr().out

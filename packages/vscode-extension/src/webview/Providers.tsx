@@ -17,6 +17,7 @@ export function ProvidersPage({ host }: { host: Host }) {
       <h1>Agents &amp; Providers</h1>
       <p className="muted">Research OS keeps the plan, tasks and records. These are the agents that can do the work. Changes here affect <b>future</b> dispatches only.</p>
       {msg && <div className="banner info" role="status">{msg}</div>}
+      <p className="muted small">Continuing a task with another agent hands over a portable context document (task, checks, attempts, worktree changes), never provider session ids. Claude Code, Codex and Antigravity (<code>agy -p</code>) all support headless runs.</p>
       <State a={a}>{(d) => <>
         <p>Allocation strategy: <b>{d.strategy || 'none (project profiles)'}</b> · default agent: <b>{LABEL[d.default] || d.default}</b>
           <span className="muted"> · also editable in <button type="button" className="link" onClick={() => host.openFile('.research/config.yaml')}>config.yaml</button> (<code>agents.default_profile</code>)</span></p>

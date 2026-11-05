@@ -94,7 +94,7 @@ class Server:
         return promotion.diff(self.project(sync=False), id)
 
     def m_promotion_action(self, id: str, action: str, note: Optional[str] = None, confirm: bool = False,
-                           verdict: Optional[str] = None, command: Optional[str] = None) -> Dict[str, Any]:
+                           verdict: Optional[str] = None, command: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
         """verify | review | approve | integrate | abandon. The core refuses agents and unconfirmed integration."""
         from . import promotion as PR
         p = self.project()
@@ -103,9 +103,9 @@ class Server:
         if action == "review":
             return PR.review(p, id, verdict or "comment", note)
         if action == "approve":
-            return PR.approve(p, id, note)
+            return PR.approve(p, id, note, pin)
         if action == "integrate":
-            return PR.integrate(p, id, confirm)
+            return PR.integrate(p, id, confirm, pin)
         if action == "abandon":
             return PR.abandon(p, id, note)
         raise ResearchError(f"unknown promotion action {action!r}")
@@ -134,9 +134,11 @@ class Server:
         from . import setup
         return setup.new_experiment_plan(self.project(sync=False), spec)
 
-    def m_new_experiment(self, spec: Dict[str, Any]) -> Dict[str, Any]:
-        from . import setup
-        return setup.new_experiment(self.project(), spec)
+    def m_new_experiment(self, spec: Dict[str, Any], pin: Optional[str] = None) -> Dict[str, Any]:
+        from . import governance, setup
+        p = self.project()
+        governance.confirm_human_experiment(p, pin)     # only asks when the optional setting is on
+        return setup.new_experiment(p, spec)
 
     def m_settings(self, category: Optional[str] = None, search: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
@@ -148,9 +150,9 @@ class Server:
         return registry.preview(self.project(sync=False), changes, scope, remove, expected)
 
     def m_settings_apply(self, changes: Dict[str, Any], scope: str = "project", reason: Optional[str] = None,
-                         confirm: bool = False, remove: bool = False, expected: Optional[str] = None) -> Dict[str, Any]:
+                         confirm: bool = False, remove: bool = False, expected: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
-        return registry.apply(self.project(), changes, scope, reason, confirm, remove, expected)
+        return registry.apply(self.project(), changes, scope, reason, confirm, remove, expected, pin)
 
     def m_workspace_info(self) -> Dict[str, Any]:
         from . import workspace as W
@@ -258,6 +260,10 @@ class Server:
         }
         if type not in fn:
             raise ResearchError(f"cannot create {type!r}")
+        pin = kw.pop("pin", None)
+        if type == "experiment":
+            from . import governance
+            governance.confirm_human_experiment(p, pin)
         return fn[type](p, **kw)
 
     def m_update(self, type: str, id: str, **kw: Any) -> Dict[str, Any]:
@@ -683,17 +689,36 @@ class Server:
             return SV.accept(p, task, reason or "")
         if action == "void":
             return SV.void_attempts(p, task, note or reason or "attempts voided by a human", attempts)
+        if action == "continue":
+            return SV.continue_with(p, task, reason or "", note)
         if action in ("failed", "completed", "retry", "unblock"):
             return SV.resolve(p, task, action, note)
         raise ResearchError(f"unknown task action {action!r}")
+
+    def m_provider_status(self, task: Optional[str] = None) -> Dict[str, Any]:
+        from . import supervisor as SV
+        return SV.provider_status(self.project(sync=False), task)
 
     def m_proposals(self) -> List[Dict[str, Any]]:
         from . import supervisor as SV
         return SV.list_proposals(self.project(sync=False))
 
-    def m_proposal_decide(self, id: str, approve: bool, note: Optional[str] = None) -> Dict[str, Any]:
+    def m_proposal_decide(self, id: str, approve: Any, note: Optional[str] = None, pin: Optional[str] = None, rev: Optional[int] = None) -> Dict[str, Any]:
+        """approve: true | false | "revise". Approving needs the PIN (when one is set)."""
         from . import supervisor as SV
-        return SV.decide_proposal(self.project(), id, approve, note)
+        return SV.decide_proposal(self.project(), id, approve, note, pin, rev)
+
+    def m_governance(self) -> Dict[str, Any]:
+        from . import approval, governance
+        p = self.project(sync=False)
+        return {"policy": governance.cfg(p), "pin": approval.status(), "proposals": [x for x in __import__("research.supervisor", fromlist=["x"]).list_proposals(p)]}
+
+    def m_approval_set_pin(self, new: str, old: Optional[str] = None) -> Dict[str, Any]:
+        from . import approval
+        if approval.agent_environment() and not old and approval.is_set():
+            raise ResearchError("Changing the PIN needs the current PIN")
+        approval.set_pin(new, old)
+        return approval.status()
 
     def m_attempt_detail(self, task: str, attempt: int = 0) -> Dict[str, Any]:
         """One attempt: its exact prompt, context sources, verification, reports and log tails."""
@@ -831,6 +856,22 @@ class Server:
     def m_init_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         from . import initproject
         return initproject.plan(self.root, spec)
+
+    def m_init_yaml_template(self) -> Dict[str, Any]:
+        from . import bootstrap
+        return {"text": bootstrap.TEMPLATE}
+
+    def m_init_yaml_check(self, text: str) -> Dict[str, Any]:
+        from . import bootstrap
+        return bootstrap.check(text, self.root)
+
+    def m_init_yaml_apply(self, text: str) -> Dict[str, Any]:
+        from . import bootstrap
+        return bootstrap.apply(text, self.root, author=self.author)
+
+    def m_init_yaml_export(self) -> Dict[str, Any]:
+        from . import bootstrap
+        return {"text": bootstrap.export(self.project(sync=False))}
 
     def m_init_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
         from . import initproject
@@ -1043,7 +1084,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "init_yaml_apply", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
@@ -1090,7 +1131,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "hpc_discover", "hpc_test") and not srv.initialized():
+            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "init_yaml_template", "init_yaml_check", "init_yaml_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             result = fn(**params)
             if method in MUTATING and srv.p is not None:

@@ -5,7 +5,7 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 2.3.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
+**Version 2.4.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
 (see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
@@ -22,7 +22,7 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> **New in 2.3:** a curated skill catalog with packs and project-aware hooks ([docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md)). **2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
+> **New in 2.4:** agent governance and a PIN guardrail, provider handoff, YAML project setup ([docs/GOVERNANCE.md](docs/GOVERNANCE.md)). **2.3:** a curated skill catalog with packs and project-aware hooks ([docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md)). **2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
 > and skills, hooks and the MCP server loaded by default. [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
 > [Supervisor](docs/SUPERVISOR.md) · [Changelog](CHANGELOG.md).
 
@@ -89,14 +89,14 @@ Agents → **Skills, hooks and MCP** has a searchable catalog with one-click ins
 
 Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
 
-- `research-panel-2.3.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
-- `research_panel-2.3.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
+- `research-panel-2.4.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
+- `research_panel-2.4.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
 - `SHA256SUMS` — checksums for the files above
 
 ```bash
-code --install-extension research-panel-2.3.0.vsix
+code --install-extension research-panel-2.4.0.vsix
 # optional, CLI outside VS Code:
-python3 -m pip install research_panel-2.3.0-py3-none-any.whl
+python3 -m pip install research_panel-2.4.0-py3-none-any.whl
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.
