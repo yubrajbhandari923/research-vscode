@@ -43,8 +43,14 @@ TERMINAL = ("integrated", "noop", "cancelled")
 
 # ----------------------------------------------------------------------------------------------- policy & authorization
 def policy(p) -> Dict[str, Any]:
+    """Canonical test command: `promotion.test_command` (the one Settings → Git & workspaces shows, used by manual and automatic promotion).
+    `auto_promotion.test_command` is a legacy alias, honoured only when the canonical one is empty; if both are set and differ that is a
+    configuration conflict (see `conflicts`). Everything else is under `auto_promotion`."""
     c = {**DEFAULTS, **(p.config.get("auto_promotion") or {})}
-    c["test_command"] = c["test_command"] or (p.config.get("promotion") or {}).get("test_command")
+    canon, legacy = (p.config.get("promotion") or {}).get("test_command"), c["test_command"]
+    c["test_command"] = canon or legacy
+    c["test_command_source"] = "promotion.test_command" if canon else "auto_promotion.test_command (legacy)" if legacy else None
+    c["conflicts"] = [f"promotion.test_command ({canon!r}) and auto_promotion.test_command ({legacy!r}) differ; keep only promotion.test_command"] if canon and legacy and canon != legacy else []
     return c
 
 
@@ -79,8 +85,10 @@ def check_ready(p, st) -> None:
         raise ResearchError("The plan does not declare execution.auto_promotion: true", hint="Add it to the plan YAML, review the diff, apply it.")
     if not p.location.linked:
         raise ResearchError("Automatic promotion needs shared-ledger mode and experiment workspaces")
+    if c["conflicts"]:
+        raise ResearchError("Conflicting test commands: " + c["conflicts"][0], hint="Delete auto_promotion.test_command; `promotion.test_command` is the canonical setting.")
     if not c["test_command"]:
-        raise ResearchError("auto_promotion.test_command (or promotion.test_command) is required")
+        raise ResearchError("promotion.test_command is required (Settings → Git & workspaces, or `research config set promotion.test_command …`)")
     if not c["reviewer_profile"] or c["reviewer_profile"] not in ((p.config.get("agents") or {}).get("profiles") or {}):
         raise ResearchError("auto_promotion.reviewer_profile must name a configured agent profile (an independent reviewer is mandatory)")
     if not W._git(W.toplevel(p.root) or p.root, "rev-parse", "--verify", "-q", f"refs/heads/{PR._main_branch(p)}"):
@@ -423,5 +431,7 @@ def retry(p, st, rs, item_id: str) -> Dict[str, Any]:
 
 def summary(p, st, rs) -> Dict[str, Any]:
     a = _state(rs)
-    return {**mode(p, st, rs), "authorization": a["authorized"], "items": a["items"],
+    pol = policy(p)
+    return {**mode(p, st, rs), "test_command": pol["test_command"], "test_command_source": pol["test_command_source"], "conflicts": pol["conflicts"],
+            "authorization": a["authorized"], "items": a["items"],
             "pending": [{"experiment": e, "workspace": w, "commits": [x["sha"][:10] for x in v]} for (e, w), v in sorted(pending(p, st, rs).items())]}

@@ -185,6 +185,35 @@ Since 2.4 an operational proposal auto-applies only if `governance.tasks` allows
 * `research plan status`, the Plans page, and `.research/supervisor/daemon.log` explain why a task is waiting or blocked.
 * Do not edit the plan runtime state by hand; use `supervisor resolve|approve|accept|void` or the UI.
 
+## 10b. Escalate after an incomplete deliverable (opt-in)
+
+When an attempt ends with required outputs missing (a `file:` check "missing" or "exists but is empty", or a required metric never recorded), the
+supervisor classifies it `incomplete_deliverable`. By default the repair runs as planned. To spend more on exactly this case:
+
+```yaml
+execution:
+  escalation: {model: claude-opus-5-5, effort: high}   # any of model / effort / profile; optional on: [...], max_escalated_attempts: 1
+```
+(or `supervisor.escalation` in `.research/config.yaml` for every plan). Only the next repair attempt is escalated (default one attempt, always
+inside `max_attempts` and the plan budgets), it starts a fresh session (a different model cannot resume the old one), and the attempt records
+`escalated`. `effort` is honoured by Codex and Antigravity; Claude escalates by `model`. A wrong result (a command check failed while the files exist)
+is not escalated. A human's "Continue with another agent" choice still wins over `escalation.profile`.
+
+## 10c. Failures that repeating cannot fix
+
+A missing file is classified before anything is re-dispatched:
+
+| Category | Meaning | What happens |
+|---|---|---|
+| `incomplete_deliverable` | this task owns the file and did not write it | bounded repair (optionally escalated, 10b) |
+| `missing_prerequisite` | another task owns the file (it is upstream) and it is not where this task runs | **blocked after one attempt** with the owner task, whether it is done, and "promote/integrate it first" |
+| `role_contradiction` | a **verifier** must itself create the file; verifiers check work and are told not to author it | **blocked after one attempt**: change the role to analyst/implementer, or move the file check to the task that writes it |
+
+Blocked tasks keep their full attempt history, budgets and approvals; nothing is rewritten and no review requirement is weakened. Resolve with
+`research supervisor resolve TASK --unblock` after fixing the plan or the upstream task. `research plan yaml validate|diff` warns about the
+role contradiction before anything runs. Note: only **implementer** tasks get an experiment worktree; analyst and verifier tasks run in the main
+checkout, so an implementer's files on its branch are not visible to them until the work is integrated into `main`.
+
 ## 11. Security and limits (read this)
 
 * **Enforced**: agents cannot complete supervised tasks by CLI, MCP, RPC or hand-edited task files; agent reports are accepted only from
@@ -217,14 +246,16 @@ For overnight plans where experiment 2 needs the code experiment 1 wrote. **Off 
 **Two keys, both required, per plan:**
 1. The plan YAML declares intent: `execution: {auto_promotion: true}` (reviewable text; it enables nothing by itself).
 2. A human authorizes this run: `research plan autopromote PLAN authorize --note "why"` (approval PIN). The authorization is stored in the
-   run state with a fingerprint of the verification policy. If `auto_promotion.test_command`, `numerical_command`, `reviewer_profile`,
+   run state with a fingerprint of the verification policy. If `promotion.test_command`, `auto_promotion.numerical_command`, `reviewer_profile`,
    `protected_test_globs` or `promotion.main_branch` change afterwards the plan becomes **suspended** (fail closed) until re-authorized.
    Agents cannot authorize, and cannot enable it through a proposal (changing `execution` is a scientific-class change that needs you).
 
 **Settings** (`.research/config.yaml`):
 ```yaml
+promotion:
+  test_command: pytest -q tests/integration      # canonical and required (Settings → Git & workspaces); `auto_promotion.test_command` is a legacy alias,
+                                                 # honoured only if this is empty, and a conflict if both differ
 auto_promotion:
-  test_command: pytest -q tests/integration      # required (or promotion.test_command)
   numerical_command: pytest -q tests/numerical   # optional, run after the tests; "not_configured" is recorded when absent
   reviewer_profile: codex                        # required: a configured agent profile that did NOT implement the work
   require_distinct_reviewer: true
@@ -268,3 +299,71 @@ Never done automatically: push, force, reset, rebase, delete branches/worktrees/
 Limits: the PIN/authorization are accident guards, not defence against a hostile process with your OS user; the plan run waits for the
 final promotions before it reports `completed`; tests run inside the tick (a very long `test_command` delays other scheduling; keep
 `promotion.test_timeout_seconds` sensible); a live reviewer-agent launch needs a working headless profile (`research doctor`).
+
+## 15. The `research` command from the main checkout
+
+`research bin install` (also run by init, `ledger enable` and the extension) writes the launcher into the ledger and now also links it into the
+repository's main checkout: `./research …` works from `main/` with no long path and no PATH change. The link is absolute (machine-specific), listed in
+`.git/info/exclude` (never committed), never replaces an existing file or directory (installing still succeeds; use `research bin link --name rs`),
+and is not created inside experiment worktrees. `research bin unlink [--name rs]` removes only its own link. To use `research` anywhere, put it on
+your PATH yourself, for example `ln -s "$PWD/research" ~/.local/bin/research` (it resolves the project from the directory you run it in).
+
+## 16. Reload, restart and parallelism
+
+* `research supervisor reload` validates the project settings, then has the running supervisor apply them at once. The supervisor already re-reads settings
+  on every scheduling pass; reload makes that immediate, refuses invalid values (nothing applied), and reports each changed key as **live**
+  (`supervisor`, `governance`, `promotion`, `auto_promotion`, `verification`, `coordination`), **next launch** (`agents`, `environment`, `hpc`: running
+  agents/jobs keep what they started with) or **restart** (anything else, for example `layout`). It also flags when the supervisor runs an older Research OS
+  than the one installed. Agents, worktrees, plan state, budgets and promotion state are not touched.
+* `research supervisor restart [--timeout S]` replaces the process with the installed Research OS. Agents and HPC jobs are separate processes and keep running; the new
+  supervisor reconciles every recorded execution before scheduling, so nothing is launched or submitted twice. If the old supervisor is in a long pass
+  (for example running promotion tests) it finishes it, then starts its successor. Both are human-only and are buttons in **Control Center → Plans**
+  (the restart button is highlighted when the running supervisor is older than the installed version).
+* Concurrency: `supervisor.max_parallel_agents` (project) is overridden by a plan's `execution.max_parallel_agents`. Control Center and `plan status --json`
+  (`concurrency`) show the effective number, where it comes from, and how many agents run or wait. Tasks in the same experiment worktree never run together.
+* Editing only a plan's `execution:` block and applying it now counts as a change (it used to be reported as "no changes" and ignored).
+
+## 17. Steering a task in words (supervisor intervention)
+
+`research supervisor instruct T-12` (type the instruction, finish with an empty line) or `--message "…"`; in Control Center → Plans → **Instruct / Unblock** on any
+unfinished task. A planning agent (read-only; `supervisor_assistant.profile/model`, strongest Claude by default) reads the task's contract, attempts,
+diagnostics, logs, evidence and plan, and returns a small set of actions. Nothing it returns is trusted: only a closed vocabulary with the right shapes is accepted.
+
+| Class | Actions | Needs approval? |
+|---|---|---|
+| operational | unblock, retry, reverify (re-check the latest output under the current contract), note | no |
+| implementation | guide (text injected into the next brief), prompt/title edits, add a task | no (the instruction is yours) |
+| scientific | acceptance, checks, expected artifacts, inputs, datasets, dependencies, **agent role** | **yes** |
+| resource | cpus/mem/time/partition/account/gpus, **retry budget** (`max_attempts`) | **yes** |
+| frozen test | authorize a change to a frozen test | **yes** (recorded; re-freezing stays `research orchestrate correct-test`; the intervention never edits the file) |
+
+You see the preview first. If anything is protected, **one** approval covers the whole proposal: `research intervention approve INT-001 --note "why"` (PIN) or the
+dialog. Agents and chat cannot approve. `intervention.require_approval: true` asks even for unprotected ones.
+
+Lifecycle, persisted in `.research/supervisor/interventions/INT-n.json`: `requested → proposed → approved → implementing → verifying → resolved` (or `rejected`,
+`failed`, `cancelled`). The supervisor tick applies each action once (flagged before the next, so a restart never repeats one) through the existing APIs: plan YAML
+reconciliation, `resolve`, `void`. The task then runs a normal supervised attempt with your instruction in its brief, and the intervention is `resolved` only when
+the supervisor verifies it. Downstream tasks resume by themselves.
+
+Running agents: by default the instruction is queued until the attempt ends (if the attempt succeeds meanwhile, nothing is changed). `--interrupt` stops the agent
+safely and keeps its attempt as evidence (voided = not counted); refused while computational jobs are pending (no repeated submissions). One open intervention per task.
+
+Evidence is never rewritten: failed attempts and their diagnostics stay; a re-verification keeps the earlier result in `verification_history`; an amended contract
+keeps its `originals`, and a Decision records before/after, your instruction, the rationale and who approved it.
+
+`research intervention list|show|approve|reject|cancel|plan`.
+
+## 18. Halts, the debug agent and Telegram
+
+**Status tells the truth.** A plan whose run state is `running` but where nothing is running, ready, repairing or promoting is reported **HALTED (needs you)**
+(`WAITING FOR YOUR APPROVAL` if only start approvals are pending), in `plan status`, `supervisor status --json` (`health`) and Control Center.
+
+**Debug agent** (read-only, `supervisor_assistant.*`, strongest Claude by default): `research supervisor debug [PLAN]` or the **Diagnose** button reads the blocked tasks
+and logs and returns a few sentences plus up to four options. `research supervisor debug --choose N` (or *Use this option*) turns one into an intervention (§17); or write your own.
+`notifications.auto_debug: true` runs it automatically after `notifications.halt_grace_seconds` (default 120) of the same halt. Off by default.
+
+**Telegram** (opt-in): `research telegram setup` (hidden token prompt; then message your bot once) or Control Center → Plans → *Telegram alerts*; enable with
+`notifications.telegram.enabled`. The token and chat id live in `~/.config/research-os/telegram.json` (0600), never in the project, git, prompts or events; only that chat is obeyed.
+You get one message per halt (what is blocked, the diagnosis and options) and one when the plan moves again. Commands: `/status /blocked /task T-12 /logs T-12 /debug /options /choose N
+/say [T-12] <text> /interventions /pause /resume /help`; plain text goes to the only blocked task. Chat can request and apply **unprotected** changes; protected ones are
+proposed and wait for your PIN in VS Code or the terminal.

@@ -360,6 +360,8 @@ class Server:
                 r["agents_md"] = self.project(sync=False).write_agents_md()
         except OSError:
             pass
+        from . import notify
+        r["supervisor"] = notify.ensure_running(self.project(sync=False))      # Telegram or a running plan needs the supervisor process; an old one is replaced
         return r
 
     def m_agents_md(self) -> Dict[str, Any]:
@@ -652,7 +654,7 @@ class Server:
             try:
                 s = SV.status(p, st["plan_key"])
                 out.append({"key": st["plan_key"], "id": st["plan_id"], "revision": st["revision"], "title": (st.get("spec") or {}).get("title"),
-                            "state": s["state"], "progress": s["progress"], "counts": s["counts"], "pending_proposals": len(s["proposals"])})
+                            "state": s["state"], "health": s["health"], "progress": s["progress"], "counts": s["counts"], "pending_proposals": len(s["proposals"])})
             except ResearchError:
                 continue
         return out
@@ -668,7 +670,63 @@ class Server:
             return SV.daemon_start(p, detach=True)
         if action == "stop":
             return SV.daemon_stop(p)
+        if action == "reload":
+            return SV.daemon_reload(p)
+        if action == "restart":
+            return SV.daemon_restart(p)
         return SV.daemon_status(p)
+
+    # --- supervisor intervention, halt diagnosis, Telegram (intervene.py, notify.py)
+    def m_interventions(self, task: Optional[str] = None) -> List[Dict[str, Any]]:
+        from . import intervene as I
+        return I.list_all(self.project(sync=False), task)
+
+    def m_intervention_request(self, task: str, message: str, interrupt: bool = False) -> Dict[str, Any]:
+        from . import intervene as I
+        return I.request(self.project(), task, message, interrupt=interrupt, source="vscode")
+
+    def m_intervention_action(self, id: str, action: str, note: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
+        from . import intervene as I
+        p = self.project()
+        if action == "approve":
+            return I.approve(p, id, note, pin)
+        if action == "reject":
+            return I.reject(p, id, note)
+        if action == "cancel":
+            return I.cancel(p, id)
+        if action == "plan":
+            return I.plan_it(p, id)
+        raise ResearchError("action must be approve, reject, cancel or plan")
+
+    def m_debug_run(self, plan: str) -> Dict[str, Any]:
+        from . import notify
+        return notify.run_debug(self.project(), plan)
+
+    def m_debug_latest(self) -> Optional[Dict[str, Any]]:
+        from . import notify
+        return notify.latest_debug(self.project(sync=False))
+
+    def m_telegram_status(self) -> Dict[str, Any]:
+        from . import notify
+        return notify.status(self.project(sync=False))
+
+    def m_telegram_set(self, token: str, chat_id: Optional[str] = None, discover: bool = False) -> Dict[str, Any]:
+        from . import notify
+        if discover and not chat_id:
+            chat_id = notify.discover_chat(token.strip(), 45)
+            if chat_id is None:
+                raise ResearchError("No message reached the bot in 45 seconds", hint="Open your bot in Telegram, press Start or send any message, then try again.")
+        notify.set_credentials(token, chat_id)
+        return notify.status(self.project(sync=False))
+
+    def m_telegram_clear(self) -> Dict[str, Any]:
+        from . import notify
+        notify.clear_credentials()
+        return notify.status(self.project(sync=False))
+
+    def m_telegram_test(self) -> Dict[str, Any]:
+        from . import notify
+        return {"sent": notify.send("Research OS: Telegram is connected. Send /help for commands.")}
 
     def m_plan_control(self, plan: str, action: str, cancel_agents: bool = False) -> Dict[str, Any]:
         from . import supervisor as SV
@@ -1084,7 +1142,7 @@ class Server:
         return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "init_yaml_apply", "supervisor_daemon", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
+MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "init_yaml_apply", "supervisor_daemon", "intervention_request", "intervention_action", "debug_run", "telegram_set", "telegram_test", "telegram_clear", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
             "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
             "update_project", "sync", "rebuild",
             "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",

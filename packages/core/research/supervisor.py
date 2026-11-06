@@ -34,13 +34,14 @@ DEFAULTS: Dict[str, Any] = {
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
     "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
 }
 PHASES = ("waiting", "ready", "awaiting_approval", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
-REPAIRABLE = {"incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
+REPAIRABLE = {"incomplete_deliverable", "incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
 NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state"}
-CATEGORIES = ("incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle", "environment", "scientific_assumption",
+CATEGORIES = ("missing_prerequisite", "role_contradiction", "incomplete_deliverable", "incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle", "environment", "scientific_assumption",
               "resource_limit", "agent_process_failure", "unknown_execution_state")
 
 
@@ -49,7 +50,7 @@ def cfg(p: Project, plan_state: Optional[Dict[str, Any]] = None) -> Dict[str, An
     c = {**DEFAULTS, **(p.config.get("supervisor") or {})}
     ex = ((plan_state or {}).get("spec") or {}).get("execution") or {}
     for k in ("max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "on_failure", "max_hpc_resubmissions",
-              "require_approval_for_scientific_changes"):
+              "require_approval_for_scientific_changes", "escalation"):
         if k in ex:
             c[k] = ex[k]
     return c
@@ -92,9 +93,24 @@ def _event(p: Project, tid: Optional[str], action: str, summary: str) -> None:
     p.event("task" if tid else "plan", tid, action, taskprompt.redact(summary) or "")
 
 
+_HUMAN_GRANTS: List[str] = []   # in-process only: pushed while an intervention a human already approved is being applied
+
+
+@contextlib.contextmanager
+def human_grant(reason: str) -> Iterator[None]:
+    _HUMAN_GRANTS.append(reason)
+    try:
+        yield
+    finally:
+        _HUMAN_GRANTS.pop()
+
+
 def require_human(p: Project, what: str) -> None:
+    if _HUMAN_GRANTS:
+        return
     if (p.author or {}).get("author_type") not in (None, "human") :
-        raise PolicyBlocked(f"{what} is a human decision: agents cannot do it", hint="Ask the researcher; supervisor policy is not agent-editable.")
+        from . import approval
+        raise PolicyBlocked(f"{what} is a human decision: agents cannot do it", hint="Ask the researcher; supervisor policy is not agent-editable." + approval._env_hint())
 
 
 # ----------------------------------------------------------------------------------------------- completion authority
@@ -240,6 +256,66 @@ def _topo(st: Dict[str, Any]) -> List[str]:
     return order
 
 
+ACTIVE_PHASES = ("running", "verifying", "waiting_hpc", "ready", "repair_pending")
+HUMAN_PHASES = ("blocked", "attention", "awaiting_approval")
+
+
+def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str, Any]:
+    """What the plan is really doing. `state` stays the run state (running/paused/...); `health` says whether anything is actually moving:
+    progressing | waiting_for_approval | halted | completed | paused | not_run. Halted = running, nothing active, something waits for a human."""
+    if not rs:
+        return {"state": "not_run", "label": "not run", "blocking": [], "fingerprint": ""}
+    tasks = rs.get("tasks") or {}
+    live = [k for k in st["tasks"] if k not in (st.get("retired") or {})]
+    rows = []
+    for k in live:
+        tid = st["tasks"][k]
+        if not p.exists("task", tid):
+            continue
+        e = tasks.get(tid) or {}
+        ph = e.get("phase") or ("verified" if p.get("task", tid)["status"] == "done" else "waiting")
+        rows.append((k, tid, ph, e.get("reason")))
+    unfinished = [r for r in rows if r[2] != "verified"]
+    if rs.get("state") == "completed" or (rows and not unfinished):
+        return {"state": "completed", "label": "completed", "blocking": [], "fingerprint": ""}
+    if rs.get("state") != "running":
+        return {"state": "paused" if rs.get("state") == "paused" else rs.get("state", "stopped"), "label": rs.get("state", "stopped"), "blocking": [], "fingerprint": ""}
+    moving = [r for r in unfinished if r[2] in ACTIVE_PHASES]
+    ap = (rs.get("autopromote") or {}).get("items") or []
+    promo = any(i["status"] not in ("integrated", "noop", "cancelled", "paused") for i in ap)
+    iv = False
+    try:
+        from . import intervene as IV
+        iv = any(i["plan_id"] == st["plan_id"] and i["state"] in ("approved", "implementing", "verifying") for i in IV.list_all(p, open_only=True))
+    except (ResearchError, OSError):
+        pass
+    blocking = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason} for k, tid, ph, reason in unfinished if ph in HUMAN_PHASES]
+    paused_promos = [{"task": i["id"], "key": i["id"], "title": f"promotion of {i['experiment']}", "phase": "blocked", "reason": i.get("error")} for i in ap if i["status"] == "paused"]
+    if moving or promo or iv:
+        return {"state": "progressing", "label": "running", "blocking": blocking, "fingerprint": "", "moving": len(moving)}
+    only_approval = blocking and all(b["phase"] == "awaiting_approval" for b in blocking) and not paused_promos
+    stuck = blocking + paused_promos
+    if not stuck:
+        return {"state": "idle", "label": "running (idle: waiting on dependencies)", "blocking": [], "fingerprint": ""}
+    fp = "|".join(sorted(f"{b['task']}:{b['phase']}:{(b.get('reason') or '')[:60]}" for b in stuck))
+    return {"state": "waiting_for_approval" if only_approval else "halted", "label": "WAITING FOR YOUR APPROVAL" if only_approval else "HALTED (needs you)",
+            "blocking": stuck, "fingerprint": fp}
+
+
+def concurrency(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str, Any]:
+    """How many agents may run at once and where that number comes from. Existing machinery (cfg, _schedule, the workspace lease) does the
+    work; this only reports it. Tasks that share a worktree are always serialized by the lease, whatever the number."""
+    # the effective config always carries the default, so "set by the project" means present in the project's own (sparse) config file
+    proj = ((getattr(p, "raw_config", None) or {}).get("supervisor") or {}).get("max_parallel_agents")
+    plan = ((st.get("spec") or {}).get("execution") or {}).get("max_parallel_agents")
+    eff = int(cfg(p, st)["max_parallel_agents"])
+    src = "plan YAML (execution.max_parallel_agents)" if plan else "project settings (supervisor.max_parallel_agents)" if proj else "built-in default"
+    tasks = (rs or {}).get("tasks") or {}
+    return {"effective": eff, "source": src, "plan": plan, "project": proj, "default": DEFAULTS["max_parallel_agents"],
+            "running": len(_active(rs)) if rs else 0, "ready_waiting": sum(1 for e in tasks.values() if e.get("phase") == "ready"),
+            "note": "Tasks in the same experiment worktree never run at the same time."}
+
+
 def status(p: Project, ref: str) -> Dict[str, Any]:
     from . import execution as E
     st = _plan_state(p, ref)
@@ -278,6 +354,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                                                                              "max_wall_minutes": c["max_wall_minutes"]},
             "proposals": [x for x in list_proposals(p) if x.get("plan_key") == st["plan_key"] and x["status"] == "pending"],
             "auto_promotion": AP.summary(p, st, rs) if rs else AP.mode(p, st, {}),
+            "concurrency": concurrency(p, st, rs), "health": plan_health(p, st, rs),
             "daemon": daemon_status(p), "enforced": {"completion": bool(c["enforce_completion"])}}
 
 
@@ -304,6 +381,10 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             _reconcile_attempts(p, st, rs, c, out)
             _poll_hpc(p, st, rs, c, out)
             AP.step(p, st, rs, c, out)
+            from . import intervene as IV
+            save_run(p, rs)          # interventions edit the run state through the public APIs; persist what this pass already did first
+            IV.step(p, st, rs, out)
+            rs = load_run(p, rs["plan_id"]) or rs     # an intervention may have resolved/voided through the same state file
             _schedule(p, st, rs, c, out)
             _apply_deferred(p, st, rs)
             if _plan_finished(p, st, rs) and AP.settled(p, st, rs):
@@ -426,6 +507,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     if kind == "repair":      # the latest attempt that actually stands (voided ones are evidence, not instructions)
         standing = [x for x in e["attempts"] if not x.get("voided")]
         diagnostics = ((standing[-1].get("verification") or {}).get("diagnostics")) if standing else None
+    esc = escalation_for(c, e, kind)
     # reserve first: a crash after this point is reconciled from the attempt ledger, never double-launched
     task = p.get("task", tid)
     if task["status"] in ("todo", "blocked"):
@@ -435,7 +517,8 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     elif task["status"] == "running" and task.get("claimed_by"):
         P.update_task(p, tid, claimed_by=None, claimed_at=None)
     exp_id = task.get("related_experiment_id")
-    attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": e.get("provider_override") or ag.get("profile"),
+    attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": e.get("provider_override") or (esc or {}).get("profile") or ag.get("profile"),
+               "escalated": esc,
                "role": role,   # runs that already exist belong to earlier attempts; second-resolution timestamps cannot tell them apart
                "runs_before": [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=?", (exp_id,))] if exp_id else []}
     e["attempts"].append(attempt)
@@ -446,10 +529,13 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
     workspace = None
     try:
         text, sources = taskprompt.assemble(p, tid, st, e, kind, diagnostics, None, c)
-        kw: Dict[str, Any] = dict(role=role, target=tid, profile=e.get("provider_override") or ag.get("profile"), model=ag.get("model"), instructions=text, headless=True,
+        kw: Dict[str, Any] = dict(role=role, target=tid, profile=e.get("provider_override") or (esc or {}).get("profile") or ag.get("profile"),
+                                  model=(esc or {}).get("model") or (None if (esc or {}).get("profile") else ag.get("model")), instructions=text, headless=True,
                                   create_workspace=(spec.get("execution") or {}).get("workspace", "experiment") == "experiment")
-        if ag.get("level"):
+        if ag.get("level") and not (esc or {}).get("model"):
             kw["level"] = ag["level"]
+        if (esc or {}).get("effort"):
+            kw["effort"] = esc["effort"]
         try:
             d = agents.dispatch(p, **kw)
         except NoFrozenTests as ex:       # the sanctioned way out: let the coordinator level write the tests first
@@ -463,7 +549,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         workspace = (d.get("allocation") or {}).get("workspace")
         text2 = text
         sid = None
-        if kind in ("repair", "resume") and role != "verifier" and c["session_resume"] != "never":
+        if kind in ("repair", "resume") and role != "verifier" and c["session_resume"] != "never" and not esc:   # a different model cannot resume the old session
             sid = _resumable_session(p, e, spec, role, d)
         if sid:
             attempt["resumed_session"] = sid
@@ -480,6 +566,8 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         attempt["state"] = "launched"
         attempt["launched"] = now_iso()
         out["launched"].append({"task": tid, "attempt": n, "execution": d["execution_id"], "kind": kind})
+        if esc:
+            _event(p, tid, "supervisor_escalated", f"attempt {n} escalated after an incomplete deliverable: " + ", ".join(f"{k}={v}" for k, v in esc.items()))
         _event(p, tid, "supervisor_launched", f"attempt {n} ({kind}) execution {d['execution_id']} via {d.get('profile')}/{d.get('model')}")
     except BaseException:
         attempt["state"] = "launch_failed"
@@ -809,14 +897,71 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
         if not vd and not v.get("passed"):
             v = {**v, "passed": True, "verification_state": "passed"}
     diagnostics += vd
+    if a.get("verification"):       # a re-verification (after a contract amendment) never overwrites the earlier result: it is kept as evidence
+        a.setdefault("verification_history", []).append(a["verification"])
     a["verification"] = {"passed": not diagnostics and v.get("passed", False), "diagnostics": diagnostics, "ts": now_iso(),
                          "checks": f"{v.get('checks_passed', 0)}/{v.get('checks_executed', 0)}", "state": v.get("verification_state")}
     if a["verification"]["passed"]:
         _verified(p, st, rs, tid, e, a, out)
         return
     cat = _categorize(p, tid, a, diagnostics)
+    if cat == "incomplete_deliverable":
+        cat, why = _refine_missing(p, st, tid, spec, diagnostics)
+        if why:
+            a["blocker"] = why
     a["category"] = cat
     _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out)
+
+
+# a required output is absent or empty (file check: "missing" / "exists but is empty") or a required metric was never recorded
+_INCOMPLETE = re.compile(r"check file: .+? failed \((?:missing|exists but is empty)\)|check metric:.+? failed \(.* not found")
+
+
+def _refine_missing(p: Project, st: Dict[str, Any], tid: str, spec: Dict[str, Any], diagnostics: List[str]) -> tuple:
+    """A missing file is one of three different problems, and only the third is fixed by running the same task again:
+    * role_contradiction   a verifier must itself create the file; verifiers check work and are told not to author it, so repeating cannot pass
+    * missing_prerequisite another task owns the file and it is not in this task's worktree/outputs (not produced, or not integrated here)
+    * incomplete_deliverable  this task owns the file and did not write it: a repair (or an escalation) can fix that"""
+    missing = sorted({m.group(1) for d in diagnostics for m in re.finditer(r"check file: (.+?) failed \((?:missing|exists but is empty)\)", d)})
+    if not missing:
+        return "incomplete_deliverable", None
+    flat = st.get("spec_tasks") or {}
+    me = spec.get("_key")
+    role = (spec.get("agent") or {}).get("role")
+    owners = {}
+    for k, t in flat.items():
+        if k != me:
+            for path in PS.deliverables(t):
+                owners.setdefault(path, []).append(k)
+    upstream = PS.authored_by_other(flat, me) if me in flat else set()
+    foreign = [(m, owners[m]) for m in missing if m in owners and m in upstream]
+    if foreign:
+        lines = []
+        for path, ks in foreign:
+            who = ", ".join(f"{k} ({st['tasks'].get(k, k)}, {'done' if st['tasks'].get(k) and p.exists('task', st['tasks'][k]) and p.get('task', st['tasks'][k])['status'] == 'done' else 'not done'})" for k in ks)
+            lines.append(f"{path} is produced by {who}")
+        return "missing_prerequisite", ("an upstream deliverable is missing: " + "; ".join(lines) + ". Check that the producing task actually wrote it at that path, and that its work "
+                                        "is in this task's worktree (promote/integrate the upstream experiment first). Not retried: this task cannot create it. "
+                                        "Fix the upstream task, then `research supervisor resolve TASK --unblock`.")
+    if role == "verifier":
+        return "role_contradiction", (f"verifier task {me} must create {', '.join(missing)} itself, but verifiers check work and do not author it, so repeating cannot pass. "
+                                     "Change the task's role to analyst/implementer (or move those file checks to the task that writes them) in the plan YAML; "
+                                     "nothing was rewritten and the review requirement is unchanged. Then `research supervisor resolve TASK --unblock`.")
+    return "incomplete_deliverable", None
+
+
+def escalation_for(c: Dict[str, Any], e: Dict[str, Any], kind: str) -> Optional[Dict[str, Any]]:
+    """Opt-in: after an attempt failed because deliverables were missing, the repair attempt may run on a more capable model / higher effort /
+    another profile. Bounded (`max_escalated_attempts`, default 1) and inside the normal attempt budgets. None = run as planned."""
+    esc = c.get("escalation") or {}
+    if kind != "repair" or not any(esc.get(k) for k in ("model", "effort", "profile")):
+        return None
+    standing = [x for x in e.get("attempts", []) if not x.get("voided")]
+    if not standing or standing[-1].get("category") not in (esc.get("on") or ["incomplete_deliverable"]):
+        return None
+    if len([x for x in standing if x.get("escalated")]) >= int(esc.get("max_escalated_attempts", 1)):
+        return None
+    return {k: esc[k] for k in ("model", "effort", "profile") if esc.get(k)}
 
 
 def _categorize(p: Project, tid: str, a: Dict[str, Any], diagnostics: List[str]) -> str:
@@ -830,6 +975,8 @@ def _categorize(p: Project, tid: str, a: Dict[str, Any], diagnostics: List[str])
         return "resource_limit"
     if "frozen acceptance tests were modified" in text:
         return "insufficient_test_oracle"
+    if _INCOMPLETE.search(text):
+        return "incomplete_deliverable"
     return "incorrect_implementation"
 
 
@@ -923,6 +1070,9 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
         e.update(phase="attention", reason="a scientific assumption looks wrong: review the proposal or problem report before anything continues")
         _event(p, tid, "supervisor_attention", e["reason"])
         out["blocked"].append({"task": tid, "reason": e["reason"]})
+        return
+    if cat in ("missing_prerequisite", "role_contradiction"):   # more attempts of the same task cannot help: stop with the actionable reason
+        _block(p, st, rs, tid, f"{cat}: {a.get('blocker')}", out)
         return
     if cat in NEEDS_HUMAN:
         _block(p, st, rs, tid, f"{cat}: {(diagnostics or ['needs a human'])[0][:300]}", out)
@@ -1333,8 +1483,141 @@ def daemon_status(p: Project) -> Dict[str, Any]:
         except (OSError, subprocess.SubprocessError):
             pass
     age = time.time() - float(d.get("heartbeat", 0))
+    from . import __version__
+    stale = alive and bool(d.get("version")) and d["version"] != __version__
     return {"running": alive, "pid": d.get("pid"), "started_at": d.get("started_at"), "heartbeat_age_seconds": round(age, 1),
+            "version": d.get("version"), "installed_version": __version__, "restart_required": stale,
+            "restart_reason": f"the supervisor runs Research OS {d.get('version')}; {__version__} is installed" if stale else None,
+            "last_reload": d.get("last_reload"),
             "note": None if alive else "no such process; state is intact and a new `supervisor start` will reconcile it"}
+
+
+# Settings the next scheduling pass reads from disk (the daemon reopens the project every pass), settings that only affect agents/jobs launched
+# afterwards (a running agent keeps what it started with), and what genuinely needs a new process.
+LIVE_KEYS = ("supervisor", "governance", "promotion", "auto_promotion", "verification", "coordination")
+NEXT_LAUNCH_KEYS = ("agents", "environment", "hpc")
+
+
+def _flat_cfg(d: Any, prefix: str = "") -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k, v in (d or {}).items():
+        out.update(_flat_cfg(v, f"{prefix}{k}.") if isinstance(v, dict) and v else {f"{prefix}{k}": v})
+    return out
+
+
+def _snapshot(p: Project) -> Dict[str, Any]:
+    return _flat_cfg({k: v for k, v in p.config.items() if k in LIVE_KEYS + NEXT_LAUNCH_KEYS + ("layout",)})
+
+
+def _classify(keys: List[str]) -> Dict[str, List[str]]:
+    out: Dict[str, List[str]] = {"live": [], "next_launch": [], "restart": []}
+    for k in sorted(keys):
+        top = k.split(".")[0]
+        out["live" if top in LIVE_KEYS else "next_launch" if top in NEXT_LAUNCH_KEYS else "restart"].append(k)
+    return out
+
+
+def validate_settings(p: Project) -> List[str]:
+    """Everything the next pass would choke on, found before it does."""
+    from . import governance as G
+    errs: List[str] = []
+    try:
+        c = cfg(p)
+        for k in ("poll_seconds", "max_parallel_agents", "max_attempts_per_task", "max_total_attempts"):
+            if float(c[k]) <= 0:
+                errs.append(f"supervisor.{k} must be positive (got {c[k]!r})")
+        if c.get("escalation") and not isinstance(c["escalation"], dict):
+            errs.append("supervisor.escalation must be a mapping")
+        if c["on_failure"] not in PS.ON_FAILURE:
+            errs.append(f"supervisor.on_failure must be one of {', '.join(PS.ON_FAILURE)}")
+    except (ValueError, TypeError, KeyError) as ex:
+        errs.append(f"supervisor settings are malformed: {ex}")
+    try:
+        G.cfg(p)
+    except ResearchError as ex:
+        errs.append(str(ex))
+    errs += AP.policy(p)["conflicts"]
+    return errs
+
+
+def daemon_reload(p: Project, wait: float = 15.0) -> Dict[str, Any]:
+    """Validate the project settings and have the running supervisor apply them now, without touching agents, worktrees, plan state, budgets or
+    promotion state (the supervisor already re-reads settings every pass; this makes it immediate, proves it, and says what still needs a restart)."""
+    require_human(p, "Reloading the supervisor")
+    errs = validate_settings(p)
+    if errs:
+        return {"valid": False, "errors": errs, "applied": False, "note": "Nothing was applied; fix these in the settings and reload again."}
+    d = daemon_status(p)
+    try:
+        prev = json.load(open(_daemon_path(p), encoding="utf-8")).get("settings") or {}
+    except (OSError, ValueError):
+        prev = {}
+    now = _snapshot(p)
+    changed = _classify([k for k in set(prev) | set(now) if prev.get(k) != now.get(k)])
+    out = {"valid": True, "errors": [], "changed": changed, "daemon": d,
+           "restart_required": bool(d.get("restart_required") or changed["restart"]),
+           "restart_reasons": ([d["restart_reason"]] if d.get("restart_reason") else []) + [f"{k} needs a new supervisor process" for k in changed["restart"]]}
+    if not d["running"]:
+        return {**out, "applied": False, "note": "The supervisor is not running; these settings apply when it starts (`research supervisor start`)."}
+    marker = sdir(p, "reload.request")
+    _atomic_write(marker, now_iso() + "\n")
+    t0 = time.time()
+    while time.time() - t0 < wait and os.path.exists(marker):
+        time.sleep(0.2)
+    done = not os.path.exists(marker)
+    return {**out, "applied": done, "daemon": daemon_status(p),
+            "note": ("Applied at the next scheduling pass; running agents were not touched." if done else
+                     "Requested; the supervisor is in the middle of a long pass and will apply it when that finishes.")}
+
+
+def _spawn(root: str, exit_when_idle: bool = False) -> subprocess.Popen:
+    argv = [sys.executable, "-m", "research.supervisord", "run", "--root", root] + (["--exit-when-idle"] if exit_when_idle else [])
+    with Project(root, sync=False) as p:
+        log = open(sdir(p, "daemon.log"), "ab")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([os.path.dirname(os.path.dirname(os.path.abspath(__file__))), os.environ.get("PYTHONPATH", "")])}
+    return subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=os.name == "posix", env=env)
+
+
+def daemon_restart(p: Project, timeout: float = 120.0) -> Dict[str, Any]:
+    """Gracefully replace the supervisor process with one running the Research OS that is installed now.
+    Agents and HPC jobs are separate processes and keep running; the old supervisor finishes its current pass, then the new one reconciles every
+    recorded execution before scheduling (nothing is launched or submitted twice). If the old pass outlives `timeout`, the old supervisor starts
+    its successor itself when it exits."""
+    require_human(p, "Restarting the supervisor")
+    s = daemon_status(p)
+    before = s.get("pid")
+    if not s["running"]:
+        return {**daemon_start(p, detach=True), "restarted": False, "note": "It was not running, so it was started."}
+    pending = sdir(p, "restart.pending")
+    _atomic_write(pending, now_iso() + "\n")
+    _atomic_write(sdir(p, "stop"), now_iso() + "\n")
+    try:
+        os.kill(int(s["pid"]), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    t0, gone_at = time.time(), None
+    while time.time() - t0 < timeout:
+        time.sleep(0.2)
+        n = daemon_status(p)
+        if n["running"] and n.get("pid") != before:
+            return {**n, "restarted": True, "previous_pid": before, "note": "Restarted on Research OS " + str(n.get("version"))}
+        if not n["running"]:
+            gone_at = gone_at or time.time()
+            if time.time() - gone_at > 20:          # the old process is gone and handed nothing over
+                break
+    try:
+        os.unlink(sdir(p, "stop"))
+    except OSError:
+        pass
+    if daemon_status(p)["running"] and daemon_status(p).get("pid") == before:
+        return {**daemon_status(p), "restarted": False, "previous_pid": before,
+                "note": "The supervisor is finishing a long pass; it will start its successor when that ends. Nothing is lost."}
+    try:
+        os.unlink(pending)
+    except OSError:
+        pass
+    n = daemon_start(p, detach=True)
+    return {**n, "restarted": bool(n.get("running")), "previous_pid": before, "note": "Restarted (the old process exited without a successor, so one was started)."}
 
 
 def daemon_start(p: Project, detach: bool = True, exit_when_idle: bool = False) -> Dict[str, Any]:
@@ -1383,6 +1666,7 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
     sysauthor = {"author_type": "system", "author_name": "supervisor", "author_model": None}
     with _P(root, author=sysauthor, sync=False) as p0:
         lockfile = sdir(p0, "daemon.lock")
+        sup_dir = os.path.dirname(lockfile)       # where the stop / reload markers live (the ledger's, in shared-ledger mode)
     try:
         with durability.lock(lockfile, blocking=False):
             stop = {"now": False}
@@ -1392,7 +1676,21 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
             idle = 0
             while not stop["now"]:
                 with _P(root, author=sysauthor, sync=False) as p:
-                    _atomic_write(_daemon_path(p), json.dumps({"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root}) + "\n")
+                    from . import __version__
+                    reloaded = None
+                    if os.path.exists(sdir(p, "reload.request")):
+                        reloaded = {"at": now_iso(), "errors": validate_settings(p)}
+                        try:
+                            os.unlink(sdir(p, "reload.request"))
+                        except OSError:
+                            pass
+                    keep = {}
+                    try:
+                        keep = {"last_reload": (json.load(open(_daemon_path(p), encoding="utf-8")) or {}).get("last_reload")}
+                    except (OSError, ValueError):
+                        pass
+                    _atomic_write(_daemon_path(p), json.dumps({"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root, "version": __version__,
+                                                               "settings": _snapshot(p), **keep, **({"last_reload": reloaded} if reloaded else {})}) + "\n")
                     if os.path.exists(sdir(p, "stop")):
                         break
                     try:
@@ -1401,13 +1699,15 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                         with open(sdir(p, "daemon.log"), "a") as lf:
                             lf.write(f"{now_iso()} tick error: {type(ex).__name__}: {ex}\n")
                         r = {"plans": 1}
+                    from . import notify
+                    notify.step(p)
                     poll = float(cfg(p)["poll_seconds"])
                     active = any(x.get("state") in ("running",) for x in all_runs(p))
                 idle = 0 if active else idle + 1
                 if exit_when_idle and idle >= 2:
                     break
                 for _ in range(int(poll * 10)):
-                    if stop["now"] or os.path.exists(os.path.join(root, ".research", "supervisor", "stop")):
+                    if stop["now"] or os.path.exists(os.path.join(sup_dir, "stop")) or os.path.exists(os.path.join(sup_dir, "reload.request")):
                         break
                     time.sleep(0.1)
     except ResearchError:
@@ -1417,6 +1717,14 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
             os.unlink(_daemon_path(p))
         except OSError:
             pass
+        pending = sdir(p, "restart.pending")
+        if os.path.exists(pending):          # a restart was requested while this pass was running: hand over to a fresh process
+            try:
+                os.unlink(pending)
+                os.unlink(sdir(p, "stop"))
+            except OSError:
+                pass
+            _spawn(root, exit_when_idle)
     return 0
 
 

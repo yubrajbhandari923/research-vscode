@@ -73,7 +73,8 @@ def cmd_plan_yaml(a, p) -> int:
     text = _read(a.target)
     if act == "validate":
         r = PS.validate(text, p)
-        return _emit(a, r, lambda d: [M.green("✓ ") + f"valid: {len(d['plans'])} plan(s), {d['experiments']} experiment(s), {d['tasks']} task(s)"])
+        return _emit(a, r, lambda d: [M.green("✓ ") + f"valid: {len(d['plans'])} plan(s), {d['experiments']} experiment(s), {d['tasks']} task(s)"]
+                     + [M.yellow("  ! " + w) for w in d.get("warnings", [])])
     if act == "diff":
         r = PS.diff(p, text)
         return _emit(a, r, _ops_lines) or (0 if r["ok"] else 3)
@@ -97,12 +98,21 @@ cmd_plan_yaml = M.mut(cmd_plan_yaml)
 
 # ----------------------------------------------------------------------------------------------- plan run control
 def _status_lines(s) -> list:
-    out = [M.bold(f"{s['plan']} ({s['plan_id']}) rev {s['revision']}: {s['state']}") + M.dim(f"  {s['progress']} verified  attempts {s['budgets'].get('attempts', 0)}/{s['budgets']['max_total_attempts']}")]
+    h = s.get("health") or {}
+    shown = h.get("label") if s["state"] == "running" and h.get("label") else s["state"]
+    shown = (M.red(M.bold(shown)) if h.get("state") == "halted" else M.yellow(shown) if h.get("state") == "waiting_for_approval" else shown)
+    out = [M.bold(f"{s['plan']} ({s['plan_id']}) rev {s['revision']}: ") + shown + M.dim(f"  {s['progress']} verified  attempts {s['budgets'].get('attempts', 0)}/{s['budgets']['max_total_attempts']}")]
     for t in s["tasks"]:
         ex = t.get("execution") or {}
         out.append(f"  {t['id']:<7} {t['phase']:<18} {t['title'][:44]:<44}" + (f" attempt {t['attempts']}" if t["attempts"] else "")
                    + (f" [{ex.get('state')}]" if ex.get("state") and t["phase"] in ("running", "verifying") else "")
                    + (M.dim(f"  — {t['reason'][:90]}") if t.get("reason") else ""))
+    if h.get("state") in ("halted", "waiting_for_approval"):
+        out.append((M.red if h["state"] == "halted" else M.yellow)(f"  {h['label']}: nothing is running; waiting on " + ", ".join(b["task"] for b in h["blocking"])
+                                                              + "   (research supervisor debug · research supervisor instruct T-… -m \"…\")"))
+    cc = s.get("concurrency")
+    if cc:
+        out.append(M.dim(f"  parallel agents: {cc['effective']} ({cc['source']}); {cc['running']} running, {cc['ready_waiting']} ready"))
     for pr in s.get("proposals", []):
         out.append(M.yellow(f"  proposal {pr['id']} ({pr['classification']}) waits for approval: {pr['rationale'][:80]}"))
     d = s["daemon"]
@@ -163,9 +173,28 @@ def cmd_supervisor(a, p) -> int:
         d = SV.daemon_status(p)
         runs = [{"plan": r["plan_key"], "state": r.get("state"), "attempts": r["budgets"].get("attempts", 0)} for r in SV.all_runs(p)]
         return _emit(a, {"daemon": d, "plans": runs}, lambda x: [
-            M.bold("supervisor ") + (M.green(f"running (pid {x['daemon']['pid']}, heartbeat {x['daemon']['heartbeat_age_seconds']}s ago)") if x["daemon"]["running"]
+            M.bold("supervisor ") + (M.green(f"running (pid {x['daemon']['pid']}, heartbeat {x['daemon']['heartbeat_age_seconds']}s ago)")
+                                      + (M.yellow("  restart recommended: " + x["daemon"]["restart_reason"]) if x["daemon"].get("restart_required") else "") if x["daemon"]["running"]
                                       else M.yellow("not running") + M.dim("  " + (x["daemon"].get("note") or "")))] +
             [f"  plan {r['plan']}: {r['state']} ({r['attempts']} attempts)" for r in x["plans"]])
+    if act == "instruct":
+        return _cmd_instruct(a, p)
+    if act == "debug":
+        return _cmd_debug(a, p)
+    if act == "reload":
+        def rl(d):
+            if not d["valid"]:
+                return [M.red("✗ ") + "settings are invalid; nothing was applied"] + [M.red("  " + e) for e in d["errors"]]
+            out = [(M.green("✓ ") if d["applied"] else M.yellow("! ")) + d["note"]]
+            for k, label in (("live", "applied live"), ("next_launch", "apply to agents/jobs launched from now on"), ("restart", "need `research supervisor restart`")):
+                if d["changed"][k]:
+                    out.append(f"  {label}: " + ", ".join(d["changed"][k]))
+            out += [M.yellow("  restart required: " + r) for r in d["restart_reasons"]]
+            return out
+        return _emit(a, SV.daemon_reload(p), rl)
+    if act == "restart":
+        return _emit(a, SV.daemon_restart(p, timeout=float(a.timeout)), lambda d: [(M.green("✓ ") if d.get("restarted") else M.yellow("! ")) + (d.get("note") or "")
+                     + (f" (pid {d.get('previous_pid')} -> {d.get('pid')})" if d.get("pid") and d.get("previous_pid") else "")])
     if act == "stop":
         return _emit(a, SV.daemon_stop(p), lambda d: [M.green("✓ ") + "stopped" if not d.get("running") else M.yellow("still running")])
     if act == "tick":
@@ -193,6 +222,127 @@ def cmd_supervisor(a, p) -> int:
     raise ResearchError(f"unknown supervisor action {act}")
 
 
+def _read_multiline() -> str:
+    import sys
+    if sys.stdin.isatty():
+        print("Instruction for the supervisor (finish with an empty line):", file=sys.stderr)
+    lines = []
+    for line in sys.stdin:
+        if not line.strip() and lines:
+            break
+        lines.append(line.rstrip("\n"))
+    return "\n".join(lines).strip()
+
+
+def _show_intervention(it, say=print) -> None:
+    say(M.bold(f"{it['id']} {it['task']}: {it['state']}") + (f" — {it['summary']}" if it.get("summary") else ""))
+    for line in it.get("preview", []):
+        say("  " + line)
+    if it["state"] == "proposed":
+        say(M.yellow(f"  needs your approval ({', '.join(it['protected'])}): research intervention approve {it['id']}") if it["protected"]
+            else M.yellow(f"  waiting for approval: research intervention approve {it['id']}"))
+    if it["state"] == "failed":
+        say(M.red("  " + str((it["history"][-1] or {}).get("note", ""))))
+    if it["state"] in ("approved", "implementing", "verifying"):
+        say(M.dim("  the supervisor is applying it and will resume the task; watch with `research plan status`"))
+
+
+def _cmd_instruct(a, p) -> int:
+    import sys
+    from research import intervene as I
+    if not a.target:
+        raise ResearchError("instruct needs a task: research supervisor instruct T-12 --message \"…\"")
+    msg = a.message or _read_multiline()
+    it = I.request(p, a.target, msg, interrupt=a.interrupt)
+    if it["state"] == "proposed" and (a.yes or (sys.stdin.isatty() and sys.stdout.isatty() and not a.json)):
+        _show_intervention(it)
+        if a.yes or input("Approve and run it? [y/N] ").strip().lower() in ("y", "yes"):
+            it = I.approve(p, it["id"], a.note or "approved at the terminal")
+    return _emit(a, it, lambda d: (_show_intervention(d), [])[1])
+
+
+def _cmd_debug(a, p) -> int:
+    from research import intervene as I, notify, planspec as PS
+    plan = a.target or next((s["plan_key"] for s in PS.all_states(p) if SV.plan_health(p, s, SV.load_run(p, s["plan_id"]) or {})["blocking"]), None)
+    if not plan:
+        raise ResearchError("Nothing is blocked, so there is nothing to diagnose")
+    rec = notify.latest_debug(p) if a.choose and notify.latest_debug(p) else notify.run_debug(p, plan)
+    if a.choose:
+        if not 1 <= a.choose <= len(rec["options"]):
+            raise ResearchError("choose a number from the options shown")
+        it = I.request(p, rec["tasks"][0], rec["options"][a.choose - 1]["instruction"], source="debug")
+        return _emit(a, it, lambda d: (_show_intervention(d), [])[1])
+    def lines(d):
+        out = [M.bold(f"{d['id']} {d['state']}") + M.dim(f"  model {d['model']}")] + ([d["summary"]] if d.get("summary") else [M.red(str(d.get("error")))])
+        out += [f"  {i + 1}. {o['label']} [{o['class']}]" + (" (recommended)" if d.get("recommended") == i else "") + M.dim(f"\n     {o['instruction'][:160]}") for i, o in enumerate(d.get("options", []))]
+        if d.get("options"):
+            out.append(M.dim("  start one with: research supervisor debug --choose N"))
+        return out
+    return _emit(a, rec, lines)
+
+
+def cmd_intervention(a, p) -> int:
+    from research import intervene as I
+    act = a.action
+    if act == "list":
+        return _emit(a, I.list_all(p, a.id if a.id and a.id.startswith("T-") else None),
+                     lambda d: [f"{i['id']} {i['task']:<7} {i['state']:<13} {i['instruction'][:70]}" for i in d] or ["no interventions"])
+    if not a.id:
+        raise ResearchError(f"{act} needs an intervention id (INT-001)")
+    if act == "show":
+        return _emit(a, I.load(p, a.id), lambda d: (_show_intervention(d), [])[1])
+    if act == "approve":
+        it = I.approve(p, a.id, a.note)
+    elif act == "reject":
+        it = I.reject(p, a.id, a.note)
+    elif act == "cancel":
+        it = I.cancel(p, a.id)
+    else:
+        it = I.plan_it(p, a.id)
+    return _emit(a, it, lambda d: (_show_intervention(d), [])[1])
+
+
+cmd_intervention = M.mut(cmd_intervention)
+
+
+def cmd_telegram(a, p) -> int:
+    from research import approval as AP, notify
+    act = a.action
+    if act == "status":
+        return _emit(a, notify.status(p), lambda d: [("token saved" if d["token_set"] else "no token") + ", " + ("chat linked" if d["chat_id_set"] else "no chat linked")
+                                                      + f", {'enabled' if d['enabled'] else 'disabled'} for this project; stored at {d['stored_at']}"])
+    if AP.agent_environment() or (p.author or {}).get("author_type") == "agent":
+        raise PolicyBlocked("Only the researcher can configure Telegram")
+    if act == "setup":
+        token = a.token or AP.read_pin("Bot token (from @BotFather; not shown): ")
+        if not token:
+            raise ResearchError("No token entered (a terminal is needed, or pass --token)")
+        chat = a.chat_id
+        if chat is None:
+            print("Now open your bot in Telegram and send it any message (waiting up to 60 s)…")
+            chat = notify.discover_chat(token.strip(), 60)
+            if chat is None:
+                raise ResearchError("No message reached the bot; send one and run setup again")
+        notify.set_credentials(token, chat)
+        p.save_config({"notifications.telegram.enabled": True, "notifications.auto_debug": True})
+        notify.send("Research OS is connected. Send /help for commands.")
+        p.config = p.load_config()               # pick up the setting just written
+        sup = notify.ensure_running(p)
+        return _emit(a, {**notify.status(p), "supervisor": sup}, lambda d: [M.green("✓ ") + "Telegram connected; token and chat id are stored only on this machine",
+                     M.green("✓ ") + "supervisor " + ("started: it answers your chat and alerts you on halts" if sup["action"] == "start" else "is running: it answers your chat and alerts you on halts")
+                     if not sup.get("error") else M.yellow("! start it with `research supervisor start`: " + sup["error"])])
+    if act == "test":
+        return _emit(a, {"sent": notify.send("Research OS test message. Send /help for commands.")}, lambda d: [M.green("✓ ") + "sent" if d["sent"] else M.yellow("not configured")])
+    if act == "remove":
+        notify.clear_credentials()
+        p.save_config({"notifications.telegram.enabled": False})
+        return _emit(a, {"removed": True}, lambda d: [M.green("✓ ") + "credentials deleted and Telegram disabled"])
+    if act == "poll":
+        return _emit(a, {"handled": notify.poll(p)}, lambda d: [f"{d['handled']} message(s) handled"])
+    raise ResearchError(f"unknown telegram action {act}")
+
+
+cmd_telegram = M.mut(cmd_telegram)
 cmd_supervisor = M.mut(cmd_supervisor)
 
 
@@ -321,15 +471,28 @@ def attach_plan(g, add) -> None:
 
 
 def attach_top(sub, add, group) -> None:
+    x = add(sub, "intervention", cmd_intervention, "supervisor interventions: list | show | approve | reject | cancel | plan")
+    x.add_argument("action", choices=["list", "show", "approve", "reject", "cancel", "plan"])
+    x.add_argument("id", nargs="?", help="INT-001 (list: optionally a task id to filter)")
+    x.add_argument("--note", help="approve: why · reject: reason")
+    x = add(sub, "telegram", cmd_telegram, "Telegram alerts and chat commands (opt-in): setup | status | test | remove | poll")
+    x.add_argument("action", choices=["setup", "status", "test", "remove", "poll"])
+    x.add_argument("--token", help="setup: the bot token (prefer the hidden prompt; arguments are visible in process lists)")
+    x.add_argument("--chat-id", dest="chat_id", help="setup: the chat id (default: the first chat that messages the bot)")
     x = add(sub, "env", cmd_env, "the project's Python environment: check | create (uv) | install")
     x.add_argument("action", choices=["check", "create", "install"])
     x.add_argument("--path", help="create: where to create the venv (default: .venv next to main/)")
     x.add_argument("--python", help="create: python version/interpreter for uv (for example 3.12)")
     x.add_argument("--package", "-k", action="append", help="packages (repeatable)")
-    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | tick | approve | accept | resolve | continue (hand a task to another agent) | providers")
-    x.add_argument("action", choices=["start", "status", "stop", "tick", "approve", "accept", "resolve", "void", "continue", "providers"])
+    x = add(sub, "supervisor", cmd_supervisor, "the persistent supervisor: start | status | stop | instruct T-12 (steer a task in words) | debug [PLAN] (diagnose a halt) | reload (apply settings, agents untouched) | restart (new process, agents untouched) | tick | approve | accept | resolve | continue (hand a task to another agent) | providers")
+    x.add_argument("action", choices=["start", "status", "stop", "reload", "restart", "instruct", "debug", "tick", "approve", "accept", "resolve", "void", "continue", "providers"])
     x.add_argument("--profile", help="continue: the agent profile to hand the task to")
     x.add_argument("target", nargs="?", help="approve/accept/resolve: task id")
+    x.add_argument("--message", "-m", help="instruct: the instruction (otherwise type it, finish with a blank line)")
+    x.add_argument("--interrupt", action="store_true", help="instruct: safely stop the running agent now (its attempt is kept as evidence); default is to queue")
+    x.add_argument("--yes", action="store_true", help="instruct: approve the proposal right away if it asks (protected changes still ask for the PIN)")
+    x.add_argument("--choose", type=int, help="debug: start an intervention from option N of the diagnosis")
+    x.add_argument("--timeout", type=float, default=120.0, help="restart: seconds to wait for the current scheduling pass to finish")
     x.add_argument("--foreground", action="store_true", help="start: run in this terminal instead of detaching")
     x.add_argument("--detach", action="store_true", help="start: detach (the default)")
     x.add_argument("--exit-when-idle", action="store_true", help="start: exit once no plan is running")

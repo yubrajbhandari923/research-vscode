@@ -28,7 +28,7 @@ KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 PLAN_FIELDS = {"key", "id", "title", "objective", "success_criteria", "context", "question", "execution", "experiments",
                "tasks", "scope", "revision", "skills"}
 EXEC_FIELDS = {"mode", "max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "on_failure",
-               "require_approval_for_scientific_changes", "default_profile", "max_hpc_resubmissions", "auto_promotion"}
+               "require_approval_for_scientific_changes", "default_profile", "max_hpc_resubmissions", "auto_promotion", "escalation"}
 EXP_FIELDS = {"key", "id", "title", "hypothesis", "motivation", "method", "success_criteria", "expected_outcome", "stop_conditions",
               "parameters", "metrics", "expected_artifacts", "planned_runs", "question", "tasks", "notes", "tags"}
 TASK_FIELDS = {"key", "id", "title", "description", "prompt", "depends_on", "agent", "inputs", "expected_artifacts", "acceptance",
@@ -167,6 +167,14 @@ def normalize(doc: Dict[str, Any], known: Optional[Any] = None) -> Dict[str, Any
         for k in ("max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "max_hpc_resubmissions"):
             if k in ex and (not isinstance(ex[k], int) or isinstance(ex[k], bool) or ex[k] < (0 if k == "max_hpc_resubmissions" else 1)):
                 errs.append(f"{where}.execution.{k} must be a positive integer")
+        esc = ex.get("escalation")
+        if esc is not None:
+            if not isinstance(esc, dict) or set(esc) - {"on", "model", "effort", "profile", "max_escalated_attempts"}:
+                errs.append(f"{where}.execution.escalation must be a mapping with only on, model, effort, profile, max_escalated_attempts")
+            elif not any(esc.get(k) for k in ("model", "effort", "profile")):
+                errs.append(f"{where}.execution.escalation needs at least one of model, effort, profile")
+            elif esc.get("on") is not None and (not isinstance(esc["on"], list) or any(x not in ("incomplete_deliverable", "incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle", "agent_process_failure") for x in esc["on"])):
+                errs.append(f"{where}.execution.escalation.on must be a list of repairable failure categories")
         if "auto_promotion" in ex and not isinstance(ex["auto_promotion"], bool):
             errs.append(f"{where}.execution.auto_promotion must be true or false (it only declares intent; a human still authorizes the run)")
         scope = pl.get("scope", "partial")
@@ -400,6 +408,11 @@ def _plan_changes(p: Project, norm_plan: Dict[str, Any], st: Optional[Dict[str, 
                    if norm_plan.get(f) not in (None, []) and norm_plan.get(f) != old.get(f)}
         if changed:
             ops.append({"op": "update_plan", "key": key, "fields": changed})
+        new_ex, old_ex = norm_plan.get("execution") or {}, old.get("execution") or {}
+        ex_changed = sorted(k for k in set(new_ex) | (set(old_ex) if norm_plan.get("scope") == "full" else set()) if new_ex.get(k) != old_ex.get(k))
+        # a partial patch changes only the keys it states (one without `execution` changes nothing); a full document also removes keys it no longer lists
+        if ex_changed:     # concurrency, failure policy, escalation, auto_promotion: stored in the plan spec, not the ledger row
+            ops.append({"op": "update_execution", "key": key, "fields": ex_changed})
     old_exps = {e["key"]: e for e in old.get("experiments", [])}
     new_exps = {e["key"]: e for e in norm_plan["experiments"]}
     for ek, e in new_exps.items():
@@ -463,6 +476,52 @@ def _known(p: Optional[Project]):
     return f if p else None
 
 
+def deliverables(t: Dict[str, Any]) -> List[str]:
+    """Files a task is expected to produce: its `file:` checks, `expected_artifacts`, and an `Outputs: a; b` line in its acceptance text."""
+    from .verification import parse_check
+    out = [str(x) for x in (t.get("expected_artifacts") or [])]
+    for c in t.get("checks") or []:
+        try:
+            pc = parse_check(c)
+        except ResearchError:
+            continue
+        if pc.get("type") == "file":
+            out.append(pc["path"])
+    m = re.search(r"Outputs?:\s*([^\n]+)", str(t.get("acceptance") or ""))
+    if m:
+        out += [x.strip().rstrip(".") for x in m.group(1).split(";") if x.strip().rstrip(".")]
+    return sorted({x for x in out if x})
+
+
+def authored_by_other(tasks: Dict[str, Dict[str, Any]], key: str) -> set:
+    """Deliverable paths of the tasks `key` depends on, transitively: work that exists before this task starts."""
+    seen, todo, paths = set(), list(tasks[key].get("depends_on") or []), set()
+    while todo:
+        d = todo.pop()
+        if d in seen or d not in tasks:
+            continue
+        seen.add(d)
+        paths |= set(deliverables(tasks[d]))
+        todo += tasks[d].get("depends_on") or []
+    return paths
+
+
+def role_warnings(plan: Dict[str, Any]) -> List[str]:
+    """A verifier checks work; it does not author it. Flag verifier tasks whose own checks/outputs are files nobody upstream produces.
+    Advice only: the plan is never rewritten and no review requirement is weakened."""
+    tasks = {t["key"]: t for t in plan["tasks"]}
+    out = []
+    for k, t in tasks.items():
+        if (t.get("agent") or {}).get("role") != "verifier":
+            continue
+        own = [d for d in deliverables(t) if d not in authored_by_other(tasks, k)]
+        if own:
+            out.append(f"task {plan['key']}/{k} is a verifier but must itself create {', '.join(own)}. Verifiers check work and are told not to produce new results, "
+                       f"so this task will fail its own checks. Change its role to analyst or implementer (it authors the report), then add a separate verifier task "
+                       f"that depends on it and checks the report; or drop those file checks from the verifier.")
+    return out
+
+
 def diff(p: Project, text: str) -> Dict[str, Any]:
     """Preview: what apply would do. Reads nothing but the ledger."""
     doc = normalize(parse(text), _known(p))
@@ -470,9 +529,10 @@ def diff(p: Project, text: str) -> Dict[str, Any]:
     for pl in doc["plans"]:
         st = load_state(p, pl["key"])
         ch = _plan_changes(p, pl, st, (st or {}).get("experiments") or {})
-        plans_out.append({"plan": pl["key"], "revision": (st or {}).get("revision"), "ops": ch["ops"], "warnings": ch["warnings"]})
+        pw = ch["warnings"] + role_warnings(pl)
+        plans_out.append({"plan": pl["key"], "revision": (st or {}).get("revision"), "ops": ch["ops"], "warnings": pw})
         conflicts += ch["conflicts"]
-        warnings += ch["warnings"]
+        warnings += pw
         nops += len(ch["ops"])
     return {"ok": not conflicts, "plans": plans_out, "conflicts": conflicts, "warnings": warnings, "operations": nops,
             "unchanged": nops == 0 and not conflicts}
@@ -482,7 +542,7 @@ def validate(text: str, p: Optional[Project] = None) -> Dict[str, Any]:
     doc = normalize(parse(text), _known(p))
     n_tasks = sum(len(p["tasks"]) for p in doc["plans"])
     return {"ok": True, "plans": [p["key"] for p in doc["plans"]], "tasks": n_tasks,
-            "experiments": sum(len(p["experiments"]) for p in doc["plans"])}
+            "experiments": sum(len(p["experiments"]) for p in doc["plans"]), "warnings": [w for p in doc["plans"] for w in role_warnings(p)]}
 
 
 def _id_resolver(st: Dict[str, Any]):
@@ -531,6 +591,8 @@ def apply(p: Project, text: str, dry_run: bool = False, source: str = "yaml", au
                                                   context=pl.get("context"), root_question_id=q, skills=pl.get("skills") or None)["id"]
             elif k == "update_plan":
                 P.update_plan(p, st["plan_id"], **op["fields"])
+            elif k == "update_execution":
+                pass     # carried by the spec saved below; listed so the change is visible in diff and counted as a change
             elif k in ("create_experiment", "adopt_experiment"):
                 e = next(e for e in pl["experiments"] if e["key"] == op["key"])
                 if k == "adopt_experiment":

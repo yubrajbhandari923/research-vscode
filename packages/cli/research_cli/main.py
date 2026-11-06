@@ -2925,6 +2925,17 @@ def cmd_dispatch(a, p) -> int:
 
 def cmd_bin(a, p) -> int:
     from research import localbin
+    name = getattr(a, "name", None) or "research"
+    if a.action == "link":
+        r = localbin.link(p.root, name) or {}     # links only; the launcher may be the very copy running now, which cannot reinstall itself
+        if not r:
+            raise ResearchError("No link made: run this in the repository's main checkout (not an experiment worktree), after `research bin install`.")
+        _done(a, r, msg=f"{os.path.relpath(r['path'], os.getcwd())} -> {r['target']}" + ("" if r["created"] else " (already linked)"))
+        return 0
+    if a.action == "unlink":
+        r = localbin.unlink(p.root, name)
+        _done(a, r, msg=("removed " if r["removed"] else "no Research OS link at ") + str(r["path"]))
+        return 0
     r = localbin.status(p.root) if a.action == "status" else localbin.install(p.root, force=a.force)
     if a.json:
         out_json(r)
@@ -2933,6 +2944,10 @@ def cmd_bin(a, p) -> int:
     else:
         print(green("✓ ") + f"{os.path.relpath(r['path'], os.getcwd())} " + ("updated" if r["updated"] else "already up to date"))
         print(dim("  any agent or shell in this project can run it without installing anything"))
+        if r.get("link") and r["link"].get("error"):
+            print(dim("  no ./research link: " + r["link"]["error"].split(";")[0]))
+        elif r.get("link"):
+            print(dim(f"  {os.path.relpath(r['link']['path'], os.getcwd())} -> launcher: run `./research …` from the main checkout"))
     return 0
 
 
@@ -3247,8 +3262,10 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--all", action="store_true", help="also list the checks that passed")
     x.add_argument("--fix", metavar="CHECK", help="apply one safe fix for generated files (context.stale, agents_md.stale, bin.stale)")
     x = add(sub, "bin", cmd_bin, "project-local CLI at .research/bin/research (no install needed for agents)")
-    x.add_argument("action", nargs="?", choices=["install", "status"], default="install")
+    x.add_argument("action", nargs="?", choices=["install", "status", "link", "unlink"], default="install",
+                   help="link/unlink: the local ./research symlink in the main checkout (git-ignored); install also creates it")
     x.add_argument("--force", action="store_true", help="re-copy even if up to date")
+    x.add_argument("--name", help="link/unlink: file name of the link in the main checkout (default: research)")
     x = add(sub, "mcp", cmd_mcp, "MCP server for agents (stdio); `research mcp install` registers it")
     x.add_argument("action", nargs="?", choices=["serve", "install"], default="serve")
     x.add_argument("--client", action="append", choices=["claude", "vscode", "cursor", "gemini", "codex"],
