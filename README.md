@@ -5,7 +5,7 @@ a `research` CLI, a Python API and an MCP server to the same `.research/` direct
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 2.4.0.** Project format 2. This is a deliberate breaking release: v1 projects are not upgraded or migrated
+**Version 2.6.0.** Project format 2. v1 projects are not upgraded or migrated
 (see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
@@ -85,18 +85,22 @@ records instead of guessing. Every new project is equipped out of the box:
 
 Agents → **Skills, hooks and MCP** has a searchable catalog with one-click install, packs, per-skill activation, enable/disable, hook approval and test results, and updates; `research skills …` and `research hook …` do the same, and `skills.packs` in the machine config sets the default for every new project. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
 
+**New in 2.6:** steer a running plan in words (`research supervisor instruct`), plans report HALTED instead of "running", an opt-in debug agent,
+Telegram alerts and commands (`research telegram setup`), safe `supervisor reload|restart`, and `./research` linked in your main checkout.
+2.5 added opt-in fast-forward-only code promotion. See the [Changelog](CHANGELOG.md) and [Supervisor](docs/SUPERVISOR.md).
+
 ## Install
 
 Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
 
-- `research-panel-2.4.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
-- `research_panel-2.4.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
+- `research-panel-2.6.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
+- `research_panel-2.6.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
 - `SHA256SUMS` — checksums for the files above
 
 ```bash
-code --install-extension research-panel-2.4.0.vsix
+code --install-extension research-panel-2.6.0.vsix
 # optional, CLI outside VS Code:
-python3 -m pip install research_panel-2.4.0-py3-none-any.whl
+python3 -m pip install research_panel-2.6.0-py3-none-any.whl
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.
