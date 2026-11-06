@@ -17,7 +17,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 - **Execution ownership.** `execution.py`: dispatch for a task writes a single-use execution record and returns a wrapper command. The wrapper takes `.research/locks/<task>.execution` non-blocking and passes the descriptor to the provider, so the lock outlives a killed wrapper while the provider runs. States: prepared, launched, running, completed, failed, unknown.
 - **Effective task specification.** `task_spec.py` projects task fields and the contract with sources and conflicts; storage is unchanged.
 - **Completion policy.** `orchestrate.verify_work` is the single verifier used by `verify_task`, `gate_task_completion`, `task done`, status updates and create-as-done. `verification_state` is `passed`, `blocked` or `unverified`; humans may complete administratively with an audit event.
-- **Not implemented.** Coordinator continuation, a UI view of execution records, and Windows lock/process-tree verification.
+- **Not implemented.** A UI view of execution records and Windows lock/process-tree verification. Coordinator continuation is provided since 2.1 by the persistent supervisor ([§14G](#14g-supervisor-governance-promotion-and-notifications-21-to-26)).
 
 ## Stabilization behavior changes
 
@@ -49,6 +49,9 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 14A. [Full deterministic context export](#14a-full-deterministic-context-export-research-report---full)
 14B. [The managed AGENTS.md block](#14b-the-managed-agentsmd-block)
 14C. [HPC execution](#14c-hpc-execution)
+14D. Shared ledger and experiment workspaces · 14E. Typed settings and job isolation · 14F. Selective promotion into main
+14G. [Supervisor, governance, promotion and notifications](#14g-supervisor-governance-promotion-and-notifications-21-to-26)
+13A. Control Center (React)
 15. [Safety guarantees](#15-safety-guarantees)
 16. [Configuration reference](#16-configuration-reference)
 17. [Environment variables](#17-environment-variables)
@@ -138,11 +141,17 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | **Numerical evidence** | Findings bind numbers to recorded metrics; a failing binding blocks `supported`; artifact integrity, run provenance, offline literature records | 10.x |
 | **Tiered context** | AGENTS.md (bootstrap) → `research current` (bounded state) → `research task context` (one task) → `research search` / `show` (retrieval) | 9.3–9.6 |
 
+| **Persistent supervisor** | Deterministic daemon that runs YAML plans: dispatch, verification, bounded repair, escalation, honest plan health (HALTED), live reload/restart | 14G |
+| **Governance and approval PIN** | Agents propose, humans approve; local scrypt PIN, prompted on the terminal | 14G |
+| **Unattended code promotion** | Opt-in, two-key, fast-forward-only into local `main`, independent review, never approves science | 14F, 14G |
+| **Supervisor intervention** | `supervisor instruct`: steer a task in words; classified actions, one PIN for protected ones | 14G |
+| **Debug agent and Telegram** | Opt-in diagnosis of a halt, alerts and chat commands | 14G |
+
 ### Interfaces
 
 | Feature | Summary | § |
 |---|---|---|
-| CLI | `research …`: 42 top-level commands, 106 runnable leaf commands (plus aliases) | 10 |
+| CLI | `research …`: 56 top-level commands (plus aliases); `research --help` lists them | 10 |
 | Python API | `import research` | 11 |
 | JSON-RPC | stdio line protocol between extension and core | 12 |
 | VS Code: sidebar | Overview webview + 9 trees (Plans, Questions, Experiments, Findings, Decisions, Checkpoints, Notes, Artifacts, Agent Context) | 13.4 |
@@ -2261,7 +2270,7 @@ directory: it refuses while runs are queued/running or while tracked changes or 
 `snapshot` of the exact working tree (tracked + untracked, not ignored) as a commit pinned by `refs/research/snapshots/<RUN>`.
 It is built with a temporary index; the real index, HEAD and files are untouched.
 
-**Not implemented yet:** the selective-promotion workflow, a workspace view in the extension, workspace data in dispatch
+**Not implemented yet:** a workspace view in the extension (selective promotion is built, §14F), workspace data in dispatch
 briefs, snapshot export into HPC bundles, and concurrent-process tests beyond the id-uniqueness test. Windows is unverified.
 
 ---
@@ -2555,12 +2564,14 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 
 | Suite | Command | What it proves |
 |---|---|---|
-| Python suite (pytest, baseline **432 tests**, plus release regressions under `tests/python/`; see the release review for final counts) | `python -m pytest -q` | all offline: no SSH, no real Slurm, no model, no network. Per file: |
+| Python suite (pytest, 1104 tests collected at 2.6.0 (`python -m pytest -q --collect-only`); three tests fail on an unmodified 2.5.0 as well) | `python -m pytest -q` | all offline: no SSH, no real Slurm, no model, no network. Per file: |
 | ↳ `test_core.py` (29) · `test_slurm_rpc_cli.py` (11) | | init and AGENTS.md preservation; migrations; rollback journal; ids; hierarchy; experiments and git capture; runs, artifacts, findings, decisions; authorship; run budget; local foreground/detached runs; hand-edit import, rebuild, relocation; checkpoints; SLURM script/submit/completion/TIMEOUT/cancel against mocked `sbatch`/`squeue`/`sacct`; RPC round trip; CLI end to end and exit codes |
 | ↳ `test_plans_tasks.py` (32) · `test_plans_tasks_interfaces.py` (19) · `test_research_os.py` (22) | | plans, tasks, readiness, claims, notes, stale tasks; exact form payloads over RPC; every command in the AGENTS.md template parses; checks gate, finding gate and role-based independence; skills import/update/remove; search; compare; sweeps; reports; checkpoint `--commit`; dispatch; MCP protocol and install |
 | ↳ `test_evidence.py` (16) · `test_guide.py` (7) · `test_orchestrate.py` (11) | | numerical bindings, mismatch blocking `supported`, artifact integrity, provenance, sources; Scientist Guide freshness and AGENTS block; legacy tier routing, frozen tests, attempts, delegation, tuning |
 | ↳ `test_strategy.py` (19) | | the four strategies and custom ones: resolution, layering and precedence, cycles, project isolation, one resolver for direct/orchestrated/delegated/guide dispatch, frozen tests and independence under strategies, harness independence, managed-file boundaries, the `agent_setup` RPC, list-block config edits |
 | ↳ `test_agent_features.py` (15) | | hooks (human-only approval, edit revokes, timeout, advisory, preflight/pre-experiment gates), contracts and `orchestrate verify`, usage parsing and summaries (missing ≠ zero), headless runs with a mock agent, task pins, strategy-aware agent files, `experiment check`, CLI and RPC |
+| ↳ `test_autopromote.py` (14) · `test_supervisor_fixes.py` (13) · `test_intervention.py` (26) | | fast-forward-only unattended promotion and its fail-closed cases; failure classification, plan health, reload/restart; intervention state machine, debug agent, Telegram against a local fake server |
+| ↳ `test_cli_pin_link_escalation.py` (12) · `test_cli_e2e.py` (8) | | the real launcher driven through a pseudo-terminal: PIN prompt, `./research` link, escalation; end-to-end CLI flows |
 | ↳ `test_config.py` (74) · `test_localbin.py` (8) | | layered sparse configuration, surgical comment-preserving edits, check/migrate; the project-local launcher |
 | ↳ `test_fullreport.py` (37) | | managed AGENTS.md block; deterministic, side-effect-free, coverage-verified full export |
 | ↳ `test_hpc.py` (89) · `test_acceptance.py` (2) | | bundles, SSH/Slurm against a fake cluster, datasets, result import, reconciliation; the 17-step remote run → import → export acceptance scenario |
@@ -2792,7 +2803,7 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 - **The numerical gate also applies to humans.** Unlike other review gates, `supported` is refused for anyone when a bound number fails. Correct by superseding the binding or finding; a history of earlier bindings (including loose ones created before the tolerance cap) is preserved.
 - **Literature sources are offline records.** `research source` validates identifier format only. It never resolves a DOI or fetches a paper; identity, examination and per-finding support are three separate human/agent assertions.
 - **Scientist Guide prose is not machine-verified.** The guide status shows whether each finding's numbers verify, but nothing checks that the narrative quotes them correctly. Draft limits are checked after the fact by comparing files, not enforced. Review it like any scientific text. Writing depends on an agent actually being run; `guide draft` only prepares it.
-- **Orchestration is launched by people or sessions, not a scheduler.** Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier unless an allocation strategy is active, in which case it uses the same resolver as `orchestrate`. The shipped model IDs are configuration defaults, not a current provider-availability guarantee. This review did not exercise a live provider or generated subagent model frontmatter.
+- **Orchestration is a scheduler only under the supervisor.** Without a running plan it is launched by people or sessions. Native Claude Code subagents cannot spawn subagents, so Sonnet→Haiku runs as a separate `claude` process (`research orchestrate dispatch … --run`). Plain `research dispatch` does not route by tier unless an allocation strategy is active, in which case it uses the same resolver as `orchestrate`. The shipped model IDs are configuration defaults, not a current provider-availability guarantee. This review did not exercise a live provider or generated subagent model frontmatter.
 - **Usage is captured only for headless runs** (`--headless`) and manual records; interactive sessions expose none. Hooks execute shell commands only after human approval (see README, Hooks and task contracts).
 - **No MCP tools yet for the guide, strategies, orchestration, hooks, usage, tuning, evidence or sources** (CLI and RPC only), and no VS Code UI for tuning, evidence or sources. Strategies, hooks, task pins, usage, experiment validation, skills and MCP registration have the Agent setup page (§13.5); contracts are shown there but are edited with `research orchestrate contract`; strategy definitions, models, limits and hook commands are edited in `config.yaml` / `research hook add`.
 - **Usage is recorded only when it is exposed.** `--headless` runs record what the provider's JSON reports (parsed defensively; the `claude -p --output-format json` shape was taken from documentation and not exercised against a live session); `usage import` and `orchestrate attempt --usage` take what you supply. Interactive sessions expose nothing, so none is recorded for them. Cost is provider-reported (no price table), so it can be partial; summaries show `reported/records`. Headless Claude cannot answer permission prompts; put the flags you trust in the profile's `headless_args`.
@@ -2800,6 +2811,15 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 - **Per-task pins need an active strategy and apply to implementer dispatch only** (verifier dispatch keeps its independence rule). The file boundary in `orchestrate verify` compares `git status` against the baseline taken at dispatch, so it only sees a git repository and cannot attribute changes made by other processes in between.
 - **Generated agent files follow the strategy only when you re-run `research setup agents --apply`;** a strategy change marks them `update`. Managed legacy tier files are moved to `.research/cache/removed-agents/`, user-owned files are never touched. The subagent `model:` frontmatter was not exercised in a live session.
 - **Ponytail import was not run against the live repository.** `research setup agents --approve ponytail` uses the existing skill importer, which is tested with a local fixture.
+
+#### Supervisor, promotion and notifications (2.1 to 2.6)
+
+- **The supervisor is not a security boundary.** It and the approval PIN guard against honest mistakes and unsupervised agents; a hostile process running as the same OS user can read project files (GOVERNANCE.md).
+- **Unattended promotion is local only:** fast-forward into local `main`; it never pushes, rebases or forces, and pauses on any conflict, dirty or moved `main` or edited test.
+- **Analyst and verifier tasks run in the main checkout;** only implementer tasks get a worktree.
+- **Frozen-test changes are approval-gated and recorded, never edited or re-frozen automatically.**
+- **Not exercised against live services in the test suite:** real Claude/Codex planning and debug agents and the real Telegram API (scripted agents and a local fake server are used). The Plans page controls are type-checked and bundled; the screenshots predate them.
+- **Python 3.14:** `getpass` cannot read the PIN from `/dev/tty`; the CLI reads the terminal directly with echo off. With no terminal (CI, agent shells) protected actions fail closed.
 
 #### Core
 
@@ -2813,8 +2833,8 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 - **Preview formats:** NIfTI, HDF5, NetCDF and NPZ show metadata only.
 - **Real-VS-Code harness:** not runnable in environments that block the VS Code download. The code-server E2E covers the
   same runtime.
-- **Plans and tasks have little automation:** updates reject dependency cycles; there is no automatic plan completion, no automatic move to
-  `verify`; starting a non-ready task only warns. Dispatch uses `assigned_role` to pick a role, but nothing schedules work.
+- **Plans and tasks are scheduled only by the supervisor** (§14G): updates reject dependency cycles; outside a supervised plan there is no automatic
+  completion or move to `verify`, and starting a non-ready task only warns.
 - **Plans and tasks are not part of checkpoints** (draft or stored fields).
 - **The finding gate trusts identities and files.** Roles are self-declared environment variables, and a hand edit of a
   finding's Markdown is imported as a human edit, so a determined agent could bypass the gate. It is a guard rail for
@@ -2830,15 +2850,14 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 
 Built from the earlier list: tiered context, verification gates, roles/profiles with dispatch, the MCP server, project skills,
 run comparison, sweeps, reports, git snapshots, the Scientist Guide, numerical evidence, HPC, layered configuration,
-allocation strategies, hooks, task contracts, usage accounting, per-task pins, strategy-aware agent files and `experiment check`.
+allocation strategies, hooks, task contracts, usage accounting, per-task pins, strategy-aware agent files, `experiment check`, the persistent supervisor, governance with the approval PIN, unattended fast-forward promotion, supervisor intervention, the debug agent and Telegram.
 Remaining ideas, only once real use shows a need:
 
 - **Model-driven verification inside the gate**, e.g. automatically dispatching a verifier when a finding is created
-- **Automatic plan progression** (plan completes when tasks do; tasks move to `verify` when their checks pass)
 - **MCP tools for strategies, hooks, contracts and experiment check** (so agents need not shell out)
 - **Running `experiment check` automatically** when a run finishes, and hook stages for HPC bundle import
 - **Live verification of headless usage capture** against a real `claude -p` session, and further `usage_parser`s for other CLIs
-- **Fully autonomous orchestration** (deliberately not built; see §21.6)
+- **Fully autonomous science** (deliberately not built; see §21.6). The supervisor automates execution, never scientific approval
 - **Data-format viewers** (NIfTI slices, HDF5 trees, NPZ keys) as a *separate* extension rather than in this one
 - per-question timelines
 - branch-safe ids
