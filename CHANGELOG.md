@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.0
+
+**Opt-in unattended code promotion** (`docs/SUPERVISOR.md` section 14). Off by default; needs the plan to declare `execution.auto_promotion: true` AND a human PIN-gated `research plan autopromote PLAN authorize`.
+- Verified, unpromoted commits are tracked per experiment and promoted at experiment boundaries or when a downstream task depends on them: candidate from current `main`, cherry-pick of only new commits, integration tests + numerical checks, independent review by a different reviewer, then supervisor-authorized `git merge --ff-only`. Dependents are blocked until then and start from the integrated `main`.
+- Fail-closed: failures, dirty or moved `main`, conflicts and edited tests pause the item (persisted, restart-safe, idempotent); no force, rebase, push or blind retry. Scientific findings are never created or approved.
+- Fixed: `promotion.integrate` asked for the PIN (and logged an approval) before checking the candidate was approved.
+- New: `research plan autopromote`, `autopromote.py`, `promotion.supervisor_approve/integrate_authorized`, `workspace.ensure_for_experiment(base=)`. Tests: `test_autopromote`.
+
 ## 2.4.0
 
 **Agents propose, you approve: governance, a PIN guardrail, provider handoff and YAML setup** (`docs/GOVERNANCE.md`).

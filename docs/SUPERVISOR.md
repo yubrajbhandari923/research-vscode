@@ -195,7 +195,8 @@ Since 2.4 an operational proposal auto-applies only if `governance.tasks` allows
 * **Identity is self-declared** (`--as`, environment). It stops accidents and cooperative agents, not an adversarial process. Do not
   rely on human-only gates against hostile code.
 * No secrets belong in YAML. Prompts and reports are redacted for common credential patterns, which is best effort.
-* Nothing is merged, pushed or deleted automatically. Promotion to `main` stays in the existing review workflow.
+* Nothing is merged, pushed or deleted automatically. Promotion to `main` stays in the existing review workflow, unless a human has
+  authorized **automatic code promotion** for that plan (section 14), which can only fast-forward local `main`.
 
 ## 12. Compatibility
 
@@ -208,3 +209,62 @@ Manual Research OS workflows are unchanged when no plan is running. Supervision 
 `attempt_timeout_minutes`, `on_failure`, `enforce_completion`, `auto_apply_operational`, `max_auto_tasks`,
 `require_approval_for_scientific_changes`, `session_resume`, `context_max_chars`, `hpc_poll_seconds`, `max_hpc_resubmissions`.
 All live in `.research/config.yaml`; a plan's `execution:` block overrides them for that plan.
+
+## 14. Automatic code promotion (opt-in, unattended)
+
+For overnight plans where experiment 2 needs the code experiment 1 wrote. **Off by default; manual mode is unchanged.**
+
+**Two keys, both required, per plan:**
+1. The plan YAML declares intent: `execution: {auto_promotion: true}` (reviewable text; it enables nothing by itself).
+2. A human authorizes this run: `research plan autopromote PLAN authorize --note "why"` (approval PIN). The authorization is stored in the
+   run state with a fingerprint of the verification policy. If `auto_promotion.test_command`, `numerical_command`, `reviewer_profile`,
+   `protected_test_globs` or `promotion.main_branch` change afterwards the plan becomes **suspended** (fail closed) until re-authorized.
+   Agents cannot authorize, and cannot enable it through a proposal (changing `execution` is a scientific-class change that needs you).
+
+**Settings** (`.research/config.yaml`):
+```yaml
+auto_promotion:
+  test_command: pytest -q tests/integration      # required (or promotion.test_command)
+  numerical_command: pytest -q tests/numerical   # optional, run after the tests; "not_configured" is recorded when absent
+  reviewer_profile: codex                        # required: a configured agent profile that did NOT implement the work
+  require_distinct_reviewer: true
+  review_timeout_minutes: 120
+  max_file_mb: 5
+  protected_test_globs: ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"]
+```
+
+**What happens** (one transition per supervisor tick, one promotion at a time, in order):
+1. *Track.* Each verified task already commits its work on its experiment branch (`supervisor.commit_verified_work`). Those commits are
+   "pending" until they are in `main`. Already-integrated commits (ledger or ancestry) and no-op tasks (no commit exists) are never listed.
+2. *Trigger.* At an **experiment boundary** (every task of the experiment verified), or earlier when a **downstream task depends on that
+   code** (any transitive `depends_on` into another experiment). No promotion per task, so tests run once per boundary.
+3. *Prepare.* A candidate from the **current** `main` with only the pending commits cherry-picked (`promote/PROMO-n-…`). Identical to
+   `main` -> recorded as a no-op. Guards: promoted work may not modify/delete existing tests (new tests are fine), may not add files over
+   `max_file_mb`, never touches `.research/`. Datasets and results stay out of `main` (`supervisor.commit_exclude`).
+4. *Verify.* `test_command`, then `numerical_command`, in the candidate. Failure pauses the item; commands are never rewritten.
+5. *Independent review.* A fresh headless verifier on `reviewer_profile` is started and records `research promote review`. The preparer
+   (supervisor) and any implementing profile are refused. A human may review instead (`research promote review PROMO-n --verdict approve`).
+6. *Authorized integration.* The supervisor records a code-approval as `system/supervisor` (never as a person; the record names the
+   authorizing human and `mode: supervisor_authorized`) and runs `git merge --ff-only` into local `main`. Requires `main` to be exactly
+   the revision the candidate was tested on and its worktree to have no tracked changes.
+7. *Unblock.* Dependents wait while the upstream item is open. Their worktree is created from the integrated `main` SHA. An existing
+   worktree with no work of its own is fast-forwarded; one with its own (already promoted) commits gets a recorded merge of `main` into
+   the **experiment branch** (aborted and blocked on conflict). Nothing is ever rebased.
+
+**Code, not science.** Evidence for these candidates is informational: a negative or undecided hypothesis can promote valid code, a
+positive one is not "approved" by it. No finding or claim is created, changed or approved. Results/figures stay in the experiment
+worktree and ledger; `.research/supervisor/promotions/AP-n.json` records source/candidate/main SHAs, the worktree path and its figures so
+the Quarto guide keeps resolving them.
+
+**Failure = pause, not retry.** Test/numerical failure, requested changes, a moved or dirty `main`, a refused merge, a missing reviewer or
+an unexpected error pauses that item with the error persisted; later promotions queue behind it and dependents keep waiting. Nothing is
+retried blindly. A human fixes the cause and runs `research plan autopromote PLAN retry --item AP-001`, which abandons the old candidate
+(kept on disk) and prepares a new one from the current `main`, re-tested. `research plan autopromote PLAN status` shows everything;
+`revoke` returns to manual mode. State is persisted per item (`source`, `candidate_head`, `base_main`, `main_after`, tests, numerical,
+review, error, history); a restart adopts the open candidate (never a duplicate) and never integrates twice.
+
+Never done automatically: push, force, reset, rebase, delete branches/worktrees/untracked files, edit hypotheses, plans or tests.
+
+Limits: the PIN/authorization are accident guards, not defence against a hostile process with your OS user; the plan run waits for the
+final promotions before it reports `completed`; tests run inside the tick (a very long `test_command` delays other scheduling; keep
+`promotion.test_timeout_seconds` sensible); a live reviewer-agent launch needs a working headless profile (`research doctor`).

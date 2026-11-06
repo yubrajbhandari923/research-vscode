@@ -28,7 +28,7 @@ KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 PLAN_FIELDS = {"key", "id", "title", "objective", "success_criteria", "context", "question", "execution", "experiments",
                "tasks", "scope", "revision", "skills"}
 EXEC_FIELDS = {"mode", "max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "on_failure",
-               "require_approval_for_scientific_changes", "default_profile", "max_hpc_resubmissions"}
+               "require_approval_for_scientific_changes", "default_profile", "max_hpc_resubmissions", "auto_promotion"}
 EXP_FIELDS = {"key", "id", "title", "hypothesis", "motivation", "method", "success_criteria", "expected_outcome", "stop_conditions",
               "parameters", "metrics", "expected_artifacts", "planned_runs", "question", "tasks", "notes", "tags"}
 TASK_FIELDS = {"key", "id", "title", "description", "prompt", "depends_on", "agent", "inputs", "expected_artifacts", "acceptance",
@@ -167,6 +167,8 @@ def normalize(doc: Dict[str, Any], known: Optional[Any] = None) -> Dict[str, Any
         for k in ("max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "max_hpc_resubmissions"):
             if k in ex and (not isinstance(ex[k], int) or isinstance(ex[k], bool) or ex[k] < (0 if k == "max_hpc_resubmissions" else 1)):
                 errs.append(f"{where}.execution.{k} must be a positive integer")
+        if "auto_promotion" in ex and not isinstance(ex["auto_promotion"], bool):
+            errs.append(f"{where}.execution.auto_promotion must be true or false (it only declares intent; a human still authorizes the run)")
         scope = pl.get("scope", "partial")
         if scope not in ("full", "partial"):
             errs.append(f"{where}.scope must be full or partial")
