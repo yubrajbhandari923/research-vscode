@@ -25,7 +25,7 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import durability, planspec as PS, taskprompt
+from . import autopromote as AP, durability, planspec as PS, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
@@ -154,6 +154,35 @@ def plan_run(p: Project, ref: str, start_daemon: bool = True) -> Dict[str, Any]:
     return out
 
 
+def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, pin: Optional[str] = None, item: Optional[str] = None) -> Dict[str, Any]:
+    """Human-only control of unattended code promotion: authorize | revoke | retry | status. Authorization needs the approval PIN."""
+    st = _plan_state(p, ref)
+    if action != "status":
+        require_human(p, f"autopromote {action}")
+    rs = load_run(p, st["plan_id"])
+    if not rs:
+        raise ResearchError(f"{st['plan_key']} has not been run yet", hint=f"`research plan run {st['plan_id']}`")
+    if action == "status":
+        return AP.summary(p, st, rs)
+    if action == "authorize":
+        AP.check_ready(p, st)
+        from . import approval            # prompts for the PIN BEFORE the state lock is taken
+        approval.confirm(p, f"Authorize unattended code promotion for plan {st['plan_key']}", note, pin)
+    with _lock(p):
+        rs = load_run(p, st["plan_id"])
+        if action == "authorize":
+            out = AP.authorize(p, st, rs, note)
+        elif action == "revoke":
+            out = AP.revoke(p, st, rs)
+        elif action == "retry":
+            out = AP.retry(p, st, rs, item or "")
+        else:
+            raise ResearchError("action must be authorize, revoke, retry or status")
+        save_run(p, rs)
+    p.event("plan", st["plan_id"], "autopromote_" + action, f"plan {st['plan_key']}: automatic promotion {action}" + (f" ({note})" if note else ""))
+    return out
+
+
 def _set_state(p: Project, ref: str, state: str, only_from: Optional[tuple] = None) -> Dict[str, Any]:
     require_human(p, f"Changing a plan run to {state}")
     st = _plan_state(p, ref)
@@ -248,6 +277,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
             "counts": counts, "progress": f"{done}/{len(rows)}", "budgets": {**(rs.get("budgets") or {}), "max_total_attempts": c["max_total_attempts"],
                                                                              "max_wall_minutes": c["max_wall_minutes"]},
             "proposals": [x for x in list_proposals(p) if x.get("plan_key") == st["plan_key"] and x["status"] == "pending"],
+            "auto_promotion": AP.summary(p, st, rs) if rs else AP.mode(p, st, {}),
             "daemon": daemon_status(p), "enforced": {"completion": bool(c["enforce_completion"])}}
 
 
@@ -273,9 +303,10 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             c = cfg(p, st)
             _reconcile_attempts(p, st, rs, c, out)
             _poll_hpc(p, st, rs, c, out)
+            AP.step(p, st, rs, c, out)
             _schedule(p, st, rs, c, out)
             _apply_deferred(p, st, rs)
-            if _plan_finished(p, st, rs):
+            if _plan_finished(p, st, rs) and AP.settled(p, st, rs):
                 rs["state"] = "completed"
                 rs["history"].append({"ts": now_iso(), "event": "completed"})
                 p.event("plan", st["plan_id"], "supervisor_completed", f"plan {st['plan_key']} finished: every task verified")
@@ -322,6 +353,10 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
         if (spec.get("execution") or {}).get("requires_approval") and not rs["approvals"].get(tid):
             e["phase"] = "awaiting_approval"
             e["reason"] = "waiting for your approval to start (requires_approval)"
+            continue
+        wait = AP.gate(p, st, rs, tid)       # opt-in automatic promotion only; manual mode returns None
+        if wait:
+            e["phase"], e["reason"] = "waiting", wait
             continue
         if len(_active(rs)) >= int(c["max_parallel_agents"]):
             e["phase"] = "ready"

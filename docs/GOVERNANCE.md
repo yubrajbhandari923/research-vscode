@@ -92,3 +92,10 @@ research init --export                             # the current project's porta
 ```
 
 The file covers project, layout, Git remote, agents and model allocation, supervisor limits, governance, skills/hooks, the Python environment, HPC (as a reference to a cluster in your machine config, or described), the Scientist Guide and the VS Code workspace. It uses the same initializer as the wizard (`project-init --spec`), so both give the same result. It never contains a PIN or credentials and refuses to touch a folder that already holds a project. In VS Code: *Initialize Project* → **Edit YAML** (validate with inline errors, preview the tree, load/save a file, initialize).
+
+## 5. Unattended code promotion
+
+`research plan autopromote PLAN authorize` is a protected action: human only, approval PIN, rationale. Agents are refused, the YAML flag
+`execution.auto_promotion` alone does nothing, and any change to the verification commands or reviewer suspends the authorization.
+The supervisor's integration is recorded as `system/supervisor` naming the authorizing human; it is code-only, fast-forward-only, never
+approves scientific claims, and the manual `research promote approve|integrate` gates are unchanged. See SUPERVISOR.md section 14.

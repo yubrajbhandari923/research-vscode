@@ -18,6 +18,7 @@ human-confirmed step):
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from typing import Any, Dict, List, Optional
@@ -45,6 +46,26 @@ def _records(p) -> List[Dict[str, Any]]:
 def _append(p, rec: Dict[str, Any]) -> None:
     from .store import append_jsonl
     append_jsonl(_file(p), {"ts": now_iso(), **rec, **{k: v for k, v in p.author.items() if v}})
+
+
+_SUP: List[Dict[str, Any]] = []   # in-process only: pushed by autopromote while an authorised plan is being promoted; unreachable from an agent process
+
+
+@contextlib.contextmanager
+def supervisor_authority(authorization: Dict[str, Any]):
+    _SUP.append(authorization)
+    try:
+        yield
+    finally:
+        _SUP.pop()
+
+
+def _require_supervisor(p, c: Dict[str, Any]) -> Dict[str, Any]:
+    if not _SUP or (p.author or {}).get("author_type") != "system" or (p.author or {}).get("author_name") != "supervisor":
+        raise PolicyBlocked("Only the supervisor, under a human plan authorization, may do this")
+    if not c.get("auto"):
+        raise PolicyBlocked(f"{c['id']} was not prepared by automatic promotion; it needs a human approval")
+    return _SUP[-1]
 
 
 def _is_human(p) -> bool:
@@ -143,6 +164,8 @@ def _gates(p, c: Dict[str, Any]) -> Dict[str, Any]:
 
 def _evidence(p, c: Dict[str, Any]) -> Dict[str, Any]:
     exp = c.get("experiment")
+    if c.get("auto"):   # code correctness only: a negative or undecided hypothesis neither blocks nor is endorsed by promotion
+        return {"state": "info", "detail": "Automatic code promotion: the scientific status of the experiment is not assessed here and is not implied."}
     if not exp:
         return {"state": "none", "detail": "Not linked to an experiment."}
     fs = [f for f in p.list("finding") if exp in (f.get("links") or {}).get("supports", []) or exp in (f.get("supports") or [])]
@@ -211,7 +234,7 @@ def changes(p, ws: str) -> Dict[str, Any]:
 
 
 def prepare(p, ws: str, *, commits: Optional[List[str]] = None, paths: Optional[List[str]] = None, title: Optional[str] = None,
-            reason: Optional[str] = None) -> Dict[str, Any]:
+            reason: Optional[str] = None, auto: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if not p.location.linked:
         raise ResearchError("Promotion needs shared-ledger mode and experiment workspaces (`research ledger enable`).")
     if bool(commits) == bool(paths):
@@ -268,7 +291,7 @@ def prepare(p, ws: str, *, commits: Optional[List[str]] = None, paths: Optional[
     with p.tx():
         _append(p, {"op": "prepare", "promotion": pid, "workspace": ws, "experiment": s.get("experiment"), "title": title or f"Promote from {ws}",
                     "branch": branch, "base_main": main_head, "workspace_head": ws_head, "candidate_head": head, "selection": sel,
-                    "reason": reason, "source_branch": s.get("branch")})
+                    "reason": reason, "source_branch": s.get("branch"), **({"auto": auto} if auto else {})})
         p.event("promotion", pid, "prepared", f"{pid} prepared from {ws} on {branch}")
     W._remember_path(W.common_dir(top), pid, wt)
     return show(p, pid)
@@ -312,6 +335,8 @@ def review(p, pid: str, verdict: str, note: Optional[str] = None) -> Dict[str, A
         raise ResearchError("verdict must be approve, changes or comment")
     if verdict == "approve" and (p.author.get("author_name") == c.get("prepared_by") and p.author.get("author_type") == c.get("prepared_by_type")):
         raise PolicyBlocked("The preparer cannot review their own promotion", hint="Ask a different person or agent for an independent review.")
+    if verdict == "approve" and c.get("auto") and p.author.get("author_name") in (c["auto"].get("implementers") or []):
+        raise PolicyBlocked("The agent that implemented this work cannot review it", hint="Use a different reviewer profile (auto_promotion.reviewer_profile).")
     if verdict == "approve" and c["gates"]["tests"]["state"] != "passed":
         raise PolicyBlocked("Review approval needs passing tests for the current candidate", hint="`research promote verify` first.")
     with p.tx():
@@ -337,17 +362,9 @@ def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) 
     return show(p, pid)
 
 
-def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> Dict[str, Any]:
-    """The only step that moves `main`: a human-confirmed, fast-forward-only merge. Anything else is refused."""
-    if not _is_human(p):
-        raise PolicyBlocked("Only a human can integrate into main")
-    if not confirm:
-        raise PolicyBlocked("Integration changes main; repeat with --confirm after reading `research promote diff`")
-    from . import approval
-    approval.confirm(p, f"Merge {pid} into main", None, pin, rationale_required=False)
-    c = show(p, pid)
-    if c["state"] != "approved" or not c["classification"]["integration_ready"]:
-        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")
+def _ff_merge(p, c: Dict[str, Any], strict: bool = False) -> Dict[str, str]:
+    """The only code that moves `main`: `git merge --ff-only`. Anything unexpected is refused with nothing changed.
+    `strict` (automatic promotion): main must be exactly the revision the candidate was prepared and tested on."""
     main = _main_branch(p)
     top = _top(p)
     mw = _main_worktree(p)
@@ -357,18 +374,60 @@ def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> 
         raise ResearchError(f"The {main} worktree at {mw['path']} has uncommitted changes; nothing was merged.")
     cur_main = W._git(top, "rev-parse", main)
     head = c["gates"]["head"]
-    if cur_main != c["base_main"] and not _is_ancestor(mw["path"], cur_main, head):
+    if cur_main != c["base_main"] and (strict or not _is_ancestor(mw["path"], cur_main, head)):
         raise ResearchError(f"{main} moved since this candidate was prepared; prepare a new candidate from the current {main}.")
     import subprocess
     r = subprocess.run(["git", "merge", "--ff-only", c["branch"]], cwd=mw["path"], capture_output=True, text=True)
     if r.returncode != 0:
         raise ResearchError("Fast-forward merge was refused by git: " + (r.stderr or r.stdout).strip()[-300:] +
                             f" Nothing changed. Prepare a new candidate from the current {main}.")
-    commit = W._git(top, "rev-parse", main)
+    return {"commit": W._git(top, "rev-parse", main), "main_before": cur_main, "head": head}
+
+
+def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> Dict[str, Any]:
+    """Human-confirmed, fast-forward-only merge. Anything else is refused."""
+    if not _is_human(p):
+        raise PolicyBlocked("Only a human can integrate into main")
+    if not confirm:
+        raise PolicyBlocked("Integration changes main; repeat with --confirm after reading `research promote diff`")
+    c = show(p, pid)
+    if c["state"] != "approved" or not c["classification"]["integration_ready"]:   # before the PIN: a refused target is not an approval
+        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")
+    from . import approval
+    approval.confirm(p, f"Merge {pid} into main", None, pin, rationale_required=False)
+    m = _ff_merge(p, c)
     with p.tx():
-        _append(p, {"op": "integrate", "promotion": pid, "commit": commit, "main_before": cur_main, "head": head,
+        _append(p, {"op": "integrate", "promotion": pid, "commit": m["commit"], "main_before": m["main_before"], "head": m["head"],
                     "evidence": c["gates"]["evidence"].get("findings"), "experiment": c.get("experiment")})
-        p.event("promotion", pid, "promoted", f"{pid} merged into {main} at {commit[:8]}")
+        p.event("promotion", pid, "promoted", f"{pid} merged into {_main_branch(p)} at {m['commit'][:8]}")
+    return show(p, pid)
+
+
+def supervisor_approve(p, pid: str) -> Dict[str, Any]:
+    """Technical approval of CODE under a human plan authorization. Recorded as the supervisor (system), never as a person, and
+    only when tests and an independent review already passed. It says nothing about the science."""
+    c = show(p, pid)
+    auth = _require_supervisor(p, c)
+    g = c["gates"]
+    if g["tests"]["state"] != "passed" or g["review"]["state"] != "approved":
+        raise PolicyBlocked(f"{pid}: tests and an independent review must pass first")
+    with p.tx():
+        _append(p, {"op": "approve", "promotion": pid, "head": g["head"], "mode": "supervisor_authorized", "authorized_by": auth.get("by"),
+                    "note": "code only; no scientific claim is approved"})
+        p.event("promotion", pid, "approved", f"{pid} code-approved at {g['head'][:8]} under {auth.get('by')}'s plan authorization")
+    return show(p, pid)
+
+
+def integrate_authorized(p, pid: str) -> Dict[str, Any]:
+    c = show(p, pid)
+    auth = _require_supervisor(p, c)
+    if c["state"] != "approved" or not c["classification"]["integration_ready"] or (c.get("approval") or {}).get("mode") != "supervisor_authorized":
+        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")
+    m = _ff_merge(p, c, strict=True)
+    with p.tx():
+        _append(p, {"op": "integrate", "promotion": pid, "commit": m["commit"], "main_before": m["main_before"], "head": m["head"],
+                    "mode": "supervisor_authorized", "authorized_by": auth.get("by"), "experiment": c.get("experiment")})
+        p.event("promotion", pid, "promoted", f"{pid} fast-forwarded into {_main_branch(p)} at {m['commit'][:8]} (authorized by {auth.get('by')})")
     return show(p, pid)
 
 

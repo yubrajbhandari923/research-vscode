@@ -444,7 +444,7 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
     return _register(p, wt, br, base_rev, exp)
 
 
-def ensure_for_experiment(p, experiment: str) -> Dict[str, Any]:
+def ensure_for_experiment(p, experiment: str, base: Optional[str] = None) -> Dict[str, Any]:
     """The experiment's workspace: the registered one, else an orphaned worktree on its branch (a supervisor killed between
     `git worktree add` and the registration leaves one), else a new one. Never fails because the branch already exists."""
     from .schema import normalize_id
@@ -458,7 +458,7 @@ def ensure_for_experiment(p, experiment: str) -> Dict[str, Any]:
     for w in worktrees(top or p.root):
         if w["branch"] and w["branch"].startswith(f"exp/{exp}") and os.path.realpath(w["path"]) != os.path.realpath(top or ""):
             return attach(p, w["path"], exp)
-    return create(p, exp)
+    return create(p, exp, base=base)
 
 
 def attach(p, path: str, experiment: Optional[str] = None) -> Dict[str, Any]:
