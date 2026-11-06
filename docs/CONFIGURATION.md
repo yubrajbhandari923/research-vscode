@@ -49,6 +49,13 @@ Clusters (`hpc.clusters.*`), agent profiles and strategies (`agents.profiles.*`,
 sandbox profiles (`sandbox.profiles.*`) are configured in YAML and diagnosed by `research config check`; the Control Center shows their
 effect (for example, the sandbox profile table on Work) but does not yet edit them with forms.
 
+## Supervisor, promotion and Telegram settings
+
+`auto_promotion.*`, `supervisor_assistant.*`, `intervention.*` and `notifications.*` are sparse: a project's `config.yaml`
+holds only what you changed, merged over the defaults at load, so upgrading needs no edits. They appear under Settings and in
+`research config`. The Telegram token and chat id are machine-level (`~/.config/research-os/telegram.json`, mode 0600), never in the
+project. See [SUPERVISOR.md](SUPERVISOR.md) sections 14-18.
+
 ## Layout and providers (added with Initialize Project)
 
 ```yaml
