@@ -24,6 +24,11 @@ Nothing is pushed for you; add a remote in the wizard (or later) and push from `
 8. Want a different agent for the next step? Dispatch the same task with another provider; the history carries over.
 9. **Guide** tab: tell the science. Results an independent review marked *supported* (or that you star) are logged into your Scientist Guide, a Quarto book on `main`; ask an agent for a short draft (within your word limits), add citations in `references.bib`, then push to publish it as a website. Details: `docs/GUIDE.md`.
 
+10. **Plans, the supervisor and approvals** (CLI-first): `research plan yaml validate FILE`, then `research plan run PLAN`; `research supervisor status` shows
+    progress and says HALTED when a plan cannot continue. Steer with `research supervisor instruct T-12 "…"`. Protected actions (approving proposals, promotion,
+    scientific changes) ask for your approval PIN on the terminal; the first one offers to create it. Optional: `research telegram setup` for alerts and chat commands.
+    `./research` is linked in `main/` so you can run it from there. Details: [SUPERVISOR.md](SUPERVISOR.md), [GOVERNANCE.md](GOVERNANCE.md).
+
 CLI equivalents: `research project-init FOLDER --agents claude,codex --apply`, `research dispatch implementer T-001 --profile codex`,
 `research execution list`, `research provider list`. Details: `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`.
 

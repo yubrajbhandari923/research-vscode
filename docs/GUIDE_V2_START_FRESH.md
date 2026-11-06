@@ -32,7 +32,7 @@ Old runs, metrics and artifacts are not imported; run directories and files you 
 ## What is the same
 
 The record types and workflow (question → experiment → runs → synthesis → findings → decisions), the `research` command line, the
-MCP server and the Scientist Guide work as before. Software version (2.0.0), project format (2) and storage schema (3) are three
+MCP server and the Scientist Guide work as before. Software version (2.6.0 at the time of writing), project format (2) and storage schema (3) are three
 separate numbers; only the format decides whether a project can be opened.
 
 ## Recovery still works
