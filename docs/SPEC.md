@@ -11,7 +11,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 
 ---
 
-## 1.0.0 architecture notes
+## Architecture notes
 
 - **Crash consistency.** `durability.py`: `Project.tx()` takes the project write lock, journals each canonical file (full prior content, or prior length for appends) before the first write, commits SQLite, then marks the journal committed. Opening a project recovers: an uncommitted journal is rolled back and the index rebuilt; a committed one is dropped. Recovery failures leave `.transaction.json` in place. Process-crash safe, not a defence against raw edits or unreliable network filesystems.
 - **Execution ownership.** `execution.py`: dispatch for a task writes a single-use execution record and returns a wrapper command. The wrapper takes `.research/locks/<task>.execution` non-blocking and passes the descriptor to the provider, so the lock outlives a killed wrapper while the provider runs. States: prepared, launched, running, completed, failed, unknown.
@@ -59,7 +59,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 19. [Build, packaging and release](#19-build-packaging-and-release)
 20. [Repository layout](#20-repository-layout)
 21. [Design rationale](#21-design-rationale)
-22. [Known issues and limitations](#22-known-issues-and-limitations)
+22. [Limitations](#22-limitations)
 23. [Roadmap](#23-roadmap)
 
 ---
@@ -130,7 +130,7 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | **Verification gates** | Task checks (command, file, metric threshold) gate `task done`; agents can't mark findings supported — only an independent review can | 7.5 |
 | **Multi-agent coordination** | Task claims (no two agents on one task), progress notes, release/hand-off, stale-task detection | 7.6 |
 | **Roles, profiles, dispatch** | Roles (planner, implementer, verifier, analyst) map to agent CLIs (claude, codex, gemini, …); dispatch writes a brief and starts the agent in a terminal | 7.7 |
-| **MCP server** | `research mcp`: 33 typed tools for any MCP client; `research mcp install` registers it for Claude Code, VS Code, Cursor, Gemini (and prints the Codex command) | 7.8 |
+| **MCP server** | `research mcp`: 44 typed tools for any MCP client; `research mcp install` registers it for Claude Code, VS Code, Cursor, Gemini (and prints the Codex command) | 7.8 |
 | **Project skills** | Import skills from a folder or git repo (e.g. ponytail, NVIDIA medical-AI skills), update, remove, always-on / applies-to settings, exposed in `.claude/skills` and `.agents/skills`, suggested per task | 7.9 |
 | **Allocation strategies** | Named, switchable model-allocation policies (`sonnet_first`, `opus_first`, `haiku_max`, `sonnet_heavy`, custom): levels → profiles, deterministic routing, retries, escalation; one resolver for every dispatch path; per-dispatch snapshot for provenance | 7.7, 10.x |
 | **Tiered orchestration** | Routing by verifiability, frozen acceptance tests, bounded attempts, parent/child delegation, per-task model pins, task contracts and `orchestrate verify` | 10.x |
@@ -216,7 +216,7 @@ which order, and how to tell when it is done. A task may reference the question 
 Research Panel is deliberately **not** any of the following:
 
 - a W&B or MLflow clone
-- a workflow orchestrator
+- a general workflow orchestrator (the supervisor runs research plans with verification and approval gates; it is not an arbitrary DAG engine)
 - a cloud SaaS
 - a Jupyter or Obsidian replacement
 - a chatbot
@@ -251,6 +251,10 @@ Research Panel is deliberately **not** any of the following:
 │    orchestrate.py  routing, frozen tests, attempts, contracts, verify, pins, tuning        │
 │    harness.py · hooks.py  project references and approved executable hooks                │
 │    usage.py     usage ledger        expcheck.py  experiment check                          │
+│    plans.py · planspec.py   plans, tasks, YAML plan schema                                 │
+│    supervisor.py · supervisord.py  deterministic plan supervisor and its daemon (no LLM)   │
+│    autopromote.py · promotion.py  gated code promotion into main                           │
+│    governance.py · approval.py · intervene.py · notify.py  proposals, PIN, steering, Telegram │
 │    guide.py · evidence.py · setup_agents.py · fullreport.py · agentsmd.py     │
 │    configfile.py layered sparse config   localbin.py  .research/bin    yamlio.py           │
 │    search.py · compare.py · report.py                 gitinfo.py (incl. opt-in snapshot)  │
@@ -284,6 +288,8 @@ Research Panel is deliberately **not** any of the following:
 |---|---|---|
 | `research.rpc` (one per VS Code window) | lifetime of the window; restarted automatically if it dies (up to 2 quick retries) | yes |
 | `research` CLI invocation | one command | yes |
+| `research.supervisord` (one per project with a running plan, or when Telegram is enabled) | until `supervisor stop`; reopens the project each pass, so settings apply live | yes |
+| agent CLI sessions (Claude Code, Codex, Antigravity) started by dispatch or the supervisor | one attempt, in the task's worktree | only through `research` commands |
 | `research.runner` (local detached, or inside a SLURM job) | one run | **no**: run directory files only |
 | Python code inside a run calling `research.log_metric()` | user code | **no** when `RESEARCH_RUN_DIR` is set |
 
@@ -596,6 +602,9 @@ columns, not rows in `links`.
     ├── hooks/results.jsonl           # every harness hook execution (append-only)
     ├── orchestration/                # T-001.json per-task ledger (frozen tests, attempts, contract, override, dispatches); tuning-EXP-001.json
     ├── hpc/                          # bundles/ (ignored), incoming/, cluster state; see §14C
+    ├── supervisor/                   # plan runtime state, daemon.json / daemon.lock / daemon.log, proposals, prompts/, promotions/AP-n.json, interventions/INT-n.json (SUPERVISOR.md)
+    ├── promotions.jsonl              # append-only promotion candidates and gates (§14F)
+    ├── orchestration/executions/     # per-execution output; execution records and locks (.research/locks/) for supervised and dispatched tasks
     ├── bin/                          # project-local CLI launcher (per machine; git-ignored)
     ├── questions/Q-001.md            # mirrors (Markdown + YAML front-matter)
     ├── experiments/EXP-001.md
@@ -622,9 +631,12 @@ columns, not rows in `links`.
     └── cache/                        # research.db backups, dispatch/ briefs + *.policy.json snapshots, removed-skills/, removed-agents/
 ```
 
+Machine-level files (never in the project, git or the audit log): `~/.config/research-os/config.yaml` (optional machine config), `approval.json` (PIN verifier, scrypt) and
+`telegram.json` (bot token and chat id, mode 0600), all in the directory of `$RESEARCH_CONFIG` when set.
+
 Outside `.research/`, the tool writes only when asked: `AGENTS.md` (managed block), per-skill symlinks in
 `.claude/skills/` and `.agents/skills/` (config `skills.link`), and MCP registrations from `research mcp install`
-(`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`), and, from `research setup agents --apply`, managed `.claude/agents/research-*.md`.
+(`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`), and, from `research setup agents --apply`, managed `.claude/agents/research-*.md`. Supervised work happens in the experiment worktrees, and `./research` is linked in the main checkout (git-excluded).
 
 ### 4.2 What is canonical
 
@@ -760,10 +772,8 @@ Error is U-shaped in alpha …
   `syntheses`, `reviews`, `runs`, `metrics`, `artifacts`, `links`, `events`, `mirrors(path, entity_type, entity_id, hash, mtime, size)`.
 - **Indices:** `runs(experiment_id)`, `metrics(run_id)`, `metrics(experiment_id)`, `artifacts(run_id)`,
   `artifacts(experiment_id)`, `links(dst_id)`, `events(ts)`, `tasks(plan_id)`, `tasks(status)`, `plans(status)`, `reviews(target_id)`.
-- **Schema history:** v1 is the original entities. v2 adds `plans` and `tasks` (and `PLAN` / `T` counters). Opening a v1
-  project with this tool migrates it in place. The DDL declares foreign keys on the new tables, but `foreign_keys=OFF`, so
-  integrity is enforced by `plans.py`. v3 adds `tasks.claimed_by/claimed_at/skills/checks`, `plans.skills` and the
-  `reviews` table. Migration steps can be callables; v3's column additions check `PRAGMA table_info` first, because a
+- **Schema:** the index schema is version 3 (`schema.SCHEMA_VERSION`), built from `ENTITIES`/DDL. The DDL declares foreign keys on `plans` and `tasks`, but `foreign_keys=OFF`, so
+  integrity is enforced by `plans.py`. Migration steps can be callables; column additions check `PRAGMA table_info` first, because a
   fresh database already gets every column from `ENTITIES`.
 - **Connection pragmas:** `journal_mode=DELETE` (WAL is unsafe on NFS and Lustre), `busy_timeout=15000`, `foreign_keys=OFF`
   (integrity is enforced in the services layer). Autocommit, with explicit `BEGIN IMMEDIATE` transactions that nest by depth counting.
@@ -899,7 +909,7 @@ queued/running (SLURM) ──(left queue; sacct TIMEOUT/OOM/NODE_FAIL/…)──
 
 - Statuses move freely: `active` · `completed` · `blocked` · `abandoned` (`research plan update --status`, `research mark`, or the UI).
 - Setting `completed` through `update_plan` stamps `completed_at` if it is not given.
-- Plan status is **not** derived from task status. Completing every task does not complete the plan.
+- Plan status is **not** derived from task status. Completing every task does not change the plan's `status`; a supervised run's completion is tracked separately (§6.8).
 - The newest `active` plan (by `created_at`) is the one shown on Research Home (§9.4).
 
 ### 6.7 Task
@@ -918,11 +928,23 @@ todo + all depends_on done  ⇒  "ready"  (derived; never stored)
 - **`verify` with checks:** `research task verify` moves a `verify` task to `done` when all checks pass, or back to
   `running` when any fails.
 - Entering `running` stamps `started_at`, and entering `done` stamps `completed_at` (unless the caller passes them).
-- `verify` means "work finished, awaiting verification". It surfaces as an attention item on Research Home. Nothing
+- `verify` means "work finished, awaiting verification". It surfaces as an attention item on Research Home. Outside supervised plans nothing
   moves tasks into `verify` automatically; a verifier agent is dispatched to it with `research dispatch verifier T-…`.
 - **Next ready task** (`get_next_ready_task(plan_id=None)`): walks tasks in creation order (optionally within one plan)
   and returns the first `todo` task whose dependencies are all `done`, with resolved `dependencies[]` and `is_ready`.
   Returns `None` if there is none.
+
+### 6.8 Supervised plans and tasks
+
+A plan in the supervisor's care has a **run state** (`running` · `paused` · `stopped` · `completed`) and a **health** derived from it, which is what status commands and the
+Plans page show: `progressing` (something is moving), `waiting_for_approval`, **`halted`** (running, nothing moving, something waits for a human), `completed`, `paused`, `not_run`.
+Health never claims "running" for a plan that cannot continue; it names the blocking tasks and why.
+
+Each supervised task has a **phase** kept in the supervisor's state (not the task's `status`): `waiting` · `ready` · `awaiting_approval` · `running` · `waiting_hpc` · `verifying` ·
+`repair_pending` · `attention` · `blocked` · `verified` · `retired` (full list: `supervisor.PHASES`). `attention` and `blocked` need a human (`supervisor resolve|approve|accept`, or
+`supervisor instruct` to steer in words, §14G). Attempts, budgets (`max_attempts_per_task`, `max_total_attempts`, `max_wall_minutes`, `attempt_timeout_minutes`) and failure categories
+(`missing_prerequisite`, `role_contradiction`, `incomplete_deliverable`, ...) are recorded per attempt; verification results are kept in `verification_history`, never overwritten.
+When all of a plan's tasks are verified the plan completes and its run state becomes `completed` (the plan's own `status` field is still not derived; §6.6).
 
 ---
 
@@ -1005,7 +1027,6 @@ Every command the block names exists and is covered by a test that parses each `
 | `research task next` / `start` / `note` / `complete` | task lifecycle (`complete` is an alias of `done`) |
 | `research search "…"` | retrieval over all records (§9.6) |
 
-The v0.1.0 block also carried the full 9-step loop (UNDERSTAND → … → STOP/PROPOSE) and the complete list of hard rules.
 The step-by-step protocol now lives in the `run-experiment` and `reproduce-paper` skills.
 
 ### 7.4 Default skills (`.research/skills/`)
@@ -1055,7 +1076,7 @@ research finding review F-003 --verdict supported|contradicted|needs_work --note
 | Record | a `review` record `F-…/R<n>`; events `reviewed` |
 
 Humans can always set `supported` directly (the UI is always human, §7.1). Known gap by design: a hand edit of a finding's
-mirror file is imported as a human edit (§22.2).
+mirror file is imported as a human edit (§22.1).
 
 **Attention items** (`verification.attention_items`, shown on Research Home and in `current.md`):
 `verification_failed` (latest check run of an unfinished task failed), `reviewer_disagrees` (latest review is
@@ -1074,16 +1095,16 @@ Several agents (and you) work from one task queue without stepping on each other
 
 ### 7.7 Roles, profiles and dispatch
 
-Human-in-the-loop orchestration: the system prepares the work and starts an agent session; you watch it in a terminal.
-Nothing runs unattended, and nothing calls model APIs directly.
+Dispatch prepares the work and starts an agent session that you watch in a terminal; nothing calls model APIs directly (agents are provider CLIs). Unattended execution exists only under the supervisor (§14G), which dispatches the same way and is bound by the same gates.
 
 ```yaml
 agents:
   default_profile: claude
-  roles: {planner: null, implementer: codex, verifier: claude, analyst: null}   # null → default_profile
+  roles: {planner: null, implementer: null, verifier: null, analyst: null}   # null → default_profile (set e.g. implementer: codex)
   profiles:
     claude: {command: claude, args: [], model: null, model_flag: --model, prompt_flag: null}
     codex:  {command: codex,  args: [], model: null, model_flag: -m,      prompt_flag: null}
+    agy:    {command: agy,    args: [], model: null}                          # Antigravity (adapter: headless --mode accept-edits, native resume)
     gemini: {command: gemini, args: [], model: null, model_flag: -m,      prompt_flag: -i}
     # used by the built-in allocation strategies (levels fast / balanced / deep); swap a model here, not in routing
     claude-fast:     {command: claude, args: [], model: claude-haiku-5-5,  model_flag: --model, headless_args: [-p, --output-format, json], usage_parser: claude_json}
@@ -1109,6 +1130,11 @@ agents:
   agent in the current terminal (or prints the command); `research task dispatch T-…` picks the role from the task;
   `research agents` lists profiles, roles and availability. **VS Code:** *Dispatch to Agent…* picks role and profile,
   then opens a terminal named `🤖 profile/role · target` with the env set.
+- **Providers and execution records.** `providers.py` is the only place that knows each CLI's flags (`claude`, `codex`, `agy`, `custom`) and declares capabilities
+  (interactive, headless, model, effort, structured output, usage, resume, MCP, instructions file) so no caller assumes parity. A task dispatch writes a single-use
+  **execution record** (`execution.py`) and a wrapper that takes `.research/locks/<task>.execution`; `research execution list|show|logs|stop|retry` operate on it. A stopped
+  or failed task can continue with another provider in the same worktree from a portable context document (`supervisor continue`, `agents.handoff`; refused while the
+  previous process may still run). Details: [PROVIDERS.md](PROVIDERS.md).
 - **Allocation strategies (opt-in).** `orchestration.active_strategy` (or `--strategy NAME` for one dispatch) switches profile choice
   from the `roles` map to `strategy.select()`, the single resolver used by `research dispatch`, `orchestrate route|dispatch|delegate`
   and `guide refresh`. A strategy (`orchestration.strategies.<name>`, merged along `extends:`; dicts merge key by key, lists and scalars
@@ -1139,11 +1165,11 @@ agents:
   Each call runs with stdout redirected to stderr (stdout belongs to the protocol) and regenerates `current.md` after
   mutating tools. Results are text (JSON for structured data). `ResearchError`s, including policy blocks, come back as
   `isError: true` results with the message, hint and exit code; unknown tools are JSON-RPC errors.
-- **Tools (33):** `research_current`, `research_search`, `research_show`; `task_next`, `task_context`, `task_start`,
+- **Tools (44):** `research_current`, `research_search`, `research_show`; `task_next`, `task_context`, `task_start`,
   `task_note`, `task_done`, `task_block`, `task_release`, `task_verify`, `task_create`, `plan_create`;
   `question_create`, `experiment_create`, `run_start` (always detached; poll `run_status`), `run_status`, `run_logs`,
   `runs_compare`, `metric_log`, `artifact_register`, `experiment_synthesize`; `finding_create` (always preliminary),
-  `finding_review`; `checkpoint_create`; `skills_list`, `skill_show`; `dispatch_prepare` (follows the active strategy); `report_full`; `doctor`; `hpc_doctor`, `hpc_sync`, `hpc_bundle`. There are no MCP tools yet for strategies, hooks, contracts, usage or experiment check (CLI/RPC only). Read-only tools carry
+  `finding_review`; `checkpoint_create`; `skills_list`, `skill_show`; `dispatch_prepare` (follows the active strategy); `report_full`; `doctor`; `hpc_doctor`, `hpc_sync`, `hpc_bundle`. Supervised-agent and governance tools: `agent_report` (progress, artifacts, metrics, runs, HPC jobs, problems, finish), `agent_propose` (a plan change as a partial YAML patch), `plan_status`, `experiment_propose` (agents may not create experiments; a human approves with the PIN). Scientist Guide: `guide_highlights`, `guide_draft_check`. There are no MCP tools yet for strategies, hooks, contracts, usage or experiment check (CLI/RPC only). Read-only tools carry
   `annotations.readOnlyHint`.
 - **Install:** `research mcp install [--client claude|vscode|cursor|gemini|codex]…` (default claude + vscode) merges a
   `research` entry (`command: research, args: [mcp]`) into `.mcp.json` (`mcpServers`), `.vscode/mcp.json` (`servers`),
@@ -1556,10 +1582,10 @@ are not counted as mutating.)
 |---|---|
 | `guide init [--dry-run]\|status\|highlights\|star F-…\|unstar F-…\|log [F-…]\|cite list\|check\|add\|draft [F-…] [--run]\|draft done [F-…]\|draft check\|publish` | Scientist Guide (see `docs/GUIDE.md`). `init` scaffolds the book on the main checkout (never overwrites) and the publish workflow. Important results = `guide.highlights` (supported · starred · all) plus every starred finding (`highlight` tag); `log` adds one entry per result to `results.qmd` (never rewritten; a deleted entry stays deleted). `draft` prepares a bounded agent session (limits in the brief, baseline in `provenance/draft.json`) and never runs it without `--run`; `draft check` reports overruns; `draft done` records what was drafted. `cite add` appends validated BibTeX; a cited key missing from `references.bib` is a validation error. `claim\|figure\|section\|validate\|coverage\|quarto …\|chapter add\|review …` are the provenance, build and review commands. |
 | `setup agents [--provider claude] [--preset scientific] [--apply] [--approve ponytail] [--probe] [--strategy NAME]` | Dry run by default. Writes managed `.claude/agents/research-*.md` (per strategy level when a strategy is active; managed legacy tier files are moved to `.research/cache/removed-agents/`), copies first-party skills, enables `orchestration`. Never installs MCP servers, plugins or hooks. |
-| `orchestrate route T-… [--tier LEVEL] [--strategy S] [--profile P] [--agent-model M] [--available M…]` | Legacy (no strategy): tier/model by verifiability, with fallback (never silently below Opus for Opus work). With a strategy: the resolver's decision (level, profile, model, reason, overrides). |
+| `orchestrate route T-… [--tier LEVEL] [--strategy S] [--profile P] [--agent-model M] [--available M…]` | Without a strategy (tier mode): tier/model by verifiability, with fallback (never silently below Opus for Opus work). With a strategy: the resolver's decision (level, profile, model, reason, overrides). |
 | `orchestrate freeze T-… FILES` / `correct-test T-… FILE --reason … --tier L` | Hash the acceptance tests; `task done` is blocked if they differ. A correction needs a logged reason and is refused for any level that implemented (or is the strategy's checked-work level for) the task, and for legacy `haiku`. |
 | `orchestrate dispatch T-… [--run] [--headless] [--allow-unfrozen REASON] [--strategy S] [--tier L] [--profile P] [--agent-model M]` | Runs approved `preflight` hooks (a required failure blocks), then prepares/starts the routed session. Frozen tests are required for any implementer that is not the strategy's coordinator level (legacy: Haiku). The brief carries the task contract and a file-boundary baseline. `--headless` runs non-interactively and records provider-reported usage. |
-| `orchestrate attempt T-… --tier L --outcome pass\|fail [--category C] [--note N] [--usage JSON]` | Bounded retries from the strategy's `attempts` / `escalate` / `max_escalations` (legacy: `limits`). Returns retry / escalate / block / integration_review / restore_tests. `--usage` is the manual usage fallback. |
+| `orchestrate attempt T-… --tier L --outcome pass\|fail [--category C] [--note N] [--usage JSON]` | Bounded retries from the strategy's `attempts` / `escalate` / `max_escalations` (tier mode: `limits`). Returns retry / escalate / block / integration_review / restore_tests. `--usage` is the manual usage fallback. |
 | `orchestrate delegate T-parent "title" [--tier L] [contract flags]` | Child task; parent gains it in `depends_on`. Under a strategy the level defaults to the strategy's routing of the child as specified (checkable → worker, otherwise coordinator level). |
 | `hook list\|add\|enable\|disable\|approve\|revoke\|run\|results` | Project harness hooks (`harness.hooks`, `hooks_approved`); stages preflight / post_implementation / pre_experiment / post_experiment; human approval required. |
 | `orchestrate contract\|verify\|pin T-…` | Delegation contract in the task ledger; deterministic verification with diagnostics (`--record` logs an attempt); per-task model pin (`--level/--profile/--agent-model/--clear`). `dispatch --headless` records provider-reported usage. |
@@ -1576,7 +1602,7 @@ are not counted as mutating.)
 
 | `evidence bind F-… --run RUN-… --metric NAME [--step N\|--select first\|last\|min\|max] [--claim X] [--unit U] [--factor K] [--rel-tol T] [--partition design\|validation\|test] [--artifact A-…] [--supersedes F-…/B1]` | Bind a number to a recorded metric. Without `--claim` the value is **read** from the evidence. With `--derive OP --input RUN:metric[@step]…` it binds a whitelisted calculation (`mean sum min max std difference abs_difference ratio relative_improvement relative_change`); no free-form expressions. |
 | `evidence verify F-…` / `value RUN-… --metric NAME` | Re-read live records: `verified \| mismatch \| missing \| stale \| unverifiable` per binding. `value` prints one resolved metric. |
-| `evidence suggest F-…` / `status` | Legacy migration aid: unbound numbers in a statement; project overview incl. historical integrity warnings. |
+| `evidence suggest F-…` / `status` | Unbound numbers in a statement; project overview incl. historical integrity warnings. |
 | `evidence provenance RUN-…` | Commit, dirty state, seeds, partitions, lockfile hashes, units, and explicit limitations. |
 | `evidence artifact A-… [--deep]` / `pin A-…` | Integrity vs the registered hash (`ok \| modified \| missing \| unavailable \| unhashed \| possibly_modified \| directory`); `pin` appends a first-seen hash for unhashed large files. Registered metadata is never rewritten. |
 | `source add --doi\|--arxiv\|--url` / `mark SRC-… [--identity-verified] [--examined --locator …] [--finding F-… --verdict supports\|partially_supports\|does_not_support]` / `list` | Offline literature records with identity, examination and per-finding support kept separate. |
@@ -1676,15 +1702,14 @@ State: `.research/hooks/results.jsonl`, `.research/usage.jsonl`, `.research/guid
 | `get_plan` / `get_task` | `{id}` |
 | `next_task` | `{plan_id?}` → next ready task or `null` |
 | `task_context` | `{id}` → §9.5 |
-| `start_task` | `{id, assigned_role?}` |
+| `start_task` | `{id, assigned_role?, force?}` |
 | `complete_task` | `{id, result?, completed_by?, artifacts?}` |
 | `block_task` | `{id, blockers}` |
-| `start_task` (extended) | `{id, assigned_role?, force?}` |
 | `release_task` · `task_note` · `verify_task` · `task_brief` | `{id, note?}` · `{id, text}` · `{id}` · `{id}` → Markdown brief |
 | `review_finding` | `{id, verdict, notes?, confidence?}` |
 | `search` · `compare_runs` · `report` | `{query, type?, limit?}` · `{a, b}` · `{scope?, fmt?}` |
 | `agents` · `dispatch` · `mcp_install` | — · `{role?, target?, objective?, profile?, model?, instructions?}` (follows the active strategy) · `{clients?}` |
-| `agent_setup` | → everything the Agent setup page renders: `strategy` (null = legacy) with resolved levels and validation, `strategies[]`, `harness` + warnings, `hooks[]` (approval, last result), `tasks[]` (route, pin, contract, checks, frozen, attempts), `experiments[]` (state + last validation), `usage` (by strategy), `skills[]`, `mcp` (per client + other servers), `orchestration` (limits, managed agent files), `profiles[]` |
+| `agent_setup` | → everything the Agent setup page renders: `strategy` (null = tier mode) with resolved levels and validation, `strategies[]`, `harness` + warnings, `hooks[]` (approval, last result), `tasks[]` (route, pin, contract, checks, frozen, attempts), `experiments[]` (state + last validation), `usage` (by strategy), `skills[]`, `mcp` (per client + other servers), `orchestration` (limits, managed agent files), `profiles[]` |
 | `strategy_use` | `{name, dry_run?}` → `{previous, active, warnings}`; refuses an invalid strategy |
 | `setup_agents` | `{apply?, strategy?}` → the `research setup agents` report |
 | `hook_approve` · `hook_toggle` · `hook_run` | `{names?}` (human author only) · `{name, enabled}` · `{name}` |
@@ -1715,6 +1740,24 @@ State: `.research/hooks/results.jsonl`, `.research/usage.jsonl`, `.research/guid
 | `log_metric` | `{name, value, run?, experiment?, step?, unit?}` |
 | `write_context`, `agents_md`, `sync`, `rebuild` | maintenance |
 | `events` | `{limit}` |
+| `plan_yaml_template` · `plan_yaml_validate` · `plan_yaml_diff` · `plan_yaml_apply` · `plan_yaml_export` | `{}` · `{text}` · `{text}` · `{text, dry_run?}` · `{plan, experiment?, task?, partial?}` — YAML plans (SUPERVISOR.md) |
+| `plan_control` · `plan_promote` · `promotion_hint` | `{plan, action: run\|pause\|resume\|stop, cancel_agents?}` · `{plan, experiment?}` · `{plan}` |
+| `supervisor_status` · `supervisor_daemon` · `supervisor_task` | `{plan}` (phases, attempts, budgets, `health`, concurrency) · `{action: status\|start\|stop\|reload\|restart}` · `{task, action: approve\|accept\|resolve\|…, note?, reason?, attempts?}` |
+| `attempt_detail` · `provider_status` · `provider_default` · `provider_mcp` | `{task, attempt?}` · `{task?}` · `{name}` · `{name, apply?}` |
+| `executions` · `execution_show` · `execution_logs` · `execution_start` · `execution_stop` · `execution_retry` | execution records (§7.7): `{task?}` · `{id}` · `{id}` · `{id}` · `{id}` · `{id, profile?, model?}` |
+| `freeze_tests` | `{task, paths}` |
+| `interventions` · `intervention_request` · `intervention_action` | `{task?}` · `{task, message, interrupt?}` · `{id, action: approve\|reject\|cancel, note?, pin?}` (SUPERVISOR.md §17) |
+| `debug_run` · `debug_latest` | `{plan}` diagnose a halt · latest diagnosis |
+| `telegram_status` · `telegram_set` · `telegram_test` · `telegram_clear` | `{}` · `{token, chat_id?, discover?}` · `{}` · `{}` (the token is never returned) |
+| `approval_set_pin` · `proposal_decide` | `{new, old?}` · `{id, approve, note?, pin?, rev?}` (GOVERNANCE.md) |
+| `init_preview` · `init_apply` · `init_environment` · `new_experiment_preview` | Initialize Project wizard: `{spec}` · `{spec}` · `{}` · `{spec}` |
+| `init_yaml_template` · `init_yaml_check` · `init_yaml_apply` · `init_yaml_export` | YAML initialization mode: `{}` · `{text}` · `{text}` · `{}` |
+| `setup_preview` · `setup_apply` · `setup_environment` · `env_check` · `env_probe` | agent and Python environment setup: `{spec}` · `{spec}` · `{}` · `{packages?, python?}` · `{python, packages?}` |
+| `skill_install` · `skill_toggle` · `skills_upgrade` · `pack_set` | `{names, force?}` · `{name, enabled}` · `{}` · `{id, enabled?, optional?}` |
+| `hook_install` · `hook_install_starters` | `{names?, approve?}` · `{approve?}` |
+| `hpc_discover` · `hpc_init` · `hpc_test` · `hpc_submit` | HPC (§14C): `{}` · `{cluster?, dry_run?}` · `{ssh_host, workspace_root?, python?, …}` · `{experiment, command, cluster?, dry_run?, approve?, resources?}` |
+| `workspace_info` | `{}` — shared-ledger and workspace state (§14D) |
+| `guide_status` · `guide_init` · `guide_highlight` · `guide_log` · `guide_draft` · `guide_draft_done` · `guide_validate` · `guide_build` · `guide_preview` · `guide_chapter_add` · `guide_cite_list` · `guide_cite_add` | Scientist Guide (GUIDE.md): the CLI `guide …` operations as RPC |
 
 A params object may carry `author: {agent?, model?, author_type?}` to override authorship for that request.
 
@@ -1796,7 +1839,7 @@ One panel per object; re-opening reveals the existing panel. Alt/Cmd/Ctrl-click 
 | Panel | Sections |
 |---|---|
 | **Research Home** (`Cmd/Ctrl+Alt+R`, status-bar click, Overview's **Resume Project**; panel title "Research Home · &lt;project&gt;") | Rendered by `render/home.ts` from the `home` RPC (§9.4). **Header:** project name, goal (or a "Set goal" link), "Updated … ago [by agent]", branch @ commit with an *uncommitted* tag. **Current Focus** card: question/objective, current understanding, Next, Blocker (or "No blockers"). **Active Plan** card: title, `done / total`, progress bar, up to 10 tasks (status icon, title, role; running highlighted, done struck), "+N more", Open plan; or an empty state with **Create Plan**. **Two-column grid:** *Latest Insights* (≤ 3 supported, ≤ 2 preliminary, ≤ 2 failed directions, with confidence and evidence count) · *Needs Your Attention* with a count (≤ 5 items; otherwise "No intervention needed"). **Key Outputs** thumbnail grid. **Recent Activity** (8 events). **Quick actions:** Create Checkpoint · New Question · New Experiment · Add Task (if a plan is active) · Dispatch <next task> · Plan with agent… · Search · Report. The plan card also names the next ready task, and running tasks show who claimed them. |
-| **Resume** (legacy) | The v0.1.0 resume page (`render/resume.ts`), used only as a **fallback** if the `home` request fails, e.g. against an older core. Hero; banners (no checkpoint / stale or >25 changes / needs synthesis / runs in flight); Where we left off; What we believe · What failed; Current baseline + Decisions · Open questions; Experiments in progress · Needs attention; Look at these first · Recent activity; stat tiles. |
+| **Resume** (fallback) | The resume page (`render/resume.ts`), used only if the `home` request fails. Hero; banners (no checkpoint / stale or >25 changes / needs synthesis / runs in flight); Where we left off; What we believe · What failed; Current baseline + Decisions · Open questions; Experiments in progress · Needs attention; Look at these first · Recent activity; stat tiles. |
 | **Plan** | Header (Plan · root question link; title; status and author pills; created/completed); toolbar (**Add Task** · **Dispatch T-…** (next ready task) · **Refine with planner…** · **Report** · Edit · Status ▾ (completed / blocked / abandon) · More ▾ (Open Markdown, Copy ID)); progress bar with done / running / blocked / remaining; Objective + Success Criteria card and Context card; **Tasks** list (status icon, id, title, goal excerpt, type, role, dependency links, agent marker, status pill) or an empty state; Activity timeline. |
 | **Task** | Breadcrumb (plan › Task); title; pills (status, **ready** if ready, type, author); meta (created, started, completed, role); toolbar (**Dispatch to agent…** on todo tasks · **Verify with agent…** in `verify` · **Start** when ready · **Verify** (run checks) when it has checks · **Note** · **Complete** when running or in `verify` · **Block** when running · Edit (form) · More: Release, Show Agent Brief · Status ▾ (done / running / blocked / verify / reset to todo) · More ▾); meta shows "claimed by …"; green "Ready to start" banner with a Start button, or a red "Blocked: …" banner; orange "Stale" banner with Release; red "Checks failing" banner with Re-run; Goal; Dependencies with status; Inputs · Expected Outputs; Acceptance Criteria · Verification; **Checks** (with the last run's verdict) · **Skills to load** (why each applies; missing ones flagged); **Progress notes**; **Verification history**; Result (green tint); Related (plan, question, experiment) · Artifacts; Notes; Activity timeline. |
 | **Agent setup** (*Research: Open Agent Setup*; Agent sidebar section) | `render/setup.ts` from the `agent_setup` RPC. Sections in reading order: **Model strategy** (active strategy, origin, fingerprint, work → level → model table, retry/escalation limits, validation problems, other strategies with Use, Change strategy…) · **Work in flight** (open tasks with routed level/model, pins, checks, frozen tests, contract summary; Pin a model… / Use strategy default) · **Project harness** (references with missing ones flagged; **Hooks**: stage, approval state, last result, Run now, Enable/Disable, Review and approve…) · **Experiment validation** (state, synthesis due, last check, Check) · **Model usage by strategy** (n/m reported, never zero) · **Skills** (import, always-on, update, remove) · **MCP servers** (per-client registration; other servers read-only) · **Agent files** (managed state, Set up agents…). All changes go through native quick-picks and modal confirmations; the page itself only links. |
@@ -1910,6 +1953,15 @@ All commands are under the category **Research**.
 | Regenerate Agent Context · Open AGENTS.md · Open Project Config · Set Project Goal | |
 | Rebuild Index from Files | modal confirmation |
 | Show Log | the "Research" output channel |
+| Open Research Home · Open Settings · Open Item… | Home page; the Control Center's Settings tab; quick-pick over `index` |
+| Mark Experiment Failed · Pin Note · Unpin Note · Link Note to… | item actions |
+| Regenerate Agent Context (current.md) · Export Full Research Context (deterministic)… · Review Managed AGENTS.md Block… | `write_context`; `report_full`; `agents_md_state` / `agents_md_apply` |
+| Reconcile HPC Runs… · Run on HPC Cluster… | `hpc_sync`; `hpc_submit` (preview first) |
+| Verify Task (Run Checks) · Expose Skills to Agents | `verify_task`; `skills_link` |
+| Check Configuration · Show Effective Configuration… | `config_check`; `config_show` |
+| Import Plan YAML… · New Plan YAML from Template · Apply Plan YAML from Editor… · Open Plan as YAML | `plan_yaml_*` (validate, diff, then apply) |
+| Run Plan (Supervisor)… | `plan_control` run; starts the supervisor if needed |
+| Open Scientist Guide · Draft Scientist Guide Entry with an Agent… · Preview Scientist Guide Website | `guide_*` |
 
 Item-only commands are hidden from the palette. Inline tree actions: Run ▶ and Synthesize ✦ on experiments; logs and
 cancel on runs; pin on notes.
@@ -1937,6 +1989,9 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
   `Project.init`, `research bin install [--force]` and the RPC method `install_bin`. The extension calls `install_bin`
   once per activation (setting `research.projectCli`, default `true`). The first time, if the managed `AGENTS.md`
   block predates the launcher, it is refreshed.
+- **`./research` in the main checkout:** `install` (and `research bin link|unlink [--name]`) also links the launcher into the main checkout as `./research` so it can be run from
+  there without the long path. The link is git-excluded, never overwrites a file or directory (best effort), and the launcher follows symlinks. `install_bin` also starts the
+  supervisor when Telegram is enabled or a plan is running, and replaces a supervisor still running older code (agents are untouched).
 - **Git:** the launcher is per machine, so `bin/` is listed in `.research/.gitignore`, and existing projects get the
   line added. A laptop and its Remote SSH host each keep their own copy.
 
@@ -1968,6 +2023,8 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
 | `research.pollIntervalSeconds` | `10` (min 3) | Status refresh interval while runs are active. |
 | `research.defaultRunMode` | `terminal` | `terminal` · `background` · `slurm`. |
 | `research.projectRoot` | `""` | Override root detection. |
+| `research.projectCli` | `true` | Keep the project-local launcher `.research/bin/research` (gitignored, refreshed on open; §13.8). |
+| `research.openControlCenterOnStartup` | `true` | Open the Control Center when a window with a project opens. |
 
 ### 13.12 Design system (`media/ui.css`)
 
@@ -2093,8 +2150,7 @@ artifact contents, logs, external datasets and unwritten reasoning are inherentl
 
 ## 14B. The managed AGENTS.md block
 
-**Module:** `research/agentsmd.py`. Version 2 has no project upgrade or migration command: a v1 project is rejected (see `docs/GUIDE_V2_START_FRESH.md`)
-and nothing about an existing `.research/` is converted automatically. Only the Research OS-owned region of `AGENTS.md` is managed.
+**Module:** `research/agentsmd.py`. A `.research/` of another project format is rejected, never converted. Only the Research OS-owned region of `AGENTS.md` is managed.
 
 
 One owned region between `<!-- research:begin … -->` and `<!-- research:end -->`. `locate()` matches whole
@@ -2232,7 +2288,7 @@ experiment and the bundle carries them in `manifest.json` for your own script to
 
 ## 14D. Shared ledger and experiment workspaces (opt-in)
 
-Classic projects keep `.research/` beside the code and are unchanged. `research ledger enable` moves a git project to
+By default (classic mode) `.research/` sits beside the code. `research ledger enable` moves a git project to
 **shared-ledger mode**: one ledger lives in its own worktree on branch `research/ledger`, and every source worktree of the
 repository reaches it. Implemented in `workspace.py`.
 
@@ -2383,13 +2439,13 @@ Normative detail lives in [SUPERVISOR.md](SUPERVISOR.md) and [GOVERNANCE.md](GOV
 A reusable React/TypeScript frontend (`packages/vscode-extension/src/webview/`, bundle `media/app.js`, styles `media/app.css` on top of the
 VS Code theme variables). It talks only to a `Host` interface (`call`, `openEntity`, `openDoc`, `getState`, `setState`); `vscodeHost` implements it
 with webview messages, and a browser host could implement it over HTTP without touching the pages. The extension relays an allow-listed set of RPC
-methods (`control`, `settings*`, `workspace*`, `sandbox_preview`, `promotion*`); everything else is refused. Command: **Research: Open Control Center**
-(`research.openControlCenter`); the older Home, detail and Agent-setup panels are unchanged.
+methods (`CONTROL_RPC` in `panels.ts`: control, settings, workspaces, promotion, plans and supervisor, intervention, Telegram, governance, providers, executions, guide, tools, init/setup, doctor, reports); everything else is refused, and mutating ones re-sync the tree. Command: **Research: Open Control Center**
+(`research.openControlCenter`; it also opens on startup unless `research.openControlCenterOnStartup` is off); the Home, detail and Agent-setup panels remain.
 
-Four areas. **Home**: attention items (synthesis due, unreviewed failures, findings awaiting review, blocked tasks, unapproved hooks, missing workspaces,
+Seven tabs: Home, Work, Research, **Plans**, **Guide**, **Agents** and Settings (plus Doctor and the Initialize Project and New Experiment wizards). **Home**: attention items (synthesis due, unreviewed failures, findings awaiting review, blocked tasks, unapproved hooks, missing workspaces,
 promotions in flight), each opening its workflow; next task; runs in progress; recent findings. **Work**: plans/tasks, workspaces (create, archive with
 an impact preview), promotion candidates, execution profiles with the agent-boundary statement, recent runs. **Research**: experiments with run and
-unsynthesized counts, findings, questions, decisions. **Settings**: every registry option by category or search, with a `?` explaining what it does,
+unsynthesized counts, findings, questions, decisions. **Plans**: managed YAML plans with validate, diff and apply, run/pause/resume/stop, plan health (progressing / waiting for approval / HALTED / completed) with concurrency, per-task phases and attempts, approvals and proposals with the PIN dialog, **Instruct** and **Unblock** (supervisor intervention), a halt panel with the debug agent's diagnosis and options (including continuing with another agent), supervisor Reload/Restart, and the Telegram box. **Guide**: key results, citations, draft, build and preview of the Scientist Guide. **Agents**: providers and models, execution sessions, skills, packs and hooks. **Settings**: every registry option by category or search, with a `?` explaining what it does,
 why, what changes, default, current value and source, files affected and whether a human is required; typed controls; inherited/default/project/machine
 badges; per-setting reset; a diff-and-reason review dialog before any write.
 
@@ -2397,10 +2453,10 @@ Help (`?`): opens on hover or keyboard focus, stays open when clicked (also touc
 stays visible. Accessibility: tablist with roving tabindex and arrow keys, labelled controls, `role=switch`, live regions for loading and errors, focus-trapped
 dialogs that restore focus, VS Code theme variables (light, dark, high contrast).
 
-Aggregations are produced by the core (`control.py`, RPC `control`), not by the UI. **Verified:** six interaction tests in jsdom against the real Python core
-(`npm run test:webview`: help behaviour, validation, diff review, save, restart persistence, reset, search, tab navigation, promotion gates) and screenshots in
-light and dark themes (`docs/screens/control-center/`, produced by `scripts/preview-control.mjs` with headless Chrome). **Not verified:** inside a running
-VS Code window (`npm run test:ext` needs a VS Code download that is unavailable here), Remote SSH, high-contrast themes, and screen-reader output.
+Aggregations are produced by the core (`control.py`, RPC `control`), not by the UI. **Verified:** interaction tests in jsdom (`npm run test:webview`: help behaviour,
+validation, diff review, save, reset, search, tab navigation, promotion gates), type-checking and bundling of every page, and screenshots in light and dark themes
+(`docs/screens/control-center-v2/`, produced by the preview harness under `packages/vscode-extension/scripts/`). **Not verified:** the Plans-page supervisor, intervention and
+Telegram controls inside a running VS Code window (they are type-checked and bundled; the screenshots predate them), Remote SSH, high-contrast themes, and screen-reader output.
 
 ---
 
@@ -2408,8 +2464,8 @@ VS Code window (`npm run test:ext` needs a VS Code download that is unavailable 
 
 1. **Never deletes or moves user data.** Artifacts are references. `rebuild` backs up the DB before replacing it.
    Research records and artifact references are retained. Skill removal moves managed skills to backup; arbitrary user commands and hooks can modify files with the user’s permissions.
-2. **Never commits or pushes** to git, with one opt-in exception: `checkpoint --commit` (or `git.commit_checkpoints: true`)
-   commits `.research/` and nothing else, never pushes, and leaves other staged changes alone. Managed writes outside `.research/` include the `AGENTS.md` block, skill links, generated agent definitions, the configured Scientist Guide and explicitly installed MCP entries. Runs, checks and hooks can write anywhere permitted by the operating system.
+2. **Never pushes**, and commits only in opt-in or supervised cases: `checkpoint --commit` (or `git.commit_checkpoints: true`)
+   commits `.research/` and nothing else and leaves other staged changes alone; the supervisor commits an agent's verified work in that task's worktree (`supervisor.commit_verified_work`, excluding `supervisor.commit_exclude`); unattended promotion (opt-in, two keys) fast-forwards local `main` and nothing else. No force, rebase or push, ever. Managed writes outside `.research/` include the `AGENTS.md` block, skill links, generated agent definitions, the configured Scientist Guide and explicitly installed MCP entries. Runs, checks and hooks can write anywhere permitted by the operating system.
 2a. **Removed skills are kept** in `.research/cache/removed-skills/` (remove, `--force` re-import, update).
 3. **Never silently rewrites history.**
    - Every mutation, including hand edits picked up by sync, is an event in `events.jsonl`.
@@ -2418,6 +2474,7 @@ VS Code window (`npm run test:ext` needs a VS Code download that is unavailable 
 4. **Import-before-export** protects detected hand edits (§5.4); there is no lock against concurrent external editors.
 5. **Malformed records:** normal mirror sync logs parse errors and retains the indexed value; export refuses to overwrite malformed files. Rebuild fails and rolls back on malformed records or duplicate IDs. Complete malformed JSONL lines are errors, not silently skipped.
 6. **Version safety:** an older tool refuses a newer schema.
+6a. **Agents propose, humans approve.** Agents cannot create experiments (proposals only), cannot approve proposals, change policy or promote to `main`, and cannot approve science; those need a human and, by default, the approval PIN (a local scrypt verifier outside the project, never in the audit trail, rate-limited, failing closed with no terminal). The supervisor acts through in-process grants and never impersonates a human. This is a guard rail for honest agents, not a boundary against a hostile process running as the same OS user (GOVERNANCE.md).
 7. **Atomic replacement** is used for managed text writes. The shared writer uses a unique sibling, flush and fsync before replacement. This is not an atomic transaction across multiple files or a guarantee of network-filesystem durability.
 
 ---
@@ -2512,7 +2569,7 @@ orchestration:                # opt-in via `research setup agents --apply`
   tiers: {opus: {model: claude-opus-5-5, fallback: [opus]}, sonnet: {...}, haiku: {...}}
   available: []               # [] = assume configured models exist
   limits: {haiku_attempts: 3, sonnet_attempts: 2, escalations: 2, max_turns: null, tuning_evaluations: 50}
-  active_strategy: null       # null = legacy tiers above; else sonnet_first | opus_first | haiku_max | sonnet_heavy | custom
+  active_strategy: null       # null = the tiers above (tier mode); else sonnet_first | opus_first | haiku_max | sonnet_heavy | custom
   strategies:                 # built-ins shown by `research strategy show`; override one key at a time or add your own
     sonnet_first: {description: …, levels: {fast: claude-fast, balanced: claude-balanced, deep: claude-deep}, coordinator: balanced,
                    guide: deep, route: {planning: balanced, scientific: deep, verification: balanced, checked: fast, unchecked: balanced, mechanical: fast},
@@ -2531,7 +2588,120 @@ harness:                      # project-owned references; independent of the str
   hooks_timeout_seconds: 300
 ```
 
-Missing keys fall back to these defaults (deep merge), so old configs keep working. Effective settings are layered: built-in defaults ← optional machine file (`$RESEARCH_CONFIG`, else `$XDG_CONFIG_HOME/research-os/config.yaml`; `project` identity is ignored there) ← the project's sparse `config.yaml` ← per-command flags. `research config show [--effective|--sources]`, `config check` and `config migrate [--apply]` inspect it; edits rewrite only the key's own lines (comments preserved).
+Further sections, shown with their built-in defaults (a project file holds only what you change). Meaning of each is in `research config options`
+and in SUPERVISOR.md (§13 to 18), GOVERNANCE.md and §14D to 14F; `harness.require_seed` is also a setting. The Telegram token and chat id are not config: they live
+in `~/.config/research-os/telegram.json` (mode 0600).
+
+```yaml
+layout:
+  main_dir: null
+  ledger_dir: null
+  experiments_dir: null
+  workspace_file: null
+agents:
+  handoff:
+    enabled: false
+    fallback_order:
+    - claude
+    - codex
+    - agy
+    on_provider_unavailable: pause
+    on_unknown_execution_state: pause
+skills:
+  packs:
+  - core-research
+  disabled: []
+environment:
+  python: null
+  packages: []
+supervisor:
+  poll_seconds: 5
+  max_parallel_agents: 1
+  max_attempts_per_task: 3
+  max_total_attempts: 20
+  max_wall_minutes: 480
+  attempt_timeout_minutes: 90
+  on_failure: diagnose_and_repair
+  enforce_completion: true
+  auto_apply_operational: true
+  max_auto_tasks: 5
+  require_approval_for_scientific_changes: true
+  session_resume: auto
+  context_max_chars: 24000
+  commit_verified_work: true
+  commit_exclude:
+  - outputs/
+  - results/
+  - patch*.yaml
+  - '*.pyc'
+  - __pycache__/
+  - .venv/
+  hpc_poll_seconds: 30
+  max_hpc_resubmissions: 1
+governance:
+  experiments:
+    agent_creation: propose_only
+  tasks:
+    agent_creation: bounded_auto
+    allowed_auto_types:
+    - bugfix
+    - diagnostic
+    - verification
+    max_auto_per_experiment: 3
+  scientific_changes:
+    require_human_approval: true
+  approval:
+    require_pin: true
+    require_rationale: true
+    record_rejections: true
+    confirm_human_experiment_creation: false
+  experiment_overrides: {}
+promotion:
+  main_branch: main
+  test_command: null
+  test_timeout_seconds: 1800
+  require_supported_finding: true
+auto_promotion:
+  numerical_command: null
+  reviewer_profile: null
+  require_distinct_reviewer: true
+supervisor_assistant:
+  profile: null
+  model: null
+  timeout_seconds: 900
+intervention:
+  require_approval: false
+notifications:
+  halt_grace_seconds: 120
+  auto_debug: false
+  telegram:
+    enabled: false
+sandbox:
+  enabled: false
+  default_profile: native
+  approved_roots: []
+  agent:
+    mode: none
+  assign:
+    experiments: {}
+    tasks: {}
+  profiles:
+    native:
+      runtime: native
+    restricted:
+      runtime: auto
+      network:
+        mode: disabled
+    gpu-research:
+      runtime: auto
+      gpu: true
+      network:
+        mode: disabled
+    custom:
+      runtime: auto
+```
+
+Missing keys fall back to these defaults (deep merge), so a sparse project file keeps working as defaults grow. Effective settings are layered: built-in defaults ← optional machine file (`$RESEARCH_CONFIG`, else `$XDG_CONFIG_HOME/research-os/config.yaml`; `project` identity is ignored there) ← the project's sparse `config.yaml` ← per-command flags. `research config show [--effective|--sources]`, `config check` and `config migrate [--apply]` inspect it; edits rewrite only the key's own lines (comments preserved).
 `research project set` and the UI's "Set Project Goal" rewrite the file, keeping a short header comment.
 
 ---
@@ -2567,7 +2737,7 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 | Python suite (pytest, 1104 tests collected at 2.6.0 (`python -m pytest -q --collect-only`); three tests fail on an unmodified 2.5.0 as well) | `python -m pytest -q` | all offline: no SSH, no real Slurm, no model, no network. Per file: |
 | ↳ `test_core.py` (29) · `test_slurm_rpc_cli.py` (11) | | init and AGENTS.md preservation; migrations; rollback journal; ids; hierarchy; experiments and git capture; runs, artifacts, findings, decisions; authorship; run budget; local foreground/detached runs; hand-edit import, rebuild, relocation; checkpoints; SLURM script/submit/completion/TIMEOUT/cancel against mocked `sbatch`/`squeue`/`sacct`; RPC round trip; CLI end to end and exit codes |
 | ↳ `test_plans_tasks.py` (32) · `test_plans_tasks_interfaces.py` (19) · `test_research_os.py` (22) | | plans, tasks, readiness, claims, notes, stale tasks; exact form payloads over RPC; every command in the AGENTS.md template parses; checks gate, finding gate and role-based independence; skills import/update/remove; search; compare; sweeps; reports; checkpoint `--commit`; dispatch; MCP protocol and install |
-| ↳ `test_evidence.py` (16) · `test_guide.py` (7) · `test_orchestrate.py` (11) | | numerical bindings, mismatch blocking `supported`, artifact integrity, provenance, sources; Scientist Guide freshness and AGENTS block; legacy tier routing, frozen tests, attempts, delegation, tuning |
+| ↳ `test_evidence.py` (16) · `test_guide.py` (7) · `test_orchestrate.py` (11) | | numerical bindings, mismatch blocking `supported`, artifact integrity, provenance, sources; Scientist Guide freshness and AGENTS block; tier-mode routing, frozen tests, attempts, delegation, tuning |
 | ↳ `test_strategy.py` (19) | | the four strategies and custom ones: resolution, layering and precedence, cycles, project isolation, one resolver for direct/orchestrated/delegated/guide dispatch, frozen tests and independence under strategies, harness independence, managed-file boundaries, the `agent_setup` RPC, list-block config edits |
 | ↳ `test_agent_features.py` (15) | | hooks (human-only approval, edit revokes, timeout, advisory, preflight/pre-experiment gates), contracts and `orchestrate verify`, usage parsing and summaries (missing ≠ zero), headless runs with a mock agent, task pins, strategy-aware agent files, `experiment check`, CLI and RPC |
 | ↳ `test_autopromote.py` (14) · `test_supervisor_fixes.py` (13) · `test_intervention.py` (26) | | fast-forward-only unattended promotion and its fail-closed cases; failure classification, plan health, reload/restart; intervention state machine, debug agent, Telegram against a local fake server |
@@ -2577,10 +2747,10 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 | ↳ `test_hpc.py` (89) · `test_acceptance.py` (2) | | bundles, SSH/Slurm against a fake cluster, datasets, result import, reconciliation; the 17-step remote run → import → export acceptance scenario |
 | TypeScript | `npm run typecheck` | the extension compiles under `strict` |
 | Clean install | `bash scripts/clean_install_test.sh` | fresh venv + wheel → full protocol (question, experiment, 2 runs, artifact, synthesis, finding, decision, checkpoint) → copy to a new path, delete the index → resume reconstructs exact counts → artifact paths relative and resolving → no build-machine paths in the project, installed package or VSIX |
-| UI end-to-end (Playwright + code-server) | `python scripts/e2e_code_server.py <project> <dir>` | VSIX installed into a real VS Code server; sidebar trees and overview render; New Question form writes `Q-003`; question panel opens; Run form → terminal → `RUN-0004` completes; experiment panel shows the new run (live refresh). 8/8 checks. |
+| Webview and client tests | `npm run test:webview` · `npm run test:client` | the React Control Center pages and the extension client |
 | Real VS Code harness | `RESEARCH_TEST_WORKSPACE=<demo> npm run test:ext` | downloads VS Code, installs the VSIX, runs the checks in `test/harness/suite/index.js` in the extension host (state reconstruction, the project-local CLI, every panel command, every view, shim, watcher, authorship, the plan/task flow through the real form handlers: New Plan, Add Task, Start, Change Status, Edit task/plan, plan activity, Research Home, Plans tree data, `current.md`; and the Research OS layer: task form with checks + skills, Verify command, agent brief, awaiting-review attention item, Review form, compare panel, skill import + `.claude/skills` link, search, report, dispatch). Needs access to `update.code.visualstudio.com`. When launched from a terminal inside VS Code, run it with a clean environment (`env -i HOME=$HOME PATH=… npm run test:ext`), otherwise the inherited `VSCODE_*` variables hijack the test instance. Last run (73/73 on VS Code 1.141.0) predates strategies, hooks and the Agent setup page; those are covered by the Python suite and the typecheck, and the page was reviewed as screenshots rendered from the real `render/setup.ts`, not inside VS Code. |
 | Real MCP client | `claude -p "…" --mcp-config .mcp.json --strict-mcp-config --allowedTools mcp__research__research_current` | Claude Code connects to `research mcp` and calls a tool (checked manually on 2026-10-07; not part of CI) |
-| Visual review | `scripts/preview-entry.ts` + themes | renders every webview outside VS Code with dark and light theme variables for screenshots (`docs/screens/`) |
+| Visual review | `packages/vscode-extension/scripts/preview-*` + themes | renders every webview outside VS Code with dark and light theme variables for screenshots (`docs/screens/`) |
 
 ---
 
@@ -2599,7 +2769,7 @@ npm run package                # scripts/package.sh → dist/
 1. Builds the extension in production mode.
 2. Runs `scripts/bundle-python.mjs`, which copies `packages/core/research` and `packages/cli/research_cli` into
    `packages/vscode-extension/python/`.
-3. Runs `vsce package --no-dependencies` → `dist/research-panel-X.Y.Z.vsix` (~225 KB).
+3. Runs `vsce package --no-dependencies` → `dist/research-panel-X.Y.Z.vsix`.
 4. Runs `python -m build` → wheel + sdist in `dist/`. If `build` is missing, it falls back to `pip wheel` / `uv build`; in an environment with neither setuptools nor `build` the sdist step fails after the VSIX and wheel have been written.
 
 **Versioning:** bump `version` in `pyproject.toml`, root `package.json`, `packages/vscode-extension/package.json` (and the two version lines at the top of its `package-lock.json`) and `research/__init__.py` together, rename the CHANGELOG heading, rebuild and reinstall the VSIX (the extension refreshes each project's `.research/bin/research` on activation). Schema changes add a new entry to `schema.MIGRATIONS` and increment `SCHEMA_VERSION`. Never edit existing entries.
@@ -2628,51 +2798,45 @@ research-vscode/
 │   ├── SPEC.md                     # this document (features + design + spec)
 │   ├── SUPERVISOR.md               # plans, supervisor, promotion, intervention, Telegram
 │   ├── GOVERNANCE.md               # proposals, approval PIN, who may do what
-│   ├── GUIDE_V2_START_FRESH.md     # what to do with a v1 project
 │   ├── CONFIGURATION.md            # layers, files, precedence, editing
 │   └── screens/                    # UI screenshots
 ├── packages/
 │   ├── core/research/
-│   │   ├── __init__.py             # public Python API
-│   │   ├── schema.py               # entity specs, ids, DDL, migrations
-│   │   ├── store.py                # Project: config, index, mirrors, sync, rebuild, events, AGENTS.md
-│   │   ├── mirrors.py              # Markdown render/parse
-│   │   ├── services.py             # questions, experiments, budget, syntheses, findings, decisions, notes, skills
-│   │   ├── runs.py                 # runs, metrics, artifacts, ingestion, reconciliation
-│   │   ├── plans.py                # plans, tasks, readiness, claims, notes, stale tasks, task context
-│   │   ├── verification.py         # task checks, finding reviews, gates, attention items
-│   │   ├── skills.py               # skill import/update/remove, links, matching
-│   │   ├── agents.py               # roles, profiles, dispatch briefs, headless runs
-│   │   ├── strategy.py             # named allocation strategies, the dispatch resolver, agent-file docs
-│   │   ├── orchestrate.py          # routing, frozen tests, attempts, delegation, contracts, verify, pins, tuning
-│   │   ├── harness.py  hooks.py    # project harness references; approved executable hooks
-│   │   ├── usage.py  expcheck.py   # usage ledger; deterministic experiment check
-│   │   ├── guide.py  evidence.py   # Scientist Guide; numerical evidence and provenance
-│   │   ├── setup_agents.py         # `research setup agents` (managed .claude/agents, first-party skills)
-│   │   ├── configfile.py           # layered sparse comment-preserving configuration
-│   │   ├── agentsmd.py  fullreport.py  localbin.py  # managed block, full export, project CLI
-│   │   ├── mcp.py                  # MCP server + install + status
-│   │   ├── search.py  compare.py  report.py
-│   │   ├── context.py              # resume, Research Home, checkpoint draft/create, current.md
-│   │   ├── views.py                # detail aggregations, generated mirror sections
-│   │   ├── rpc.py                  # JSON-RPC server
-│   │   ├── runner.py               # job wrapper
-│   │   ├── gitinfo.py  yamlio.py  util.py
+│   │   ├── __init__.py             # public Python API, __version__
+│   │   ├── schema.py  store.py  mirrors.py  durability.py  # entity specs and DDL; Project (config, index, sync, rebuild, events); Markdown mirrors; crash journal
+│   │   ├── services.py  runs.py  views.py  context.py  # questions/experiments/findings/decisions; runs, metrics, artifacts; detail views; resume, Home, current.md
+│   │   ├── plans.py  planspec.py   # plans, tasks, readiness, claims; YAML plan schema, validation, diff, apply
+│   │   ├── supervisor.py  supervisord.py  # deterministic plan supervisor (state machine); the daemon process
+│   │   ├── autopromote.py  promotion.py  # unattended fast-forward promotion; promotion candidates and gates
+│   │   ├── intervene.py  notify.py  # supervisor intervention; debug agent, Telegram
+│   │   ├── governance.py  approval.py  # who may create what; approval PIN
+│   │   ├── verification.py  task_spec.py  taskprompt.py  # task checks, finding reviews, gates; effective task spec; per-attempt prompt
+│   │   ├── agents.py  providers.py  execution.py  processes.py  # roles, profiles, dispatch; provider adapters; execution records; process control
+│   │   ├── strategy.py  orchestrate.py  harness.py  hooks.py  checks.py  # allocation strategies; routing, frozen tests, contracts; hook catalog and checks
+│   │   ├── skills.py  packs.py  setup_agents.py  # skill import/update, packs; `setup agents`
+│   │   ├── guide.py  guide_quarto.py  guide_review.py  evidence.py  provenance.py  # Scientist Guide; numerical evidence
+│   │   ├── workspace.py  sandbox.py  isolation.py  # shared ledger and experiment worktrees; job isolation
+│   │   ├── initproject.py  bootstrap.py  setup.py  envcheck.py  doctor.py  # Initialize Project, YAML init, environment setup, doctor
+│   │   ├── configfile.py  registry.py  # layered sparse configuration; settings registry
+│   │   ├── agentsmd.py  fullreport.py  localbin.py  report.py  search.py  compare.py  usage.py  expcheck.py
+│   │   ├── mcp.py  rpc.py          # MCP server and install; JSON-RPC server
+│   │   ├── runner.py  control.py  gitinfo.py  yamlio.py  util.py
 │   │   ├── backends/ (base, local, slurm)
 │   │   ├── hpc/ (config, transport, remote, bundle, datasets, results)
-│   │   ├── templates/ (AGENTS.block.md, skills/, prompts/, templates/)
-│   │   └── _vendor/yaml/           # PyYAML 6.0.3, MIT, fallback only
-│   ├── cli/research_cli/           # argparse CLI (main.py, __main__.py)
+│   │   ├── templates/ (AGENTS.block.md, catalog/, catalog.yaml, packs.yaml, skills/, claude-agents/, prompts/, templates/)
+│   │   └── _vendor/yaml/           # PyYAML, MIT, fallback only
+│   ├── cli/research_cli/           # argparse CLI (main.py, supervisor_cmds.py, __main__.py)
 │   └── vscode-extension/
 │       ├── package.json            # manifest (views, commands, menus, settings)
 │       ├── src/                    # extension.ts, client.ts, model.ts, trees.ts, panels.ts, commands.ts, shim.ts, util.ts
-│       │   └── render/             # ui.ts (components), home.ts (Research Home), resume.ts (Overview + legacy Resume), detail.ts, form.ts, setup.ts (Agent setup)
+│       │   ├── render/             # ui.ts, home.ts (Research Home), resume.ts (Overview + fallback Resume), detail.ts, form.ts, setup.ts
+│       │   └── webview/            # React Control Center: App, pages (Home, Research, Work), PlansPage, SettingsPage, GuidePage, Providers, Setup, InitProject, Doctor, ...
 │       ├── media/                  # ui.css, ui.js, research.svg, icon.png (codicons copied at build)
-│       ├── scripts/                # bundle-python.mjs, preview-entry.ts, theme-*.css
-│       └── test/                   # real-VS-Code harness (run.mjs, harness/)
-├── examples/alpha-sweep/           # sim.py, plot.py (stdlib only), run_demo.sh
-├── tests/python/                   # pytest suites (see release review for executed counts)
-├── scripts/                        # package.sh, clean_install_test.sh, e2e_code_server.py
+│       ├── scripts/                # bundle-python.mjs, theme-*.css, preview harness
+│       └── test/                   # client/webview tests, real-VS-Code harness (run.mjs, harness/)
+├── examples/                       # alpha-sweep, auto-promotion-demo, custom-provider
+├── tests/python/                   # pytest suites
+├── scripts/                        # package.sh, clean_install_test.sh, make_preview_fixture.py
 └── dist/                           # built VSIX, wheel, sdist
 ```
 
@@ -2734,9 +2898,10 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 - **Roles make one subscription usable as two reviewers.** Identity is `name/role`, so `claude/implementer` and
   `claude/verifier` are different reviewers. This is trust-based (an agent could fake its role), which is acceptable for
   a single researcher's project; humans remain the final authority and are never blocked.
-- **Dispatch, not an autonomous loop.** The system prepares a bounded brief and starts the agent CLI you already use,
-  in a terminal you can watch. Swapping providers when one runs out of credit is a config change. A fully autonomous
-  orchestrator (agents launching agents unattended) was deliberately left out: cost, safety and debuggability.
+- **Dispatch first, supervision on top.** Dispatch prepares a bounded brief and starts the agent CLI you already use,
+  in a terminal you can watch. Swapping providers when one runs out of credit is a config change. The supervisor (§14G) adds unattended execution of a *reviewed plan*:
+  it is deterministic code (no LLM), agents never launch agents, attempts and wall time are bounded, every outcome is verified, it stops and asks for scientific, resource and
+  frozen-test changes, and it halts honestly instead of looping. Autonomous science (agents approving findings, creating experiments or promoting code unreviewed) is deliberately left out.
 - **MCP in the standard library.** The protocol is small enough (newline-delimited JSON-RPC) that an SDK would add a
   dependency for little gain, and the core must stay installable on HPC nodes.
 - **Skills are copied, not referenced.** An imported skill lives in `.research/skills/` and is committed with the
@@ -2765,32 +2930,9 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 
 ---
 
-## 22. Known issues and limitations
+## 22. Limitations
 
-### 22.1 Known issues
-
-The following table is historical repair context from the 1.0.0 hardening, not a claim that all defects are resolved:
-
-| # | Was | Fix |
-|---|---|---|
-| 1 | "New Plan" form always failed (`create_plan() got an unexpected keyword argument 'question'`) | form field renamed to `root_question_id`; `create_plan` / `update_plan` also accept `question` |
-| 2 | `AGENTS.md` named non-existent commands | added `research current`, `research task context`, `research skills show`; a test parses every command in the template |
-| 3 | `research mark` rejected plan and task ids | `set_status` handles plans and tasks |
-| 4 | `current.md` didn't mention plans or tasks | new "Active plans" section |
-| 5 | plan page Activity was always empty | `plan_detail` returns the plan's and its tasks' events |
-| 6 | Edit… on plans and tasks opened the Markdown file | edit forms |
-| 7 | Add Task form lacked `debug` and `data` types | added |
-| 8 | inline Start shown on done and verify tasks | per-status tree contexts; Complete offered on `verify` too |
-| 9 | empty list fields written as `{}` in task mirrors | rendered as `[]`; legacy `{}` files still import |
-| 10 | CLI labels of 16+ characters ran into their values | always at least one space |
-| — | Complete Task completed even when the result prompt was cancelled | Esc now cancels |
-| — | `npm run package` failed to build the wheel in a uv-created venv (no pip) | falls back to `uv build` |
-| — | real-VS-Code harness failed to launch current VS Code (binary renamed `Electron` → `Code`) | `test/run.mjs` falls back to `Code` |
-| — | `start_task` cleared an existing `assigned_role` | the role is only set when given |
-| — | replacing a list-valued key in `config.yaml` (e.g. `harness.skills`) left the old `- item` lines behind and corrupted the file; `_block_end` now includes same-indent list items and no longer swallows trailing blank lines | the surgical editor replaces the whole block |
-| — | the RPC process kept `CLAUDE_CODE_ENTRYPOINT` / Codex / role variables, so UI actions could be attributed to an agent | all agent-identity variables are stripped |
-
-### 22.2 Limitations by design
+### 22.1 Limitations by design
 
 #### Scientific provenance, Scientist Guide and orchestration layers (added after the items below)
 
@@ -2809,7 +2951,7 @@ The following table is historical repair context from the 1.0.0 hardening, not a
 - **Usage is recorded only when it is exposed.** `--headless` runs record what the provider's JSON reports (parsed defensively; the `claude -p --output-format json` shape was taken from documentation and not exercised against a live session); `usage import` and `orchestrate attempt --usage` take what you supply. Interactive sessions expose nothing, so none is recorded for them. Cost is provider-reported (no price table), so it can be partial; summaries show `reported/records`. Headless Claude cannot answer permission prompts; put the flags you trust in the profile's `headless_args`.
 - **Hooks execute shell commands.** They run only after a human approves the exact command (hash of stage + command + timeout; agents get exit 3), with a timeout and the project root as working directory, but they are not sandboxed: approve only what you would run yourself. `post_experiment` hooks run in `research experiment check`, not automatically when a run finishes, and there is no hook stage for HPC bundle import.
 - **Per-task pins need an active strategy and apply to implementer dispatch only** (verifier dispatch keeps its independence rule). The file boundary in `orchestrate verify` compares `git status` against the baseline taken at dispatch, so it only sees a git repository and cannot attribute changes made by other processes in between.
-- **Generated agent files follow the strategy only when you re-run `research setup agents --apply`;** a strategy change marks them `update`. Managed legacy tier files are moved to `.research/cache/removed-agents/`, user-owned files are never touched. The subagent `model:` frontmatter was not exercised in a live session.
+- **Generated agent files follow the strategy only when you re-run `research setup agents --apply`;** a strategy change marks them `update`. Managed tier-mode files are moved to `.research/cache/removed-agents/`, user-owned files are never touched. The subagent `model:` frontmatter was not exercised in a live session.
 - **Ponytail import was not run against the live repository.** `research setup agents --approve ponytail` uses the existing skill importer, which is tested with a local fixture.
 
 #### Supervisor, promotion and notifications (2.1 to 2.6)
