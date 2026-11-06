@@ -1,6 +1,6 @@
 # Research Panel — Features, Design and Technical Specification
 
-**Version:** 2.0.0 · **Project format:** 2 · **Schema version:** 3
+**Version:** 2.6.0 · **Project format:** 2 · **Schema version:** 3
 
 This is the single reference for **what Research Panel does, why it is designed that way, and exactly how it works**.
 A competent engineer should be able to re-implement it from this document alone. It also answers behaviour questions
@@ -1554,6 +1554,12 @@ are not counted as mutating.)
 | `orchestrate delegate T-parent "title" [--tier L] [contract flags]` | Child task; parent gains it in `depends_on`. Under a strategy the level defaults to the strategy's routing of the child as specified (checkable → worker, otherwise coordinator level). |
 | `hook list\|add\|enable\|disable\|approve\|revoke\|run\|results` | Project harness hooks (`harness.hooks`, `hooks_approved`); stages preflight / post_implementation / pre_experiment / post_experiment; human approval required. |
 | `orchestrate contract\|verify\|pin T-…` | Delegation contract in the task ledger; deterministic verification with diagnostics (`--record` logs an attempt); per-task model pin (`--level/--profile/--agent-model/--clear`). `dispatch --headless` records provider-reported usage. |
+| `plan …` / `task …` | Plans and tasks; `plan yaml validate\|diff\|apply`, `plan run`, `plan autopromote PLAN authorize\|revoke\|retry\|status` (see SUPERVISOR.md). |
+| `supervisor start\|status\|stop\|reload\|restart\|tick\|approve\|accept\|resolve\|continue\|providers` | The persistent supervisor; `reload`/`restart` never touch running agents. Status shows plan health (progressing / waiting_for_approval / HALTED / completed) and concurrency. |
+| `supervisor instruct T-… "text"` / `debug [PLAN]` / `intervention list\|show\|approve\|reject\|cancel\|plan` | Steer a task in words (classified actions, one PIN for protected ones); diagnose a halt. |
+| `telegram setup\|status\|test\|remove\|poll` | Opt-in alerts and chat commands; credentials in `~/.config/research-os/telegram.json` (0600). |
+| `proposal list\|show\|approve\|reject\|revise\|experiment` / `approval status\|set-pin\|verify` | Governance (GOVERNANCE.md): agents propose, a human approves with the PIN; a protected CLI action prompts on the terminal. |
+| `bin install\|link\|unlink [--name]` | Project launcher `.research/bin/research`, linked as `./research` in the main checkout (git-excluded, never overwrites). |
 | `usage [--by …]` / `usage import FILE` | Summaries of `.research/usage.jsonl` (missing is never zero). |
 | `experiment check EXP-… [--request-synthesis]` | Deterministic validation of runs/artifacts/hooks; lists what needs interpretation; prepares (never runs) synthesis. |
 | `strategy list\|show [NAME]\|use NAME [--dry-run]\|validate [NAME]\|route T-… [--strategy] [--level]` | Named allocation strategies (`orchestration.strategies`, `active_strategy`); see README "Allocation strategies". `orchestrate`/`dispatch`/`guide refresh` take `--strategy`; with an active strategy `--tier` means a strategy level. |
@@ -2346,6 +2352,23 @@ automatic cleanup of promotion worktrees (they are kept), push or pull-request c
 
 ---
 
+## 14G. Supervisor, governance, promotion and notifications (2.1 to 2.6)
+
+Normative detail lives in [SUPERVISOR.md](SUPERVISOR.md) and [GOVERNANCE.md](GOVERNANCE.md); this is the map.
+
+- **Supervisor** (`supervisor.py`, daemon `research.supervisord`): a deterministic process, no LLM. It reopens the project every pass, dispatches
+  agents, verifies deliverables (`file:`/`cmd:`/`metric:` checks), repairs within budgets, and applies settings live (`daemon.json`,
+  `reload.request`). Failures are classified (`missing_prerequisite`, `role_contradiction`, `incomplete_deliverable`); an incomplete deliverable
+  may escalate to a stronger model or effort (`execution.escalation`, opt-in). Plan `health` reports HALTED instead of "running".
+- **Plans as YAML** (`planspec.py`): partial or full scope, validated with role/task warnings, applied as reviewed diffs; scientific changes need approval.
+- **Governance and the approval PIN** (`approval.py`): agents propose, humans approve; the PIN is a local scrypt verifier outside the project, read from the terminal with echo off.
+- **Unattended promotion** (`autopromote.py`, opt-in): needs `execution.auto_promotion: true` and a PIN-authorized `plan autopromote authorize`; verified commits reach local `main` only by `git merge --ff-only` after independent review; fails closed; never approves science.
+- **Intervention** (`intervene.py`): `supervisor instruct` produces classified actions from a closed vocabulary; protected classes (scientific, resource, frozen test, role) need one PIN approval; applied idempotently with the evidence preserved.
+- **Debug agent and Telegram** (`notify.py`, opt-in): diagnosis of a halt, halt alerts and chat commands from the configured chat only. Settings: `auto_promotion.*`, `supervisor_assistant.*`, `intervention.*`, `notifications.*` (sparse per project, merged over defaults).
+- **RPC:** `managed_plans` (with `health`), supervisor reload/restart, intervention, debug and Telegram methods used by the Plans page.
+
+---
+
 ## 13A. Control Center (React)
 
 A reusable React/TypeScript frontend (`packages/vscode-extension/src/webview/`, bundle `media/app.js`, styles `media/app.css` on top of the
@@ -2523,6 +2546,7 @@ Missing keys fall back to these defaults (deep merge), so old configs keep worki
 | `RESEARCH_RUN_ID`, `RESEARCH_RUN_DIR`, `RESEARCH_IN_JOB` | set by the runner | enable in-job logging (§8.6) |
 | `SLURM_JOB_ID`, `SLURM_JOB_NODELIST`, `SLURM_JOB_PARTITION` | runner | recorded in `status.json` |
 | `CONDA_DEFAULT_ENV`, `VIRTUAL_ENV`, `USER` | core | stored in `run.env` |
+| `RESEARCH_TELEGRAM_API` | notify | base URL override for the Telegram API (proxy or test double) |
 | `NO_COLOR` | CLI | disable ANSI colour |
 
 ---
@@ -2588,10 +2612,11 @@ research-vscode/
 ├── LICENSE                         # MIT
 ├── package.json                    # root scripts: build / test / package / demo
 ├── pyproject.toml                  # Python distribution "research-panel" → `research` entry point
-├── AGENTS.md                       # this repo's own research block (it uses Research Panel on itself)
 ├── CHANGELOG.md
 ├── docs/
 │   ├── SPEC.md                     # this document (features + design + spec)
+│   ├── SUPERVISOR.md               # plans, supervisor, promotion, intervention, Telegram
+│   ├── GOVERNANCE.md               # proposals, approval PIN, who may do what
 │   ├── GUIDE_V2_START_FRESH.md     # what to do with a v1 project
 │   ├── CONFIGURATION.md            # layers, files, precedence, editing
 │   └── screens/                    # UI screenshots
