@@ -21,7 +21,7 @@ Release artifacts go on the GitHub release, not in git.
 4. Merge to main without committing, then strip dev-only paths:
    ```bash
    git checkout main && git merge --no-ff --no-commit development
-   git rm -rq --ignore-unmatch AGENTS.md CLAUDE.md .claude   # plus any other dev-only path
+   git rm -rqf --ignore-unmatch AGENTS.md CLAUDE.md .claude   # plus any other dev-only path
    git commit -m "Merge development: <version>" && git push origin main
    git tag vX.Y.Z && git push origin vX.Y.Z   # then gh release create with VSIX, wheel, sdist, SHA256SUMS
    ```
