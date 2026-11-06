@@ -109,6 +109,8 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
         except Exception:
             pass
         add("Handoff from another agent", body, "supervisor handoff ledger")
+    from . import intervene as _IV
+    add("Instruction from the researcher (follow it; it was approved for this task)", _IV.guidance(p, tid), "supervisor intervention", cap=per)
     if diagnostics:
         add("What failed verification (fix exactly this)", "\n".join("- " + x for x in diagnostics), "verification diagnostics", cap=per * 2)
     notes = [n["text"] for n in __import__("research.plans", fromlist=["x"]).progress_notes(p, tid, 5)]

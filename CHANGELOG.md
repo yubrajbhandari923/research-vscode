@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.6.0
+
+**Upgrading**: keep your project files and reinstall the extension. On open it refreshes `.research/bin`, links `./research` into the main checkout, starts the supervisor if Telegram is enabled or a plan is running, and replaces a supervisor still running older code (agents are never touched). New settings default off; existing config files are untouched. From the CLI: `research bin install --force` then `research supervisor restart`.
+- **Telegram needs two commands**: `research telegram setup` (also enables alerts and diagnosis, and starts the supervisor, which answers the chat). After a reboot, opening the project in VS Code or `research supervisor start` brings it back.
+
+- **Fix: the approval PIN prompt did not work in the CLI.** (1) `read_pin` opened `/dev/tty` in text `r+` mode, which Python 3.14's `getpass` rejects ("not seekable"); the error was swallowed and reported as "no interactive terminal". It now reads the terminal directly with echo off. (2) With no PIN set, protected actions passed silently; the first protected action in a real terminal now prompts to create one. (3) A PIN that could not be read no longer counts toward the 60 s lockout, and agent-shell refusals name the environment variable and the `env -u` workaround.
+- **`./research` in the main checkout**: `research bin install` links the project launcher into the main checkout (git-excluded, never overwrites a file or directory); `research bin link|unlink [--name]`. The launcher now follows symlinks.
+- **Escalation after an incomplete deliverable** (`execution.escalation` / `supervisor.escalation`): a missing or empty required output is classified `incomplete_deliverable`, and the next repair attempt can use a stronger model, higher effort or another profile (bounded, fresh session, recorded). Off by default.
+- Tests: `test_cli_pin_link_escalation` drives the real launcher through a pseudo-terminal.
+- **Plan validation**: `plan yaml validate|diff` warn when a `verifier` task must itself create a deliverable nobody upstream produces (verifiers check work, they do not author it). Advice only; nothing is rewritten.
+- **Failure handling**: a missing file is now `incomplete_deliverable` (repair), `missing_prerequisite` (another task owns it: blocked after one attempt, names the owner) or `role_contradiction` (verifier must author it: blocked after one attempt). History, budgets and approvals are untouched.
+- **Configuration**: `promotion.test_command` is the one canonical test command (`auto_promotion.test_command` is a legacy alias; both set and different is an error). `auto_promotion.numerical_command|reviewer_profile|require_distinct_reviewer` are in Settings. PIN errors now say incorrect PIN (with attempts left) vs no interactive terminal vs agent-controlled environment.
+- **`research supervisor reload` / `restart`** (also in Control Center): validate and apply settings live, or replace the process, without touching running agents, worktrees, budgets or promotion state. Settings are classified live / next launch / restart; an out-of-date supervisor is flagged.
+- **Concurrency** is reported (effective value and whether it comes from the project or the plan).
+- Fixed: applying a YAML whose only change was the plan `execution:` block did nothing.
+- Tests: `test_supervisor_fixes`.
+- **Supervisor intervention** (`research supervisor instruct`, `research intervention …`, Instruct / Unblock in the Control Center): steer a task in words; a planning agent proposes classified actions, protected ones (science, resources/retry budget, frozen tests, role changes) need ONE PIN approval, then the supervisor applies them idempotently, re-runs the task and resumes the plan. Evidence and original criteria are preserved (`verification_history`, `originals`, a Decision).
+- **Honest plan status**: `health` (progressing / waiting_for_approval / HALTED / completed) instead of an unqualified "running".
+- **Debug agent + Telegram** (opt-in): diagnosis of a halt with options (`research supervisor debug`), halt notifications and chat commands (`research telegram setup`), machine-local credentials, settings under Settings → Supervisor.
+- Fixed: re-verifying an attempt overwrote its earlier verification result.
+- Tests: `test_intervention`.
+
 ## 2.5.0
 
 **Opt-in unattended code promotion** (`docs/SUPERVISOR.md` section 14). Off by default; needs the plan to declare `execution.auto_promotion: true` AND a human PIN-gated `research plan autopromote PLAN authorize`.

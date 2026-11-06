@@ -130,6 +130,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                    "session_resume": "auto", "context_max_chars": 24000, "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"], "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1},
     "governance": copy.deepcopy(__import__("research.governance", fromlist=["x"]).DEFAULTS),   # who may create experiments/tasks; PIN approvals (governance.py)
     "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
+    # Opt-in unattended promotion (autopromote.py), supervisor interventions (intervene.py) and halt notifications (notify.py). Secrets (Telegram) are NOT here.
+    "auto_promotion": {"numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True},
+    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900},
+    "intervention": {"require_approval": False},
+    "notifications": {"halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False}},
     "sandbox": {
         "enabled": False,                         # true → `default_profile` applies to jobs that name no profile
         "default_profile": "native",

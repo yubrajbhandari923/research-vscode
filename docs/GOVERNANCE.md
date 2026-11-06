@@ -53,6 +53,12 @@ In VS Code a dialog asks for the PIN when a protected action needs it (Settings 
 
 **Limits, plainly.** This is not authentication. An agent running under your OS user can read your files, edit `approval.json` or the Research OS code. Use job isolation and worktrees to limit what agents can touch, and review what they do.
 
+Terminal behaviour (2.6.0): a protected CLI action prompts for the PIN on the controlling terminal with echo off. On a machine with **no** PIN the
+first protected action in a real terminal asks you to create one (it no longer passes silently; non-interactive runs keep the old behaviour). A PIN
+that could not be read (no terminal) is refused without counting as a wrong attempt. If the shell carries an agent variable (`CLAUDECODE`,
+`CLAUDE_CODE_ENTRYPOINT`, `CODEX_SANDBOX*`, `RESEARCH_AGENT`), prompts are disabled by design and the error names the variable and the
+`env -u … research …` form that clears it.
+
 ## 3. Claude, Codex and Antigravity
 
 Checked against the installed CLIs (claude 2.1.318, codex-cli 0.163.0, agy 1.5.0):

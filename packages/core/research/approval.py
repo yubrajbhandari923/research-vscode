@@ -14,6 +14,7 @@ import hmac
 import json
 import os
 import secrets
+import sys
 import time
 from typing import Any, Dict, Optional
 
@@ -72,7 +73,9 @@ def verify(pin: Optional[str]) -> None:
     wait = int(d.get("locked_until", 0) - time.time())
     if wait > 0:
         raise PolicyBlocked(f"Too many wrong PINs; try again in {wait}s")
-    if pin and hmac.compare_digest(_hash(pin, base64.b64decode(d["salt"])), d["hash"]):
+    if not pin:   # nothing was typed (no terminal, Ctrl-D): refuse, but do not count it toward the lockout
+        raise PolicyBlocked(no_pin_reason(), hint="Run this from a normal terminal (a prompt appears), or use the dialog in VS Code." + _env_hint())
+    if hmac.compare_digest(_hash(pin, base64.b64decode(d["salt"])), d["hash"]):
         if d.get("fails"):
             _save({**d, "fails": 0, "locked_until": 0})
         return
@@ -80,7 +83,8 @@ def verify(pin: Optional[str]) -> None:
     if d["fails"] >= MAX_FAILS:
         d.update(fails=0, locked_until=time.time() + LOCK_SECONDS)
     _save(d)
-    raise PolicyBlocked("Wrong or missing PIN")
+    left = MAX_FAILS - d["fails"]
+    raise PolicyBlocked("Incorrect PIN" + (f" ({left} attempt(s) left before a {LOCK_SECONDS}s lock)" if left > 0 else f"; locked for {LOCK_SECONDS}s"))
 
 
 def set_pin(new: str, old: Optional[str] = None) -> None:
@@ -93,16 +97,90 @@ def set_pin(new: str, old: Optional[str] = None) -> None:
     _save({"salt": base64.b64encode(salt).decode(), "hash": _hash(new, salt), "fails": 0, "locked_until": 0})
 
 
+def agent_env_vars() -> list:
+    return [k for k in _AGENT_ENV if os.environ.get(k)]
+
+
+def _env_hint() -> str:
+    v = agent_env_vars()
+    return (f" This shell looks like an agent environment ({', '.join(v)} is set), so PIN prompts are disabled. "
+            f"Open a plain terminal, or run: env {' '.join('-u ' + k for k in v)} research …") if v else ""
+
+
+def no_pin_reason() -> str:
+    """Why no PIN was available, so the error says which of three different problems it is (never the PIN itself)."""
+    if agent_environment():
+        return "No PIN was asked for: this shell is an agent-controlled environment (" + ", ".join(agent_env_vars()) + ")"
+    if not _has_tty():
+        return "No PIN could be read: there is no interactive terminal (a pipe, CI, a service or the VS Code RPC process)"
+    return "No PIN was entered"
+
+
+def _tty_fd() -> Optional[int]:
+    try:
+        return os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+
+
 def read_pin(prompt: str = "Approval PIN: ") -> Optional[str]:
-    """Read the PIN from the controlling terminal. None when there is none (agent shells, CI): the caller then fails closed."""
-    import getpass
+    """Read a secret from the controlling terminal with echo off. None when there is none (agent shells, CI, no tty): the caller fails closed.
+    Uses termios on /dev/tty directly: `getpass(stream=open('/dev/tty','r+'))` raises 'not seekable' on Python 3.14, which used to be swallowed
+    and reported as 'no interactive terminal'."""
     if agent_environment():
         return None
     try:
-        with open("/dev/tty", "r+") as tty:
-            return getpass.getpass(prompt, stream=tty)
-    except OSError:
+        import termios
+    except ImportError:   # Windows
+        import getpass
+        return (getpass.getpass(prompt) or None) if sys.stdin.isatty() else None
+    fd = _tty_fd()
+    if fd is None:
         return None
+    try:
+        old = termios.tcgetattr(fd)
+        new = old[:]
+        new[3] &= ~termios.ECHO
+        termios.tcsetattr(fd, termios.TCSAFLUSH, new)
+        try:
+            os.write(fd, prompt.encode())
+            buf = b""
+            while not buf.endswith(b"\n"):
+                ch = os.read(fd, 1)
+                if not ch:
+                    break
+                buf += ch
+        finally:
+            termios.tcsetattr(fd, termios.TCSAFLUSH, old)
+            os.write(fd, b"\n")
+        return buf.decode(errors="ignore").strip("\r\n") or None
+    except (OSError, termios.error):
+        return None
+    finally:
+        os.close(fd)
+
+
+def interactive() -> bool:
+    """A person is at a terminal (not an agent, not a pipe, not the VS Code RPC process, not a test run)."""
+    return not agent_environment() and sys.stdin.isatty() and sys.stdout.isatty() and _has_tty()
+
+
+def _has_tty() -> bool:
+    fd = _tty_fd()
+    if fd is None:
+        return False
+    os.close(fd)
+    return True
+
+
+def enroll() -> None:
+    """First protected action on a machine with no PIN: create one now, at the prompt, instead of silently skipping the check."""
+    print("No approval PIN is set on this machine. Protected actions (approving, promoting, authorizing) need one.", file=sys.stderr)
+    new = read_pin("Choose a PIN (at least 4 characters): ")
+    if not new or new != read_pin("Repeat PIN: "):
+        raise PolicyBlocked("No PIN was created, so nothing was approved", hint="Run `research approval set-pin`, then repeat the action.")
+    set_pin(new)
+    print("PIN saved on this machine (not in the project, git or agent context).", file=sys.stderr)
 
 
 def confirm(p, action: str, rationale: Optional[str] = None, pin: Optional[str] = None, rationale_required: Optional[bool] = None) -> Dict[str, Any]:
@@ -111,12 +189,14 @@ def confirm(p, action: str, rationale: Optional[str] = None, pin: Optional[str] 
     from . import governance as G
     if (p.author or {}).get("author_type") not in (None, "human") or (agent_environment() and pin is None):
         raise PolicyBlocked(f"{action} needs human approval: agents cannot do it",
-                            hint="Submit a proposal instead (`research proposal …`); the researcher approves it with a PIN.")
+                            hint="Submit a proposal instead (`research proposal …`); the researcher approves it with a PIN." + _env_hint())
     ap = G.cfg(p)["approval"]
     need_why = ap["require_rationale"] if rationale_required is None else rationale_required
     if need_why and not (rationale or "").strip():
         raise ResearchError(f"{action} needs a rationale", hint="Pass --note \"why\".")
-    if ap["require_pin"] and is_set():
+    if ap["require_pin"] and not is_set() and pin is None and interactive():
+        enroll()
+    elif ap["require_pin"] and is_set():
         verify(pin if pin is not None else read_pin())
     p.event("governance", None, "approval", f"{action}" + (f": {rationale.strip()[:300]}" if rationale else ""), {"author_type": "human", "author_name": os.environ.get("RESEARCH_AUTHOR")})
     return {"approved": True, "action": action}
