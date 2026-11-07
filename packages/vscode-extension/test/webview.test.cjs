@@ -12,6 +12,8 @@ const ROOT = path.resolve(__dirname, '../../..');
 const PY = process.env.RESEARCH_PYTHON || path.join(ROOT, '.venv/bin/python');
 const PYPATH = [path.join(ROOT, 'packages/core'), path.join(ROOT, 'packages/cli')].join(path.delimiter);
 let proj, lib, dom;
+// Deterministic when launched from inside an agent: the core treats these variables as "an agent is acting" and demands a PIN.
+for (const k of Object.keys(process.env)) if (/^(CLAUDE|AI_AGENT|RESEARCH_AGENT|RESEARCH_EXECUTION|CODEX_SANDBOX)/.test(k)) delete process.env[k];
 
 function startCore(root, xdg = path.join(os.tmpdir(), 'rp-xdg-empty')) {
   const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, XDG_CONFIG_HOME: xdg, PYTHONPATH: PYPATH, RESEARCH_CONFIG: '' } });
@@ -98,7 +100,11 @@ test('settings page: every setting has an accessible ? and hover, focus, click a
 });
 
 test('editing a setting: validation, diff review, save, audit, persists after restart, reset', async () => {
-  let core = startCore(proj); let host = hostFor(core);
+  // Policy changes need the approval PIN (fail closed), so this machine config gets one and the dialog is answered.
+  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-xdg-set-'));
+  let core = startCore(proj, xdg); let host = hostFor(core);
+  await core.call('approval_set_pin', { new: '4321' });
+  const pin = async () => { await waitFor(() => q(document, '#pin-in'), 8000); await type(q(document, '#pin-in'), '4321'); await click(byText(q(document, '#pin-in').closest('[role=dialog]'), 'button', 'Confirm')); };
   let { el, unmount } = await lib.mount(host, { page: 'settings' });
   try {
     await ready(el);
@@ -118,22 +124,22 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     assert.ok(!fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8').split('\n').some((l) => !l.startsWith('#') && l.includes('max_runs')));
     await click(byText(el, 'button', 'Review changes'));
     await click(byText(q(el, '[role=dialog]'), 'button', 'Save changes'));
-    await lib.tick(500);
+    await pin(); await lib.tick(500);
     assert.match(q(el, '.banner.ok').textContent, /Saved/);
     assert.match(fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8'), /max_runs_without_synthesis: 8/);
     assert.match(fs.readFileSync(path.join(proj, '.research/context/policy.md'), 'utf8'), /Maximum runs without synthesis.*8/);
     // restart everything: a new core process and a new UI see the saved value with its source
     await unmount(); core.stop();
-    core = startCore(proj); host = hostFor(core); ({ el, unmount } = await lib.mount(host, { page: 'settings' }));
+    core = startCore(proj, xdg); host = hostFor(core); ({ el, unmount } = await lib.mount(host, { page: 'settings' }));
     await ready(el);
     const row = qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     assert.equal(q(row, 'input').value, '8'); assert.ok(q(row, '.src-project'), 'shows it is a project override');
     // reset removes only the override
-    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await lib.tick(500);
+    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await pin(); await lib.tick(500);
     const rowOf = () => qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     await waitFor(() => q(rowOf(), 'input').value === '5');
     assert.equal(q(rowOf(), 'input').value, '5'); assert.ok(q(rowOf(), '.src-default'));
-  } finally { await unmount(); core.stop(); }
+  } finally { await unmount(); core.stop(); fs.rmSync(xdg, { recursive: true, force: true }); }
 });
 
 test('search finds settings across categories; unknown search says so', async () => {

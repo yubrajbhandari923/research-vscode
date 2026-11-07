@@ -59,11 +59,11 @@ exports.run = async function () {
     const tA = await submit('Add Task form saves', `new-task-${planId}`, taskVals('Task A', []), { plan_id: planId });
     await vscode.commands.executeCommand('research.task.create', planId);
     const tB = await submit('Add Task form saves (with dependency)', `new-task-${planId}`, taskVals('Task B', [tA]), { plan_id: planId });
-    let next = await model.client.request('next_task', { plan_id: planId });
+    let next = (await model.client.request('show', { id: planId })).next_task;
     check('next ready task is the one without deps', next && next.id === tA, next && next.id);
     await vscode.commands.executeCommand('research.task.start', tA);
     await vscode.commands.executeCommand('research.setStatus', tA, 'done');
-    next = await model.client.request('next_task', { plan_id: planId });
+    next = (await model.client.request('show', { id: planId })).next_task;
     check('Start + Change Status → dependent task becomes ready', next && next.id === tB, next && next.id);
     await vscode.commands.executeCommand('research.edit', tB);
     await submit('Edit task form saves', `edit-${tB}`, { ...taskVals('Task B edited', []), goal: 'new goal', task_type: null,
