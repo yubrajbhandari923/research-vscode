@@ -134,3 +134,60 @@ def test_policy_settings_and_promotion_need_the_pin(proj):
     with pytest.raises(PolicyBlocked):
         registry.apply(proj, {"governance.tasks.max_auto_per_experiment": 9})
     assert registry.apply(proj, {"governance.tasks.max_auto_per_experiment": 9}, pin="1234")["changed"]
+
+
+# ---- WP2: fail-closed approval, agent mirror imports, Telegram poll ----------------------------------------------------
+def test_no_pin_no_tty_human_is_refused_and_opt_out_is_explicit(proj):
+    proj.author = {"author_type": "human"}
+    assert not AP.is_set()
+    with pytest.raises(PolicyBlocked, match="No approval PIN"):
+        AP.confirm(proj, "x", "why")
+    proj.config["governance"] = {"approval": {"require_pin": False}}
+    assert AP.confirm(proj, "x", "why")["approved"]
+
+
+def test_agent_written_experiment_mirror_becomes_a_proposal(proj, repo, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    (repo / ".research" / "experiments" / "sneaky.md").write_text(
+        "---\ntitle: Sneaky\nstatus: running\n---\n\n## Hypothesis\n\nh\n\n## Motivation\n\nr\n\n## Method\n\nm\n\n## Expected outcome\n\no\n")
+    proj.sync()
+    rows = proj.q("SELECT id, status FROM experiments")
+    assert [r["status"] for r in rows] == ["proposed"]
+    assert proj.q1("SELECT id FROM events WHERE action='import_rejected'")
+    assert [pr["source"] for pr in SV.list_proposals(proj)] == ["mirror"]
+
+
+def test_agent_cannot_set_a_finding_supported_by_editing_its_file(proj, repo, monkeypatch):
+    f = services.create_finding(proj, "F", "stmt")
+    path = repo / ".research" / "findings" / f"{f['id']}.md"
+    prev = proj.get("finding", f["id"])["status"]
+    monkeypatch.setenv("CLAUDECODE", "1")
+    path.write_text(path.read_text().replace(f"status: {prev}", "status: supported"))
+    os.utime(path, (1, 1))
+    proj.sync()
+    assert proj.get("finding", f["id"])["status"] == prev
+    assert proj.q1("SELECT id FROM events WHERE action='import_rejected' AND entity_id=?", (f["id"],))
+
+
+def test_poll_saves_offset_before_handling_and_keeps_0600(proj, monkeypatch, tmp_path):
+    import stat
+    from research import notify
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg2"))
+    sent = []
+
+    def api(token, method, params=None, timeout=10):
+        if method == "getUpdates":
+            return {"ok": True, "result": [u for u in [{"update_id": 5, "message": {"chat": {"id": 7}, "text": "/help"}}] if u["update_id"] >= int((params or {}).get("offset") or 0)]}
+        return {"ok": True}
+
+    def boom(*a, **k):
+        sent.append(a)
+        raise RuntimeError("network down")
+    monkeypatch.setattr(notify, "_api", api)
+    monkeypatch.setattr(notify, "send", boom)
+    notify.set_credentials("123456:" + "A" * 24, 7)
+    with pytest.raises(RuntimeError):
+        notify.poll(proj)
+    assert notify.credentials()["offset"] == 6                          # a failed send must not replay the update
+    assert stat.S_IMODE(os.stat(notify._path()).st_mode) == 0o600
+    assert notify.poll(proj) == 0 and len(sent) == 1

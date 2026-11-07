@@ -19,7 +19,7 @@ from . import gitinfo, mirrors, schema, yamlio, durability
 from .util import deep_merge as _deep_merge
 from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
-from .util import IncompatibleProject, NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
+from .util import IncompatibleProject, NotFound, NotInitialized, PolicyBlocked, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
 
 PROJECT_FORMAT = 2   # the on-disk project layout; independent of schema.SCHEMA_VERSION (the SQLite index layout)
 RESEARCH_DIR = ".research"
@@ -187,7 +187,7 @@ def check_format(rdir: str) -> None:
         raise IncompatibleProject(
             f"{os.path.dirname(rdir)} is a Research OS " + ("v1" if fmt is None else f"format-{fmt}") + f" project; this is Research OS 2 (project format {PROJECT_FORMAT}).",
             hint="Research OS 2 does not read or upgrade v1 projects. Keep the old records: rename `.research` to `.research-v1-archive` "
-                 "(it is only moved by you, never deleted), then run `research init` for a fresh v2 project. See docs/GUIDE_V2_START_FRESH.md.")
+                 "(it is only moved by you, never deleted), then run `research init` for a fresh v2 project. See README.md and QUICKSTART.md.")
 
 
 def write_format(rdir: str) -> None:
@@ -824,7 +824,7 @@ class Project:
                 changes = {k: v for k, v in values.items() if cur.get(k) != v and k not in ("created_at",)}
                 if etype == "task" and changes.get("status") == "done" and cur.get("status") != "done":
                     try:    # a hand-edited file must not complete a task around its gates or around the supervisor
-                        from . import supervisor as _sv, plans as _pl, orchestrate as _or, verification as _vf
+                        from . import supervisor as _sv, orchestrate as _or, verification as _vf
                         _sv.guard_completion(self, id_)
                         _or.assert_frozen_intact(self, id_)
                         _vf.gate_task_completion(self, id_)
@@ -832,6 +832,12 @@ class Project:
                         changes.pop("status")
                         changes.pop("completed_at", None)
                         self.event("task", id_, "import_rejected", f"status: done from {self.rel(path)} refused: {str(ex)[:200]}",
+                                   {"author_type": "system"})
+                if etype == "finding" and changes.get("status") == "supported" and cur.get("status") != "supported":
+                    from . import governance as _g
+                    if _g.is_agent(self) and not _g._GRANTS:    # supported needs a human review
+                        changes.pop("status")
+                        self.event("finding", id_, "import_rejected", f"status: supported from {self.rel(path)} refused: agents cannot mark findings supported",
                                    {"author_type": "system"})
                 old_links = cur.get("links", {})
                 lchanged = {k: v for k, v in links.items() if list(old_links.get(k, [])) != v}
@@ -848,8 +854,26 @@ class Project:
                 if etype == "finding":
                     values.setdefault("kind", "result")
                 auth = {k: values.get(k) or hand.get(k) for k in ("author_type", "author_name", "author_model")}
+                refused = None
+                if etype == "experiment":
+                    from . import governance as _g
+                    try:
+                        _g.check_experiment_create(self)
+                    except PolicyBlocked as ex:
+                        refused = ex
+                        values["status"] = "proposed"
                 self.insert_entity(etype, values, links, id_=id_, author=auth,
                                    summary=f"{id_} imported from {self.rel(path)}")
+                if refused:
+                    from . import supervisor as _sv
+                    self.event("experiment", id_, "import_rejected", f"new experiment {self.rel(path)} from an agent imported as proposed: {str(refused)[:150]}",
+                               {"author_type": "system"})
+                    try:
+                        _sv.propose_experiment(self, {"title": values.get("title"), "hypothesis": values.get("hypothesis"), "rationale": values.get("motivation"),
+                                                  "method": values.get("method"), "expected_outputs": values.get("expected_outcome"),
+                                                  "related": f"imported from {self.rel(path)}"}, source="mirror")
+                    except ResearchError:
+                        pass    # incomplete fields: the proposed experiment stays visible to the researcher
         finally:
             self._suppress_export = prev_suppress
         self._record_mirror(etype, id_, path, data)

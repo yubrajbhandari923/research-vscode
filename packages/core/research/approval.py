@@ -104,7 +104,7 @@ def agent_env_vars() -> list:
 def _env_hint() -> str:
     v = agent_env_vars()
     return (f" This shell looks like an agent environment ({', '.join(v)} is set), so PIN prompts are disabled. "
-            f"Open a plain terminal, or run: env {' '.join('-u ' + k for k in v)} research …") if v else ""
+            "Run it in your own terminal.") if v else ""
 
 
 def no_pin_reason() -> str:
@@ -194,9 +194,13 @@ def confirm(p, action: str, rationale: Optional[str] = None, pin: Optional[str] 
     need_why = ap["require_rationale"] if rationale_required is None else rationale_required
     if need_why and not (rationale or "").strip():
         raise ResearchError(f"{action} needs a rationale", hint="Pass --note \"why\".")
-    if ap["require_pin"] and not is_set() and pin is None and interactive():
+    if ap["require_pin"] and not is_set():
+        if pin is not None or not interactive():    # fail closed: nothing to verify against
+            raise PolicyBlocked("No approval PIN is set on this machine",
+                                hint="Set one: `research approval set-pin` or VS Code Settings → Approval PIN. "
+                                     "To run without a PIN, set approval.require_pin: false (machine config).")
         enroll()
-    elif ap["require_pin"] and is_set():
+    elif ap["require_pin"]:
         verify(pin if pin is not None else read_pin())
     p.event("governance", None, "approval", f"{action}" + (f": {rationale.strip()[:300]}" if rationale else ""), {"author_type": "human", "author_name": os.environ.get("RESEARCH_AUTHOR")})
     return {"approved": True, "action": action}

@@ -144,7 +144,8 @@ def test_a_role_contradiction_is_fixed_by_one_protected_approval_and_the_task_re
     stub.reply = {"summary": "Make it the report's author.", "actions": [{"type": "amend_task", "fields": {"agent": {"role": "analyst", "profile": "fake"}}}, {"type": "unblock"}]}
     it = I.request(lproj, phase(lproj, "rep")["id"], "This task has to write the gate report: make it an analyst.")
     assert it["protected"] == ["scientific"], "a role change can weaken independent review, so it is protected"
-    I.approve(lproj, it["id"], "intended: an analyst authors the report")
+    A.set_pin("4321")
+    I.approve(lproj, it["id"], "intended: an analyst authors the report", pin="4321")
     assert ticks(lproj, lambda: iv_state(lproj, it["id"]) == "resolved", 120)
     assert len(run_attempts(lproj)["rep"]) == 2 and phase(lproj, "rep")["role"] == "analyst"
 
@@ -157,7 +158,8 @@ def test_engineering_repair_grants_attempts_only_with_approval_and_guides_the_ne
         {"type": "guide", "text": "Write out.txt before finishing."}, {"type": "set_max_attempts", "value": 3}, {"type": "retry"}]}
     it = I.request(lproj, phase(lproj, "e")["id"], "It just needs another go; remind it to write the file.")
     assert it["protected"] == ["resource"] and it["state"] == "proposed", "retry budgets change only with authorization"
-    I.approve(lproj, it["id"], "one more try is fine")
+    A.set_pin("4321")
+    I.approve(lproj, it["id"], "one more try is fine", pin="4321")
     assert ticks(lproj, lambda: iv_state(lproj, it["id"]) == "resolved", 120)
     st = PS.load_state(lproj, "fx")
     assert "Write out.txt before finishing." in I.guidance(lproj, st["tasks"]["e"])
@@ -236,7 +238,8 @@ def test_frozen_test_changes_are_always_protected_and_never_edit_files(lproj, st
     stub.reply = {"summary": "s", "actions": [{"type": "change_frozen_test", "path": "frozen_test.py", "reason": "the oracle tolerance was mis-specified"}, {"type": "unblock"}]}
     it = I.request(lproj, phase(lproj, "w")["id"], "the oracle is wrong")
     assert it["protected"] == ["frozen_test"] and it["state"] == "proposed"
-    I.approve(lproj, it["id"], "yes, the oracle was wrong")
+    A.set_pin("4321")
+    I.approve(lproj, it["id"], "yes, the oracle was wrong", pin="4321")
     ticks(lproj, lambda: iv_state(lproj, it["id"]) in ("verifying", "resolved", "failed"), 60)
     assert open(os.path.join(lproj.root, "frozen_test.py")).read() == "assert True\n", "the intervention never rewrites a frozen test itself"
     assert "authorized: modify frozen test frozen_test.py" in I.guidance(lproj, PS.load_state(lproj, "fx")["tasks"]["w"])

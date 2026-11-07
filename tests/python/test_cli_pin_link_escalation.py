@@ -116,7 +116,7 @@ def test_mismatched_new_pin_creates_nothing_and_authorizes_nothing(cli):
 def test_agent_shells_get_a_clear_message_and_are_never_locked_out(cli):
     pty_run([cli["bin"], "approval", "set-pin"], ["4321", "4321"], env_for(cli["xdg"]), cli["repo"])
     code, prompts, out = authorize(cli, [], CLAUDE_CODE_ENTRYPOINT="cli")
-    assert code != 0 and prompts == [] and "CLAUDE_CODE_ENTRYPOINT" in out and "env -u" in out and mode(cli) == "manual"
+    assert code != 0 and prompts == [] and "CLAUDE_CODE_ENTRYPOINT" in out and "own terminal" in out and mode(cli) == "manual"
     assert pinfile(cli).get("fails", 0) == 0
 
 

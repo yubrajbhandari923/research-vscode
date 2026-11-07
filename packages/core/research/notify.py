@@ -55,6 +55,14 @@ def set_credentials(token: str, chat_id: Optional[Any] = None) -> None:
     os.replace(tmp, path)
 
 
+def _save(c: Dict[str, Any]) -> None:
+    path = _path()
+    fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(c, f)
+    os.replace(path + ".tmp", path)
+
+
 def clear_credentials() -> None:
     try:
         os.unlink(_path())
@@ -302,6 +310,7 @@ def poll(p) -> int:
     n = 0
     for u in _api(c["token"], "getUpdates", {"timeout": 0, "offset": int(c.get("offset") or 0)}, 10).get("result", []):
         c["offset"] = u["update_id"] + 1
+        _save(c)    # before handling, so a failing send() never replays the update
         m = u.get("message") or {}
         if str((m.get("chat") or {}).get("id")) != str(c["chat_id"]) or not m.get("text"):
             continue
@@ -313,11 +322,6 @@ def poll(p) -> int:
         except Exception as ex:   # noqa: BLE001
             reply = f"Error: {type(ex).__name__}"
         send(reply, c["chat_id"])
-    path = _path()
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(c, f)
-    os.chmod(path + ".tmp", 0o600)
-    os.replace(path + ".tmp", path)
     return n
 
 

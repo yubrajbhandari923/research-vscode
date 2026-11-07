@@ -1,4 +1,4 @@
-# Governance, approvals, provider handoff and YAML setup (2.4)
+# Governance, approvals, provider handoff and YAML setup
 
 Research OS is the supervisor. Claude Code, Codex and Antigravity are workers: they propose, you decide.
 
@@ -45,19 +45,16 @@ research approval status
 research approval verify
 ```
 
-In VS Code a dialog asks for the PIN when a protected action needs it (Settings → Approval PIN to set it). In a terminal it is read from `/dev/tty`; a non-interactive session (an agent, CI) has none and the action **fails closed**.
+In VS Code a dialog asks for the PIN when a protected action needs it (Settings → Approval PIN to set it). In a terminal it is read from `/dev/tty` with echo off.
 
-* Stored as a salted scrypt verifier in `approval.json` next to your machine config (`~/.config/research-os/`, mode 0600). Never in the project, Git, events, prompts or MCP output. No default PIN. 5 wrong tries lock it for 60 seconds.
-* If no PIN is set, humans can still do protected actions (agents still cannot), and the Doctor says so. Forgot it? Delete `approval.json` and set a new one.
-* `--as human` does not help an agent: a process that looks like an agent (its environment) is refused, and without the PIN there is nothing to type.
+* **One rule when no PIN is set.** A protected action **fails closed**: in a real terminal the first one asks you to create a PIN; anywhere else (VS Code, RPC, CI, an agent shell) it is refused with "No approval PIN is set on this machine" and the hint to run `research approval set-pin` or use Settings → Approval PIN. Agents are always refused.
+* **Explicit opt-out.** If you really want no PIN, set `governance.approval.require_pin: false`. Protected actions then still need a human (never an agent) and a rationale.
+* Stored as a salted scrypt verifier in `approval.json` next to your machine config (`~/.config/research-os/`, mode 0600). Never in the project, Git, events, prompts or MCP output. No default PIN. 5 wrong tries lock it for 60 seconds. A PIN that could not be read (no terminal) is refused without counting as a wrong attempt. Forgot it? Delete `approval.json` and set a new one.
+* `--as human` does not help an agent: a process that looks like an agent (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CODEX_SANDBOX*`, `RESEARCH_AGENT`) is refused and prompts are disabled by design. Run the command in your own terminal.
+* Telegram: `telegram.json` and its update offset are written 0600, and the offset is saved before each message is handled, so a failed reply never replays a command.
+* Hand-edited mirrors: if an agent writes a new experiment file, it is imported as `proposed` with a proposal (`import_rejected` event) instead of becoming an experiment; an agent edit that sets a finding to `supported` is reverted with an event.
 
 **Limits, plainly.** This is not authentication. An agent running under your OS user can read your files, edit `approval.json` or the Research OS code. Use job isolation and worktrees to limit what agents can touch, and review what they do.
-
-Terminal behaviour (2.6.0): a protected CLI action prompts for the PIN on the controlling terminal with echo off. On a machine with **no** PIN the
-first protected action in a real terminal asks you to create one (it no longer passes silently; non-interactive runs keep the old behaviour). A PIN
-that could not be read (no terminal) is refused without counting as a wrong attempt. If the shell carries an agent variable (`CLAUDECODE`,
-`CLAUDE_CODE_ENTRYPOINT`, `CODEX_SANDBOX*`, `RESEARCH_AGENT`), prompts are disabled by design and the error names the variable and the
-`env -u … research …` form that clears it.
 
 ## 3. Claude, Codex and Antigravity
 
