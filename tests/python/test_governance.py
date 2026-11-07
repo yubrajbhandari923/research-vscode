@@ -181,7 +181,7 @@ def test_poll_saves_offset_before_handling_and_keeps_0600(proj, monkeypatch, tmp
         return {"ok": True}
 
     def boom(*a, **k):
-        sent.append(a)
+        sent.append(notify.credentials()["offset"])    # the offset file is already written when the handler replies
         raise RuntimeError("network down")
     monkeypatch.setattr(notify, "_api", api)
     monkeypatch.setattr(notify, "send", boom)
@@ -190,4 +190,4 @@ def test_poll_saves_offset_before_handling_and_keeps_0600(proj, monkeypatch, tmp
         notify.poll(proj)
     assert notify.credentials()["offset"] == 6                          # a failed send must not replay the update
     assert stat.S_IMODE(os.stat(notify._path()).st_mode) == 0o600
-    assert notify.poll(proj) == 0 and len(sent) == 1
+    assert sent == [6] and notify.poll(proj) == 0 and len(sent) == 1
