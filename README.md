@@ -122,6 +122,12 @@ npm run package        # VSIX, wheel and sdist in dist/
 
 Activate the environment before `npm test`: it invokes `python3` from PATH.
 
+## Install and update from GitHub
+
+Download the wheel from the latest GitHub release and run `pip install research_panel-*.whl`. Later, `research self-update`
+checks the release's `SHA256SUMS`, installs, and refuses a major (breaking) upgrade without `--major`; `--check` only reports.
+The extension needs a core with the same major version and a minor at least what it declares. Details: [docs/INSTALL_UPDATE.md](docs/INSTALL_UPDATE.md).
+
 ## Start a research project
 
 ```bash
@@ -375,7 +381,7 @@ SQLite journal files blindly.
 |---|---|
 | "Not a Research OS 2 project" | It is a v1 project; see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md). Nothing was changed |
 | CLI missing | Use `.research/bin/research`, activate the installed environment, or `research bin install` |
-| Python fails to start in VS Code | Check Output → Research and `research.pythonPath` |
+| Python fails to start in VS Code | Check Output → Research and `research.cliPath` (run `research version --json`) |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
 | Required hook blocks work | Inspect its exact command, then have a human approve or deliberately disable it |
 | Malformed Markdown, JSONL or YAML | Preserve the file, repair the reported record, then retry |

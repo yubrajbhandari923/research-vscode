@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { Model } from './model';
 import { openPath, Panels } from './panels';
 import { Field, FormSpec } from './render/form';
-import { Shim } from './shim';
+import { commandLine } from './cli';
 
 const Q_STATUS: [string, string, string][] = [['open', 'open', 'blue'], ['investigating', 'investigating', 'yellow'], ['answered', 'answered', 'green'], ['blocked', 'blocked', 'red'], ['abandoned', 'abandoned', 'gray']];
 const E_STATUS: [string, string, string][] = [['proposed', 'proposed', 'gray'], ['ready', 'ready', 'blue'], ['running', 'running', 'yellow'], ['needs_review', 'needs review', 'orange'], ['completed', 'completed', 'green'], ['failed', 'failed', 'red'], ['abandoned', 'abandoned', 'gray']];
@@ -24,7 +24,7 @@ function idArg(a: any): string | undefined {
   return undefined;
 }
 
-export function registerCommands(ctx: vscode.ExtensionContext, model: Model, panels: Panels, shim: Shim, out: vscode.OutputChannel) {
+export function registerCommands(ctx: vscode.ExtensionContext, model: Model, panels: Panels, out: vscode.OutputChannel) {
   const rpc = <T = any>(m: string, p: any = {}) => model.client.request<T>(m, p);
   const reg = (id: string, fn: (...a: any[]) => any) =>
     ctx.subscriptions.push(
@@ -176,7 +176,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       const r = await rpc('show', { id });
       cwd = path.join(model.root, r.working_dir || '.');
     }
-    const t = vscode.window.createTerminal({ name: id ? `Research · ${id}` : 'Research', cwd, env: shim.env() });
+    const t = vscode.window.createTerminal({ name: id ? `Research · ${id}` : 'Research', cwd });
     t.show();
   });
 
@@ -397,8 +397,8 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
         if (v.label) args.push('--label', v.label);
         if (c.override) args.push('--override', c.override);
         args.push('--cwd', wd, '--');
-        const cmdline = shim.commandLine(args) + ' ' + v.command.trim();
-        const t = vscode.window.createTerminal({ name: `▶ ${c.id}${v.label ? ' · ' + v.label : ''}`, cwd: model.root, env: shim.env() });
+        const cmdline = commandLine(args) + ' ' + v.command.trim();
+        const t = vscode.window.createTerminal({ name: `▶ ${c.id}${v.label ? ' · ' + v.label : ''}`, cwd: model.root });
         t.show();
         t.sendText(cmdline, true);
         setTimeout(() => model.schedule(0), 1500);
@@ -783,13 +783,13 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     if (act !== 'Start') return;
     if (d.problem) return void vscode.window.showErrorMessage(d.problem);
     if (!d.execution_id) {  // not tied to a task (planner/analyst on a plan, finding review): no launch tracking is possible
-      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role}${target ? ' · ' + target : ''}`, cwd: d.cwd || model.root, env: d.env });
       term.show(); term.sendText(d.argv.map((x: string, i: number, all: string[]) => (all[i - 1] === '--output-format' && x === 'json' ? 'text' : x)).map(shq).join(' '), true);   // readable output in a terminal
       return void done(`${d.profile}/${d.role}: command sent to a terminal; Research OS cannot confirm it is running`);
     }
     if (mode.headless) await rpc('execution_start', { id: d.execution_id });
     else {
-      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role} · ${target}`, cwd: d.cwd, env: { ...shim.env(), ...d.env } });
+      const term = vscode.window.createTerminal({ name: `🤖 ${d.profile}/${d.role} · ${target}`, cwd: d.cwd, env: d.env });
       term.show(); term.sendText(d.argv.map(shq).join(' '), true);
     }
     // "Running" is only reported once the launcher has recorded a live process; "completed" only once it exited 0.
@@ -842,14 +842,14 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
       break;
     }
     if (d.problem) return void vscode.window.showErrorMessage(d.problem);
-    const term = vscode.window.createTerminal({ name: `🤖 guide draft`, cwd: d.cwd || model.root, env: { ...shim.env(), ...d.env } });
+    const term = vscode.window.createTerminal({ name: `🤖 guide draft`, cwd: d.cwd || model.root, env: d.env });
     term.show(); term.sendText(d.argv.map((x: string, i: number, all: string[]) => (all[i - 1] === '--output-format' && x === 'json' ? 'text' : x)).map(shq).join(' '), true);
     done('Guide draft: command sent to a terminal. When it finishes, the Guide page shows whether it stayed within your limits.');
   });
   reg('research.guide.preview', async () => {
     try {
       const r = await rpc('guide_preview', {});
-      const term = vscode.window.createTerminal({ name: 'Guide preview', cwd: r.cwd, env: shim.env() });
+      const term = vscode.window.createTerminal({ name: 'Guide preview', cwd: r.cwd });
       term.show(); term.sendText(r.argv.map(shq).join(' '), true);
     } catch (e: any) { vscode.window.showErrorMessage(e.message + (e.hint ? `\n\n${e.hint}` : ''), { modal: true }); }
   });

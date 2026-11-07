@@ -1,21 +1,26 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { CoreClient, detectPython } from './client';
+import { CoreClient } from './client';
+import { checkCli, showVersionInfo, warnCli } from './cli';
+import { findProjectRoot } from './util';
 import { registerCommands } from './commands';
 import { Model } from './model';
 import { OverviewView, Panels } from './panels';
-import { Shim } from './shim';
 import {
   agentRoots, artifactRoots, checkpointRoots, decisionRoots, experimentRoots, findingRoots, noteRoots, planRoots, questionRoots, ResearchTree,
 } from './trees';
 
 function pickRoot(): string | undefined {
   const cfg = vscode.workspace.getConfiguration('research').get<string>('projectRoot', '');
-  const folders = vscode.workspace.workspaceFolders || [];
+  const folders = (vscode.workspace.workspaceFolders || []).filter((f) => f.uri.scheme === 'file');
   if (cfg) return path.isAbsolute(cfg) || !folders.length ? cfg : path.join(folders[0].uri.fsPath, cfg);
-  const withResearch = folders.find((f) => f.uri.scheme === 'file' && fs.existsSync(path.join(f.uri.fsPath, '.research', 'config.yaml')));
-  return (withResearch || folders.find((f) => f.uri.scheme === 'file'))?.uri.fsPath;
+  // Walk up so opening a subfolder of an initialized project still finds it.
+  for (const f of folders) {
+    const r = findProjectRoot(f.uri.fsPath, fs.existsSync);
+    if (r) return r;
+  }
+  return folders[0]?.uri.fsPath;
 }
 
 export async function activate(ctx: vscode.ExtensionContext) {
@@ -31,18 +36,26 @@ export async function activate(ctx: vscode.ExtensionContext) {
   out.appendLine(`[research] project root: ${root} (remote: ${vscode.env.remoteName || 'no'})`);
 
   const cfg = () => vscode.workspace.getConfiguration('research');
+  ctx.subscriptions.push(vscode.commands.registerCommand('research.showVersionInfo', () => showVersionInfo(ctx)));
+  const cliState = checkCli(ctx, out);
+  if (cliState.status !== 'ok') {
+    warnCli(cliState);
+    const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+    bar.text = '$(warning) Research: ' + (cliState.status === 'missing' ? 'CLI not found' : 'version mismatch');
+    bar.command = 'research.showVersionInfo';
+    bar.show();
+    ctx.subscriptions.push(bar);
+    vscode.commands.executeCommand('setContext', 'research.ready', true);
+    vscode.commands.executeCommand('setContext', 'research.initialized', false);
+    return;   // do not spawn rpc against an incompatible CLI
+  }
   if (ctx.globalState.get('research.justInitialized')) {   // first window after Initialize Project: say what to do next
     ctx.globalState.update('research.justInitialized', undefined);
     vscode.window.showInformationMessage('Research project ready. Start with New experiment, then dispatch a task to an agent.', 'New experiment', 'Quick start')
       .then((c) => c === 'New experiment' ? vscode.commands.executeCommand('research.experiment.create') : c === 'Quick start' ? vscode.env.openExternal(vscode.Uri.parse('https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md')) : undefined);
   }
-  const python = detectPython(cfg().get<string>('pythonPath', ''), out);
-  const corePath = CoreClient.corePath(ctx);
-  CoreClient.pythonPathEnv = corePath;
-  const client = new CoreClient(root, python, out);
+  const client = new CoreClient(root, cliState.path, out);
   const model = new Model(client, out);
-  const shim = new Shim(ctx, python, corePath);
-  shim.install(cfg().get<boolean>('terminalCommand', true));
   const panels = new Panels(ctx, model, out);
   ctx.subscriptions.push(client, model, panels);
 
@@ -100,23 +113,8 @@ export async function activate(ctx: vscode.ExtensionContext) {
     if (model.tree && !model.tree.experiments.length) exp.message = 'No experiments yet. Register one before running anything substantial.';
   });
 
-  // ------------------------------------------------------------------ project-local CLI (.research/bin/research)
-  // Agents whose shells don't inherit VS Code's terminal PATH (e.g. Claude Code's Bash tool) call this launcher.
-  let binDone = false;
-  const installBin = async () => {
-    if (binDone || !model.initialized || !cfg().get<boolean>('projectCli', true)) return;
-    binDone = true;
-    try {
-      const r = await client.request('install_bin');
-      if (r?.updated) out.appendLine(`[research] project CLI ready: ${r.path}`);
-    } catch (e: any) {
-      out.appendLine(`[research] could not write .research/bin: ${e.message}`);
-    }
-  };
-  model.onChange(() => void installBin());
-
   // ------------------------------------------------------------------ commands + watchers
-  registerCommands(ctx, model, panels, shim, out);
+  registerCommands(ctx, model, panels, out);
 
   const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(root, '.research/**'));
   const onFs = (u: vscode.Uri) => {
@@ -133,16 +131,14 @@ export async function activate(ctx: vscode.ExtensionContext) {
   ctx.subscriptions.push(agentsWatcher);
   ctx.subscriptions.push(vscode.window.onDidChangeWindowState((s) => s.focused && model.initialized && model.schedule(200)));
   ctx.subscriptions.push(vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration('research.terminalCommand')) shim.install(cfg().get<boolean>('terminalCommand', true));
-    if (e.affectsConfiguration('research.projectCli')) { binDone = false; void installBin(); }
-    if (e.affectsConfiguration('research.pythonPath')) vscode.window.showInformationMessage('Reload the window to use the new Python path.', 'Reload').then((c) => c && vscode.commands.executeCommand('workbench.action.reloadWindow'));
+    if (e.affectsConfiguration('research.cliPath')) vscode.window.showInformationMessage('Reload the window to use the new CLI path.', 'Reload').then((c) => c && vscode.commands.executeCommand('workbench.action.reloadWindow'));
   }));
 
   await model.refresh();
   if (model.error) {
-    vscode.window.showErrorMessage(`Research Panel: ${model.error}`, 'Show log', 'Set Python path').then((c) => {
+    vscode.window.showErrorMessage(`Research Panel: ${model.error}`, 'Show log', 'Set CLI path').then((c) => {
       if (c === 'Show log') out.show();
-      if (c === 'Set Python path') vscode.commands.executeCommand('workbench.action.openSettings', 'research.pythonPath');
+      if (c === 'Set CLI path') vscode.commands.executeCommand('workbench.action.openSettings', 'research.cliPath');
     });
   }
   return { model, panels };

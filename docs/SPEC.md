@@ -45,6 +45,7 @@ such as "when does an experiment become `needs_review`?", "when is a task *ready
 11. [Python API reference](#11-python-api-reference)
 12. [JSON-RPC protocol (extension ↔ core)](#12-json-rpc-protocol-extension--core)
 13. [VS Code extension specification](#13-vs-code-extension-specification)
+13.13 [Terminal UI](#1313-terminal-ui-research-tui) · 13.14 [Self-update and compatibility](#1314-self-update-and-compatibility)
 14. [Remote SSH and HPC behaviour](#14-remote-ssh-and-hpc-behaviour)
 14A. [Full deterministic context export](#14a-full-deterministic-context-export-research-report---full)
 14B. [The managed AGENTS.md block](#14b-the-managed-agentsmd-block)
@@ -159,8 +160,10 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | VS Code: detail pages | Experiment, Finding, Question, Decision, Checkpoint, Run, Artifact, Plan, Task | 13.5 |
 | VS Code: artifact previews | Image, CSV/TSV, JSON, Markdown, text/log/code, NPY header, directory | 13.5 |
 | VS Code: forms | Schema-driven create/edit forms with entity pickers, parameter editors, run modes | 13.6 |
-| VS Code: terminal shim | `research` on `PATH` in every integrated terminal | 13.8 |
-| Project-local CLI | `.research/bin/research`: a vendored copy of the CLI any agent can run without install or `PATH` (`research bin install`, refreshed by `init` and the extension) | 13.8 |
+| CLI on `PATH` | The extension runs the installed `research` (`research.cliPath`, `PATH`, `~/.local/bin`, pipx); nothing is bundled in the VSIX | 13.8 |
+| Project-local CLI | `.research/bin/research`: a vendored copy of the CLI any agent can run without `PATH` (`research bin install`, also refreshed by `init`; the extension does not write it) | 13.8 |
+| Terminal UI | `research tui`: six-tab Textual dashboard over the same core (`research-panel[tui]`) | 13.13 |
+| Self-update and compatibility | `research self-update` (GitHub releases, SHA256SUMS), `research version [--json]`, extension/core version check | 13.14 |
 | VS Code: live refresh | File watcher + run polling while runs are active | 13.3 |
 | VS Code: Remote SSH | Runs on the workspace host; works on HPC login nodes | 14 |
 | VS Code: run comparison | Side-by-side page: metric deltas, parameter changes, code diff between commits, outputs | 13.5, 9.8 |
@@ -236,10 +239,10 @@ Research Panel is deliberately **not** any of the following:
                                        │ VS Code remote protocol (local: in-process)
 ┌──────────────────────────────────────▼──────── machine that holds the files ─────────────┐
 │  Extension host  (TypeScript, extensionKind = "workspace")                                │
-│    client.ts ── spawns ──▶ python3 -m research.rpc --root <project>   (one per window)    │
+│    client.ts ── spawns ──▶ research rpc --root <project>   (one per window)                  │
 │                 stdio, line-delimited JSON-RPC                                            │
 │                                                                                            │
-│  Python core  (packages/core/research — bundled inside the VSIX under python/)            │
+│  Python core  (packages/core/research — installed as the `research-panel` wheel)       │
 │    store.py     project, config, SQLite index, mirrors sync, rebuild, events             │
 │    services.py  questions, experiments, syntheses, findings, decisions, notes, skills    │
 │    runs.py      runs, metrics, artifacts, ingestion, reconciliation                       │
@@ -279,7 +282,7 @@ Research Panel is deliberately **not** any of the following:
 - **All business logic is in Python** (standard library only, Python ≥ 3.8; checked with `vermin`, which reports a minimum of 3.7).
 - The extension renders data and calls the core. It never reads SQLite or writes `.research/` files itself, except to read previews (artifact heads and log tails).
 - **One process boundary.** The extension spawns a single long-lived `research.rpc` process per window, so the Python start-up cost is paid once.
-- **Zero install.** The VSIX contains `python/research` and `python/research_cli`, and the extension sets `PYTHONPATH` to that folder.
+- **One install, two clients.** The core and CLI ship as one wheel (`pip install` / `pipx`). The VSIX is a thin client that spawns the installed `research rpc`; `research tui` is a second UI over the same core (§13.13). `research self-update` updates the wheel (§13.14).
 - **YAML.** The system PyYAML is used if it is importable. Otherwise a vendored pure-Python PyYAML 6.0.3 (MIT) in `research/_vendor/yaml` is used.
 
 ### 2.3 Process model
@@ -1595,6 +1598,9 @@ are not counted as mutating.)
 | `telegram setup\|status\|test\|remove\|poll` | Opt-in alerts and chat commands; credentials in `~/.config/research-os/telegram.json` (0600). |
 | `proposal list\|show\|approve\|reject\|revise\|experiment` / `approval status\|set-pin\|verify` | Governance (GOVERNANCE.md): agents propose, a human approves with the PIN; a protected CLI action prompts on the terminal. |
 | `bin install\|link\|unlink [--name]` | Project launcher `.research/bin/research`, linked as `./research` in the main checkout (git-excluded, never overwrites). |
+| `rpc [--root]` / `version [--json]` | `rpc` serves JSON-RPC on stdio (what the extension spawns); `version` prints core version and protocol. |
+| `self-update [--check] [--version X.Y.Z] [--major] [--from-file WHEEL]` | Install the newest GitHub release, SHA256SUMS-verified (§13.14). |
+| `tui` | Terminal UI (needs `pip install 'research-panel[tui]'`; §13.13). |
 | `usage [--by …]` / `usage import FILE` | Summaries of `.research/usage.jsonl` (missing is never zero). |
 | `experiment check EXP-… [--request-synthesis]` | Deterministic validation of runs/artifacts/hooks; lists what needs interpretation; prepares (never runs) synthesis. |
 | `strategy list\|show [NAME]\|use NAME [--dry-run]\|validate [NAME]\|route T-… [--strategy] [--level]` | Named allocation strategies (`orchestration.strategies`, `active_strategy`); see README "Allocation strategies". `orchestrate`/`dispatch`/`guide refresh` take `--strategy`; with an active strategy `--tier` means a strategy level. |
@@ -1780,15 +1786,15 @@ A params object may carry `author: {agent?, model?, author_type?}` to override a
 
 1. **Choose the project root:**
    - the `research.projectRoot` setting (absolute, or relative to the first folder), else
-   - the first `file:` workspace folder containing `.research/config.yaml`, else
+   - the first `file:` workspace folder that has `.research/config.yaml` in it or in a parent directory (the CLI walks up the same way), else
    - the first `file:` folder.
    With no folder open, only a stub `research.init` command is registered.
-2. **Detect Python:** `research.pythonPath`, otherwise `python3`, then `python` (on Windows `py`, `python`, `python3`).
-   Each candidate is checked to be ≥ 3.8, and the resolved `sys.executable` is used.
-3. **Locate the core:** `<ext>/python` (packaged), or `<repo>/packages/core` + `packages/cli` (dev).
-4. **Install the terminal shim** (§13.8). Create the client, model, panels, views, status bar, commands and watchers.
+2. **Find the CLI:** `research.cliPath`, then `research` on `PATH`, `~/.local/bin`, and pipx's bin directory. If none runs,
+   show an install notice (no Python is bundled).
+3. **Check compatibility** (§13.14), then spawn `research rpc --root <root>`.
+4. Create the client, model, panels, views, status bar, commands and watchers.
 5. **Initial refresh:** `ping`, then (if initialized) `tree`, `resume` and `index` in parallel. On error, show a
-   notification with **Show log** and **Set Python path** actions.
+   notification with **Show log** and **Set CLI path** actions.
 
 ### 13.3 Model and refresh
 
@@ -1909,7 +1915,7 @@ Required-field validation, `Cmd/Ctrl+Enter` to submit, an inline error line (cor
 | Review finding | statement and evidence ids in the subtitle; verdict seg (supported / needs work / contradicted)*, reasoning*, confidence |
 | Create checkpoint (extended) | checkbox *Also commit .research/ to git*, defaulting to `git.commit_checkpoints` |
 
-**Terminal mode:** opens a terminal named `▶ EXP-x · label` with the shim on `PATH` and sends
+**Terminal mode:** opens a terminal named `▶ EXP-x · label` and sends
 `research run exec EXP-x --param … --label … [--override …] --cwd <wd> -- <command>`. The run streams live there.
 
 ### 13.7 Commands
@@ -1966,19 +1972,13 @@ All commands are under the category **Research**.
 Item-only commands are hidden from the palette. Inline tree actions: Run ▶ and Synthesize ✦ on experiments; logs and
 cancel on runs; pin on notes.
 
-### 13.8 Terminal shim
+### 13.8 CLI on PATH and project-local launcher
 
-- **Location:** `<globalStorage>/bin/research`, which is on the extension host machine (the remote host under SSH).
-- **Contents:**
-  ```sh
-  #!/bin/sh
-  PYTHONPATH=<ext>/python${PYTHONPATH:+:$PYTHONPATH} exec <python> -m research_cli "$@"
-  ```
-- **PATH:** prepended to every integrated terminal through `environmentVariableCollection` (disable with
-  `research.terminalCommand: false`). Not installed on Windows.
+- **Installed CLI.** `research` is installed by the user (wheel, pipx or `uv tool`). The extension locates it (§13.1 step 2)
+  and runs terminal-mode runs as `research run exec …`. It writes no shim and does not alter terminal `PATH`.
 
 **Project-local CLI (`.research/bin/`).** Shells that don't inherit VS Code's terminal environment (the Claude Code
-extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every project also carries its own launcher:
+extension's Bash tool, other agent sandboxes, cron) may not have `research` on `PATH`. So a project can carry its own launcher:
 
 - **Layout:** `.research/bin/research` (POSIX `sh`), `.research/bin/research.cmd` (Windows) and `.research/bin/lib/`,
   which holds a copy of the `research` and `research_cli` packages plus a `.stamp` (version and source hash).
@@ -1986,9 +1986,7 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
   It runs `python -m research_cli` with `lib/` prepended to `PYTHONPATH`, so commands started by `run exec` can also
   `import research`.
 - **Refresh:** `research.localbin.install(root)` copies only when the stamp differs. It is called by
-  `Project.init`, `research bin install [--force]` and the RPC method `install_bin`. The extension calls `install_bin`
-  once per activation (setting `research.projectCli`, default `true`). The first time, if the managed `AGENTS.md`
-  block predates the launcher, it is refreshed.
+  `Project.init`, `research bin install [--force]` and the RPC method `install_bin`. The extension does not call `install_bin`; run `research bin install` (or `init`) to create it.
 - **`./research` in the main checkout:** `install` (and `research bin link|unlink [--name]`) also links the launcher into the main checkout as `./research` so it can be run from
   there without the long path. The link is git-excluded, never overwrites a file or directory (best effort), and the launcher follows symlinks. `install_bin` also starts the
   supervisor when Telegram is enabled or a plan is running, and replaces a supervisor still running older code (agents are untouched).
@@ -2018,12 +2016,10 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `research.pythonPath` | `""` | Python ≥ 3.8 on the workspace host. Empty means auto-detect. Changing it prompts a reload. |
-| `research.terminalCommand` | `true` | Add `research` to terminal `PATH`. |
+| `research.cliPath` | `""` | Path to the `research` executable on the workspace host. Empty means search `PATH`, `~/.local/bin`, pipx. |
 | `research.pollIntervalSeconds` | `10` (min 3) | Status refresh interval while runs are active. |
 | `research.defaultRunMode` | `terminal` | `terminal` · `background` · `slurm`. |
 | `research.projectRoot` | `""` | Override root detection. |
-| `research.projectCli` | `true` | Keep the project-local launcher `.research/bin/research` (gitignored, refreshed on open; §13.8). |
 | `research.openControlCenterOnStartup` | `true` | Open the Control Center when a window with a project opens. |
 
 ### 13.12 Design system (`media/ui.css`)
@@ -2042,6 +2038,26 @@ extension's Bash tool, other agent sandboxes, cron) can't see the shim. So every
   - toast
 - **Layout:** pages max 1120 px (narrow pages 820 px); `.grid2` reflows at 340 px columns; the split layout collapses
   below 860 px; the sidebar variant is compact.
+
+### 13.13 Terminal UI (`research tui`)
+
+`research tui` opens a Textual dashboard over the same core as the extension (`pip install 'research-panel[tui]'`; without
+Textual it prints the install hint). Tabs: **Overview** (dashboard), **Runs**, **Findings**, **Plans & Approvals**,
+**Records**, **Doctor**. Keys: `1`-`6` switch tab, `r` refresh, `/` filter tables (empty clears), `k` cancel the selected run,
+`a` / `d` approve / reject the selected proposal, `ctrl+t` dark/light theme, `?` help, `q` quit. Protected actions
+ask for confirmation. With `NO_COLOR` set or `TERM=dumb` it falls back to plain colourless output.
+
+### 13.14 Self-update and compatibility
+
+- **`research self-update`** downloads the newest GitHub release wheel, verifies it against `SHA256SUMS`, and installs it
+  with the interpreter running the CLI (pip, else `uv pip`; pipx and `uv tool` installs reinstall with `--force`). Options:
+  `--check` (report only), `--version X.Y.Z`, `--major` (required for a breaking major upgrade), `--from-file WHEEL`
+  (offline). On any failure the existing install is untouched and the exit code is non-zero.
+- **`research version [--json]`** prints the core version and RPC protocol (currently 1).
+- **Compatibility.** The extension's `package.json` declares `researchCore: "3.0"`: the core must have the same major
+  version and a minor version at least that (`research.compat.core_satisfies`). On a mismatch the status bar shows a
+  warning and `research.showVersionInfo` explains: run `research self-update` if the CLI is too old, or install a newer
+  VSIX if the extension is too old.
 
 ---
 
@@ -2748,7 +2764,7 @@ Missing keys fall back to these defaults (deep merge), so a sparse project file 
 | TypeScript | `npm run typecheck` | the extension compiles under `strict` |
 | Clean install | `bash scripts/clean_install_test.sh` | fresh venv + wheel → full protocol (question, experiment, 2 runs, artifact, synthesis, finding, decision, checkpoint) → copy to a new path, delete the index → resume reconstructs exact counts → artifact paths relative and resolving → no build-machine paths in the project, installed package or VSIX |
 | Webview and client tests | `npm run test:webview` · `npm run test:client` | the React Control Center pages and the extension client |
-| Real VS Code harness | `RESEARCH_TEST_WORKSPACE=<demo> npm run test:ext` | downloads VS Code, installs the VSIX, runs the checks in `test/harness/suite/index.js` in the extension host (state reconstruction, the project-local CLI, every panel command, every view, shim, watcher, authorship, the plan/task flow through the real form handlers: New Plan, Add Task, Start, Change Status, Edit task/plan, plan activity, Research Home, Plans tree data, `current.md`; and the Research OS layer: task form with checks + skills, Verify command, agent brief, awaiting-review attention item, Review form, compare panel, skill import + `.claude/skills` link, search, report, dispatch). Needs access to `update.code.visualstudio.com`. When launched from a terminal inside VS Code, run it with a clean environment (`env -i HOME=$HOME PATH=… npm run test:ext`), otherwise the inherited `VSCODE_*` variables hijack the test instance. Last run (73/73 on VS Code 1.141.0) predates strategies, hooks and the Agent setup page; those are covered by the Python suite and the typecheck, and the page was reviewed as screenshots rendered from the real `render/setup.ts`, not inside VS Code. |
+| Real VS Code harness | `RESEARCH_TEST_WORKSPACE=<demo> npm run test:ext` | downloads VS Code, installs the VSIX, runs the checks in `test/harness/suite/index.js` in the extension host (state reconstruction, the project-local CLI, every panel command, every view, the installed CLI, watcher, authorship, the plan/task flow through the real form handlers: New Plan, Add Task, Start, Change Status, Edit task/plan, plan activity, Research Home, Plans tree data, `current.md`; and the Research OS layer: task form with checks + skills, Verify command, agent brief, awaiting-review attention item, Review form, compare panel, skill import + `.claude/skills` link, search, report, dispatch). Needs access to `update.code.visualstudio.com`. When launched from a terminal inside VS Code, run it with a clean environment (`env -i HOME=$HOME PATH=… npm run test:ext`), otherwise the inherited `VSCODE_*` variables hijack the test instance. Last run (73/73 on VS Code 1.141.0) predates strategies, hooks and the Agent setup page; those are covered by the Python suite and the typecheck, and the page was reviewed as screenshots rendered from the real `render/setup.ts`, not inside VS Code. |
 | Real MCP client | `claude -p "…" --mcp-config .mcp.json --strict-mcp-config --allowedTools mcp__research__research_current` | Claude Code connects to `research mcp` and calls a tool (checked manually on 2026-10-07; not part of CI) |
 | Visual review | `packages/vscode-extension/scripts/preview-*` + themes | renders every webview outside VS Code with dark and light theme variables for screenshots (`docs/screens/`) |
 
@@ -2767,12 +2783,10 @@ npm run package                # scripts/package.sh → dist/
 **`scripts/package.sh`:**
 
 1. Builds the extension in production mode.
-2. Runs `scripts/bundle-python.mjs`, which copies `packages/core/research` and `packages/cli/research_cli` into
-   `packages/vscode-extension/python/`.
-3. Runs `vsce package --no-dependencies` → `dist/research-panel-X.Y.Z.vsix`.
-4. Runs `python -m build` → wheel + sdist in `dist/`. If `build` is missing, it falls back to `pip wheel` / `uv build`; in an environment with neither setuptools nor `build` the sdist step fails after the VSIX and wheel have been written.
+2. Runs `vsce package --no-dependencies` → `dist/research-panel-X.Y.Z.vsix` (a small client; no Python inside).
+3. Runs `python -m build` → wheel + sdist in `dist/` (the wheel is the core and CLI). If `build` is missing, it falls back to `pip wheel` / `uv build`; in an environment with neither setuptools nor `build` the sdist step fails after the VSIX and wheel have been written.
 
-**Versioning:** bump `version` in `pyproject.toml`, root `package.json`, `packages/vscode-extension/package.json` (and the two version lines at the top of its `package-lock.json`) and `research/__init__.py` together, rename the CHANGELOG heading, rebuild and reinstall the VSIX (the extension refreshes each project's `.research/bin/research` on activation). Schema changes add a new entry to `schema.MIGRATIONS` and increment `SCHEMA_VERSION`. Never edit existing entries.
+**Versioning:** bump `version` in `pyproject.toml`, root `package.json`, `packages/vscode-extension/package.json` (and the two version lines at the top of its `package-lock.json`) and `research/__init__.py` together, rename the CHANGELOG heading, rebuild, reinstall the wheel and the VSIX, and keep `researchCore` in the extension manifest at the oldest compatible `major.minor` (§13.14). Schema changes add a new entry to `schema.MIGRATIONS` and increment `SCHEMA_VERSION`. Never edit existing entries.
 
 **Release checklist:**
 
@@ -2825,14 +2839,14 @@ research-vscode/
 │   │   ├── hpc/ (config, transport, remote, bundle, datasets, results)
 │   │   ├── templates/ (AGENTS.block.md, catalog/, catalog.yaml, packs.yaml, skills/, claude-agents/, prompts/, templates/)
 │   │   └── _vendor/yaml/           # PyYAML, MIT, fallback only
-│   ├── cli/research_cli/           # argparse CLI (main.py, supervisor_cmds.py, __main__.py)
+│   ├── cli/research_cli/           # argparse CLI (main.py, supervisor_cmds.py, tui.py, __main__.py)
 │   └── vscode-extension/
 │       ├── package.json            # manifest (views, commands, menus, settings)
-│       ├── src/                    # extension.ts, client.ts, model.ts, trees.ts, panels.ts, commands.ts, shim.ts, util.ts
+│       ├── src/                    # extension.ts, client.ts, model.ts, trees.ts, panels.ts, commands.ts, cli.ts, util.ts
 │       │   ├── render/             # ui.ts, home.ts (Research Home), resume.ts (Overview + fallback Resume), detail.ts, form.ts, setup.ts
 │       │   └── webview/            # React Control Center: App, pages (Home, Research, Work), PlansPage, SettingsPage, GuidePage, Providers, Setup, InitProject, Doctor, ...
 │       ├── media/                  # ui.css, ui.js, research.svg, icon.png (codicons copied at build)
-│       ├── scripts/                # bundle-python.mjs, theme-*.css, preview harness
+│       ├── scripts/                # theme-*.css, preview harness
 │       └── test/                   # client/webview tests, real-VS-Code harness (run.mjs, harness/)
 ├── examples/                       # alpha-sweep, auto-promotion-demo, custom-provider
 ├── tests/python/                   # pytest suites
@@ -2847,10 +2861,10 @@ research-vscode/
 > The test the design is held to: after a month away, can you open the panel and understand in under two minutes what
 > was tried, what was learned, what failed, and where to continue?
 
-### 21.1 Python core + TypeScript extension (bundled core)
+### 21.1 Python core as the backend, thin VS Code client, TUI as a second UI
 
 **Chosen:** one Python core (stdlib only, Python ≥ 3.8) that owns *all* business logic, a thin Python CLI on top of it,
-and a TypeScript extension that talks to the same core over a long-lived stdio JSON-RPC process.
+a TypeScript extension that talks to the installed CLI over a long-lived stdio JSON-RPC process (`research rpc`), and a Textual TUI over the same core.
 
 | | Python core + TS extension (chosen) | TS-only |
 |---|---|---|
@@ -2860,8 +2874,7 @@ and a TypeScript extension that talks to the same core over a long-lived stdio J
 | Extension complexity | +1 process boundary | simpler |
 | SQLite | stdlib `sqlite3` | native module (`better-sqlite3`), with ABI and platform problems inside a VSIX used over Remote SSH |
 
-The process boundary is kept cheap by bundling the core inside the VSIX (`PYTHONPATH=<ext>/python`, nothing to
-pip-install), having zero third-party dependencies (PyYAML vendored as a fallback), and using one persistent RPC process
+The process boundary is kept cheap by installing the core once as a wheel (the VSIX stays small and cannot drift from the CLI agents use; versions are checked at startup, §13.14), having zero third-party dependencies (PyYAML vendored as a fallback), and using one persistent RPC process
 per window, so Python start-up is paid once.
 
 ### 21.2 Text is canonical, SQLite is an index
@@ -2969,7 +2982,7 @@ connected. *Ready* is derived rather than stored, so it can never go stale when 
 - **Hand edits to `run.json` and the JSONL files are not re-imported** (they are append-only records). Edit runs through
   `research run update`. A hand-edited `run.json` is only read when the run directory is unknown to the index
   (fresh clone or rebuild).
-- **Windows:** the core and CLI work. The terminal shim and SLURM backend are POSIX-only.
+- **Windows:** the core and CLI work. The SLURM backend is POSIX-only.
 - **SLURM verified against mocked `sbatch`/`squeue`/`sacct`** in tests. Site-specific accounting quirks (e.g. sacct
   disabled) degrade to the `unknown` state, never to a crash.
 - **Preview formats:** NIfTI, HDF5, NetCDF and NPZ show metadata only.

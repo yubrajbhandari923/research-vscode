@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds all distributables into dist/: the VSIX (with bundled Python core), a wheel and an sdist.
+# Builds all distributables into dist/: the VSIX (no bundled Python; needs the CLI), a wheel and an sdist.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

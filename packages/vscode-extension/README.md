@@ -24,5 +24,5 @@ plus optional **plans → tasks** for tracking the work itself.
   including the Claude Code extension's Bash tool. Plain `research` is also on `PATH` in VS Code terminals. Agents follow
   the same protocol (see `AGENTS.md`) and get a run budget that forces them to synthesize before running more.
 
-Requires Python ≥ 3.8 on the machine that holds the workspace. The research core is bundled, and nothing needs to be installed with pip.
+Requires the `research` CLI (core 3.x) installed on the machine that holds the workspace: `pip install` the wheel from the GitHub release, then `research self-update`. The extension does not bundle Python; set `research.cliPath` if it is not on `PATH`.
 See the repository README for the usage guide and `docs/SPEC.md` for the full feature list and design.

@@ -555,6 +555,35 @@ def cmd_promote(a, p) -> int:
     return 0
 
 
+def cmd_rpc(a) -> int:
+    from research import rpc
+    from research.store import find_root
+    return rpc.main(["--root", a.root or find_root() or os.getcwd()])
+
+
+def cmd_version(a) -> int:
+    from research import rpc
+    info = {"version": research.__version__, "protocol": rpc.PROTOCOL, "python": sys.version.split()[0], "executable": sys.executable}
+    print(json.dumps(info) if a.json else f"research {info['version']} (protocol {info['protocol']})")
+    return 0
+
+
+def cmd_self_update(a) -> int:
+    from research import selfupdate
+    return selfupdate.run(check=a.check, version=a.version, repo=a.repo, major=a.major, from_file=a.from_file)
+
+
+def cmd_tui(a) -> int:
+    from research.store import find_root
+    try:
+        from research_cli.tui import run
+    except ImportError:
+        print("TUI needs textual: pip install 'research-panel[tui]'")
+        return 1
+    run(os.path.abspath(a.root or find_root() or os.getcwd()))
+    return 0
+
+
 def cmd_doctor(a) -> int:
     from research import doctor as DR
     from research.store import find_root
@@ -3258,6 +3287,16 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--note")
     x.add_argument("--confirm", action="store_true", help="integrate: confirm that main will move")
     x.add_argument("--all", action="store_true", help="list: include promoted and abandoned")
+    add(sub, "rpc", cmd_rpc, "serve the JSON-RPC protocol on stdio (used by the VS Code extension)")
+    add(sub, "version", cmd_version, "print the core version and RPC protocol (--json for the extension)")
+    x = add(sub, "self-update", cmd_self_update, "install the newest GitHub release (sha256-verified)")
+    x.add_argument("--check", action="store_true", help="only report current vs latest")
+    x.add_argument("--version", help="install this release instead of the latest")
+    from research.selfupdate import REPO as _REPO
+    x.add_argument("--repo", default=_REPO, help="GitHub OWNER/NAME")
+    x.add_argument("--major", action="store_true", help="allow a major-version (breaking) upgrade")
+    x.add_argument("--from-file", metavar="WHEEL", help="offline install from a local wheel (checks a sibling SHA256SUMS)")
+    add(sub, "tui", cmd_tui, "terminal UI (needs the tui extra)")
     x = add(sub, "doctor", cmd_doctor, "inspect the project: records, workspaces, runs, agents, sandbox, context (read-only)")
     x.add_argument("--all", action="store_true", help="also list the checks that passed")
     x.add_argument("--fix", metavar="CHECK", help="apply one safe fix for generated files (context.stale, agents_md.stale, bin.stale)")
@@ -4000,6 +4039,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return cmd_project_init(a)
         if fn is cmd_doctor:
             return cmd_doctor(a)
+        if fn in (cmd_rpc, cmd_version, cmd_self_update, cmd_tui):
+            return fn(a)
         if fn.__name__ == "cmd_plan_yaml" and getattr(a, "action", None) == "template":
             return fn(a, None) or 0                # a template needs no project
         p = _proj(a, sync=not _is_readonly(a))

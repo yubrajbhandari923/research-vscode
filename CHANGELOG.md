@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.0
+
+**Upgrading**: this release changes how the pieces fit together. Install the CLI first, then the extension. `pip install` the wheel from the GitHub release (or `research self-update` once on 3.x), then install the new VSIX. Project files are untouched. The extension no longer bundles Python, so a VSIX alone is not enough. It shows a warning with the exact command if the CLI is missing or out of date.
+- **CLI-first.** The `research` CLI is the product; VS Code is an alternative interface to it. New: `research rpc` (the extension's backend), `research version [--json]`, `research self-update [--check] [--version X] [--major] [--from-file whl]` (downloads from GitHub releases, verifies `SHA256SUMS`, leaves the existing install untouched on any failure; a major bump needs `--major`).
+- **TUI**: `research tui` (install with `pip install 'research-panel[tui]'`). A themed dashboard (runs by status, recent runs, pending approvals, findings, doctor) plus Runs, Findings, Plans & Approvals (approve/deny with rationale and masked PIN, through the same core functions as the CLI), Records and Doctor tabs. Responsive banner, light/dark theme, `NO_COLOR` support.
+- **Extension is a thin client**: it spawns the installed CLI (`research.cliPath` or `PATH`) and checks `researchCore` ("3.0": same major, core minor at least this) at startup. A mismatch shows a status-bar warning and a prompt to update the CLI (`research self-update`) or the extension; `Research: Show Version Info` lists both. The VSIX shrinks from about 1.3 MB to about 260 KB. Removed: the bundled `python/`, the terminal shim, `research.pythonPath`, `research.terminalCommand`, `research.projectCli`.
+- **Fix: opening a subfolder of an initialized project offered to re-initialize it.** The CLI and the extension now find the project the same way, by walking up to the nearest `.research/config.yaml`.
+
 ## 2.6.0
 
 **Upgrading**: keep your project files and reinstall the extension. On open it refreshes `.research/bin`, links `./research` into the main checkout, starts the supervisor if Telegram is enabled or a plan is running, and replaces a supervisor still running older code (agents are never touched). New settings default off; existing config files are untouched. From the CLI: `research bin install --force` then `research supervisor restart`.

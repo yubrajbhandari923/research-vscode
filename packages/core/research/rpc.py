@@ -17,6 +17,8 @@ import traceback
 from typing import Any, Callable, Dict, List, Optional
 
 from . import __version__
+
+PROTOCOL = 1
 from . import context as C
 from . import plans as P
 from . import skills as SK
@@ -65,7 +67,7 @@ class Server:
 
     def m_ping(self) -> Dict[str, Any]:
         ok = self.initialized() and not self._compat()
-        return {"version": __version__, "root": self.root, "initialized": self.initialized(), "incompatible": self._compat(),
+        return {"version": __version__, "protocol": PROTOCOL, "root": self.root, "initialized": self.initialized(), "incompatible": self._compat(),
                 "name": self.project(sync=False).name if ok else os.path.basename(self.root), "python": sys.executable, "pid": os.getpid()}
 
     def m_init(self, name: Optional[str] = None, goal: Optional[str] = None) -> Dict[str, Any]:
@@ -1159,7 +1161,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
         stdout.write(json.dumps(obj, default=str, ensure_ascii=False) + "\n")
         stdout.flush()
 
-    send({"event": "ready", "version": __version__, "root": srv.root, "initialized": srv.initialized()})
+    send({"event": "ready", "version": __version__, "protocol": PROTOCOL, "root": srv.root, "initialized": srv.initialized()})
     for line in stdin:
         line = line.strip()
         if not line:
