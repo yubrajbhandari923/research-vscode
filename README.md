@@ -1,12 +1,11 @@
 # Research OS
 
-Project-local research memory for computational science. Research OS connects a VS Code extension,
-a `research` CLI, a Python API and an MCP server to the same `.research/` directory.
+Project-local research memory for computational science. The `research` CLI is the product; a terminal UI, a VS Code extension,
+a Python API and an MCP server are interfaces to the same `.research/` directory.
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 2.6.0.** Project format 2. v1 projects are not upgraded or migrated
-(see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md)).
+**Version 3.0.0.** Project format 2. v1 projects are not upgraded or migrated (see [Recovery](#recovery)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
 
@@ -22,13 +21,13 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> **New in 2.4:** agent governance and a PIN guardrail, provider handoff, YAML project setup ([docs/GOVERNANCE.md](docs/GOVERNANCE.md)). **2.3:** a curated skill catalog with packs and project-aware hooks ([docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md)). **2.2:** a **Scientist Guide** (a Quarto book on `main`, published as a website on every push), readable reports,
-> and skills, hooks and the MCP server loaded by default. [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
+> [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) · [Governance](docs/GOVERNANCE.md) ·
 > [Supervisor](docs/SUPERVISOR.md) · [Changelog](CHANGELOG.md).
 
 ## First run
 
-Open an empty folder in VS Code and run **Research: Initialize Project**. See [docs/QUICKSTART.md](docs/QUICKSTART.md); agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
+From a terminal, `research project-init my-project --apply` (preview without `--apply`), or open an empty folder in VS Code and run **Research: Initialize Project**.
+See [docs/QUICKSTART.md](docs/QUICKSTART.md) for both paths; agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 The wizard creates `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each), links the shipped
 skills for your agents, registers the MCP server, approves two starter hooks and creates the Scientist Guide: nothing is pushed.
 
@@ -85,29 +84,42 @@ records instead of guessing. Every new project is equipped out of the box:
 
 Agents → **Skills, hooks and MCP** has a searchable catalog with one-click install, packs, per-skill activation, enable/disable, hook approval and test results, and updates; `research skills …` and `research hook …` do the same, and `skills.packs` in the machine config sets the default for every new project. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
 
-**New in 2.6:** steer a running plan in words (`research supervisor instruct`), plans report HALTED instead of "running", an opt-in debug agent,
-Telegram alerts and commands (`research telegram setup`), safe `supervisor reload|restart`, and `./research` linked in your main checkout.
-2.5 added opt-in fast-forward-only code promotion. See the [Changelog](CHANGELOG.md) and [Supervisor](docs/SUPERVISOR.md).
-
 ## Install
 
-Download from the [latest GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest):
-
-- `research-panel-2.6.0.vsix` — the VS Code extension (bundles its Python core; no separate pip install needed)
-- `research_panel-2.6.0-py3-none-any.whl` — the `research` CLI and Python API, if you want them outside VS Code
-- `SHA256SUMS` — checksums for the files above
+Research OS is a command-line tool first. Install it, then (optionally) the VS Code extension. Releases are on the
+[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest): a wheel
+(`research_panel-X.Y.Z-py3-none-any.whl`), the extension (`research-panel-X.Y.Z.vsix`), an sdist and `SHA256SUMS`.
+The core needs Python 3.8 or newer; Node is only needed to build from source.
 
 ```bash
-code --install-extension research-panel-2.6.0.vsix
-# optional, CLI outside VS Code:
-python3 -m pip install research_panel-2.6.0-py3-none-any.whl
+# 1. the CLI, in its own isolated environment (uv or pipx)
+uv tool install ./research_panel-X.Y.Z-py3-none-any.whl
+#    or: pipx install ./research_panel-X.Y.Z-py3-none-any.whl
+research version
+
+# 2. optional terminal UI: install with the tui extra instead
+uv tool install 'research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl'
+research tui
+
+# 3. optional VS Code extension (the CLI from step 1 must be installed)
+code --install-extension research-panel-X.Y.Z.vsix
 ```
 
-Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH.
-The core needs Python 3.8 or newer; Node is only needed to build from source. Each initialized
-project also gets `.research/bin/research`, a generated machine-local CLI; regenerate it with
-`research bin install` after changing machines or moving the project. VS Code terminals receive
-a `research` shim on PATH.
+Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH, and the CLI there too.
+
+**Update.** `research self-update` downloads the newest release wheel, checks it against `SHA256SUMS`, and reinstalls with the tool that installed it
+(`uv tool`, pipx or pip). `--check` only reports, `--version X.Y.Z` pins, `--from-file WHEEL` installs offline, and a major (breaking) upgrade needs `--major`.
+On any failure the existing install is untouched.
+
+**The extension is a thin client.** It runs the installed `research` (the `research.cliPath` setting, then `PATH`, `~/.local/bin` and pipx's bin directory) and
+bundles no Python. It needs a core with the same major version and a minor at least what it declares; on a mismatch the status bar warns and
+**Research: Show Version Info** names the command to run. `research version --json` reports what is installed.
+
+**Agents.** Each initialized project gets `.research/bin/research`, a generated machine-local launcher agents can run without `PATH`; refresh it with
+`research bin install --force` after an upgrade, a new machine or moving the project.
+
+**Upgrading from 2.x.** Install the CLI as above first, then the new extension; project files are untouched. Opening a project in VS Code no longer starts the
+supervisor: after a reboot run `research supervisor start`, and after an upgrade `research supervisor restart`.
 
 To build from a clone:
 
@@ -121,12 +133,6 @@ npm run package        # VSIX, wheel and sdist in dist/
 ```
 
 Activate the environment before `npm test`: it invokes `python3` from PATH.
-
-## Install and update from GitHub
-
-Download the wheel from the latest GitHub release and run `pip install research_panel-*.whl`. Later, `research self-update`
-checks the release's `SHA256SUMS`, installs, and refuses a major (breaking) upgrade without `--major`; `--check` only reports.
-The extension needs a core with the same major version and a minor at least what it declares. Details: [docs/INSTALL_UPDATE.md](docs/INSTALL_UPDATE.md).
 
 ## Start a research project
 
@@ -379,8 +385,8 @@ SQLite journal files blindly.
 
 | Symptom | Next action |
 |---|---|
-| "Not a Research OS 2 project" | It is a v1 project; see [Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md). Nothing was changed |
-| CLI missing | Use `.research/bin/research`, activate the installed environment, or `research bin install` |
+| "Not a Research OS 2 project" | It is a v1 project and was not touched; see "Starting a v2 project in a v1 folder" below |
+| CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install` |
 | Python fails to start in VS Code | Check Output → Research and `research.cliPath` (run `research version --json`) |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
 | Required hook blocks work | Inspect its exact command, then have a human approve or deliberately disable it |
@@ -389,11 +395,23 @@ SQLite journal files blindly.
 | Index locked | Stop competing clients and retry; do not delete an active database |
 | Newer schema refused | Install a newer release; do not lower the stored schema version |
 
+### Starting a v2 project in a v1 folder
+
+A folder with a `.research/config.yaml` but no `.research/format.json` is a v1 project. The CLI and extension refuse it and change nothing, so Research OS 1.x
+can still read it. To start fresh in the same folder:
+
+```bash
+mv .research .research-v1-archive      # keeps every old record, untouched
+research init --goal "What you are trying to find out"
+```
+
+Re-register what still matters with `research question create`, `research finding create` and `research decision create`; old runs, metrics and artifacts are not imported.
+
 ## Documentation
 
-[Starting fresh with v2](docs/GUIDE_V2_START_FRESH.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Quick start](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
 [Technical specification](docs/SPEC.md) · [Scientist Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
-[Quick start](docs/QUICKSTART.md) · [Providers](docs/PROVIDERS.md) · [Supervisor](docs/SUPERVISOR.md) · [Setup](docs/SETUP.md) ·
+[Providers](docs/PROVIDERS.md) · [Supervisor](docs/SUPERVISOR.md) · [Setup](docs/SETUP.md) ·
 [Changelog](CHANGELOG.md).
 
 ## Development
@@ -404,7 +422,7 @@ wheel and (when a build frontend is available) source distribution. `bash script
 offline in a fresh environment and verifies relocation/rebuild.
 
 Authoritative source lives under `packages/core`, `packages/cli` and `packages/vscode-extension/src`
-(webview assets in `media`). Bundled Python, extension `dist`, codicons and root `dist/` are generated.
+(webview assets in `media`). Extension `dist`, codicons and root `dist/` are generated.
 
 Not verified in this release: the extension inside every VS Code configuration (Remote SSH, high-contrast themes, screen readers),
 Windows, and real Apptainer/GPU isolation.

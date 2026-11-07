@@ -10,6 +10,11 @@ your packages. You set up two things once, and the **Initialize Project** wizard
 
 Everything is also plain YAML in `.research/config.yaml`; the wizard only fills it in for you.
 
+## CLI-only
+
+Nothing here needs VS Code. Run the `research env …`, `research config set …` and `research hpc …` commands shown below in your project; they write the same `.research/config.yaml` keys the wizard does.
+After setup, `research doctor` reports problems and `research provider list` shows your agent CLIs. The VS Code checks at the end of this page have terminal equivalents (`research plan yaml validate`, `research supervisor status`).
+
 ## 1. This computer (uses uv)
 
 [uv](https://docs.astral.sh/uv/) is the simplest way: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
@@ -83,4 +88,4 @@ hpc:
 - [ ] `research hpc doctor --compute` is green (HPC only)
 - [ ] `research provider list` shows your agent CLIs installed and signed in
 - [ ] `research plan yaml validate your-plan.yaml`
-- [ ] the VS Code Control Center → **Plans** opens without a warning banner
+- [ ] `research supervisor status` shows no warning (or the VS Code Control Center → **Plans** opens without a warning banner)

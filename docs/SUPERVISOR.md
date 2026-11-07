@@ -302,7 +302,7 @@ final promotions before it reports `completed`; tests run inside the tick (a ver
 
 ## 15. The `research` command from the main checkout
 
-`research bin install` (also run by init, `ledger enable` and the extension) writes the launcher into the ledger and now also links it into the
+`research bin install` (also run by init and `ledger enable`) writes the launcher into the ledger and also links it into the
 repository's main checkout: `./research …` works from `main/` with no long path and no PATH change. The link is absolute (machine-specific), listed in
 `.git/info/exclude` (never committed), never replaces an existing file or directory (installing still succeeds; use `research bin link --name rs`),
 and is not created inside experiment worktrees. `research bin unlink [--name rs]` removes only its own link. To use `research` anywhere, put it on
@@ -367,3 +367,7 @@ and logs and returns a few sentences plus up to four options. `research supervis
 You get one message per halt (what is blocked, the diagnosis and options) and one when the plan moves again. Commands: `/status /blocked /task T-12 /logs T-12 /debug /options /choose N
 /say [T-12] <text> /interventions /pause /resume /help`; plain text goes to the only blocked task. Chat can request and apply **unprotected** changes; protected ones are
 proposed and wait for your PIN in VS Code or the terminal.
+
+**Starting after a reboot or an upgrade.** The supervisor (and with it Telegram alerts) is a separate process: it keeps running when VS Code closes, and opening a project in VS Code does not start or restart it.
+After a reboot run `research supervisor start`; after `research self-update` run `research supervisor restart` so it runs the installed version (agents and HPC jobs are untouched). Agents started through `.research/bin/research`
+keep using the copy installed there until `research bin install --force`.

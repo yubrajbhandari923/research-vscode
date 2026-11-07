@@ -2,9 +2,11 @@
 
 ## 3.0.0
 
-**Upgrading**: this release changes how the pieces fit together. Install the CLI first, then the extension. `pip install` the wheel from the GitHub release (or `research self-update` once on 3.x), then install the new VSIX. Project files are untouched. The extension no longer bundles Python, so a VSIX alone is not enough. It shows a warning with the exact command if the CLI is missing or out of date.
+**Upgrading from 2.x**: this release changes how the pieces fit together. Install the CLI first, then the extension: `uv tool install` (or `pipx install`) the wheel from the GitHub release, then install the new VSIX. Once you are on 3.x, `research self-update` does the CLI part. Project files are untouched. The extension no longer bundles Python, so a VSIX alone is not enough: it shows a warning with the exact command if the CLI is missing or out of date.
+- **Supervisor start.** Opening a project in VS Code no longer starts or restarts the supervisor. After a reboot run `research supervisor start` (Telegram alerts depend on it); after an upgrade run `research supervisor restart`.
+- **Agents keep the vendored launcher.** `.research/bin/research` keeps running the copy of the CLI installed there until you run `research bin install --force` (or a later release refreshes it automatically).
 - **CLI-first.** The `research` CLI is the product; VS Code is an alternative interface to it. New: `research rpc` (the extension's backend), `research version [--json]`, `research self-update [--check] [--version X] [--major] [--from-file whl]` (downloads from GitHub releases, verifies `SHA256SUMS`, leaves the existing install untouched on any failure; a major bump needs `--major`).
-- **TUI**: `research tui` (install with `pip install 'research-panel[tui]'`). A themed dashboard (runs by status, recent runs, pending approvals, findings, doctor) plus Runs, Findings, Plans & Approvals (approve/deny with rationale and masked PIN, through the same core functions as the CLI), Records and Doctor tabs. Responsive banner, light/dark theme, `NO_COLOR` support.
+- **TUI**: `research tui` (install the `tui` extra, for example `uv tool install 'research-panel[tui] @ file:///path/to/research_panel-3.0.0-py3-none-any.whl'`). A themed dashboard (runs by status, recent runs, pending approvals, findings, doctor) plus Runs, Findings, Plans & Approvals (approve/deny with rationale and masked PIN, through the same core functions as the CLI), Records and Doctor tabs. Responsive banner, light/dark theme, `NO_COLOR` support.
 - **Extension is a thin client**: it spawns the installed CLI (`research.cliPath` or `PATH`) and checks `researchCore` ("3.0": same major, core minor at least this) at startup. A mismatch shows a status-bar warning and a prompt to update the CLI (`research self-update`) or the extension; `Research: Show Version Info` lists both. The VSIX shrinks from about 1.3 MB to about 260 KB. Removed: the bundled `python/`, the terminal shim, `research.pythonPath`, `research.terminalCommand`, `research.projectCli`.
 - **Fix: opening a subfolder of an initialized project offered to re-initialize it.** The CLI and the extension now find the project the same way, by walking up to the nearest `.research/config.yaml`.
 
@@ -143,7 +145,7 @@ Fixes from an end-to-end test on a real Slurm cluster:
 
 ## 2.0.0
 
-**Breaking release.** Project format 2; v1 projects are not upgraded or migrated (see `docs/GUIDE_V2_START_FRESH.md`). Storage schema stays at 3.
+**Breaking release.** Project format 2; v1 projects are not upgraded or migrated (there is no migration command). Storage schema stays at 3.
 
 - **Format 2:** `.research/format.json` identifies the project format. v1 projects are rejected with clear instructions and left byte-identical; nothing is converted, moved or deleted automatically. `research upgrade`, `config migrate` and the matching RPC/MCP/extension entry points are removed.
 - **Control Center** (`Research: Open Control Center`): redesigned Home / Work / Research / Settings on a shared design system (tokens, components, light/dark/high-contrast via VS Code theme variables), populated and empty states, narrow-window layout, guided first-run setup and New experiment, project health.

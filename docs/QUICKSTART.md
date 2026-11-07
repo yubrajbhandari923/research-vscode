@@ -1,5 +1,26 @@
 # Quick start
 
+Install the CLI first (README, Install). Everything below works from a terminal; VS Code and `research tui` are optional interfaces to the same project.
+
+## Terminal only
+
+```bash
+research project-init sparse-ct --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex   # preview
+research project-init sparse-ct --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex --apply
+cd sparse-ct/main
+research question create "Which sampling pattern recovers the most detail?"
+research experiment create "pattern study" -q Q-001 --hypothesis "Radial beats uniform" --planned-runs 3
+research task create PLAN-001 "Implement the simulator" --check 'cmd:python -m pytest -q'   # after `research plan create "..."`
+research task dispatch T-001 --profile claude                  # prepares a brief and a launch command
+research task verify T-001                                      # completed is not verified
+research tui                                                    # dashboard, runs, approvals (needs the tui extra)
+```
+
+Protected actions (approving proposals, promotion) ask for your approval PIN on the terminal; the first one offers to create it. Each step has a VS Code equivalent below.
+`research doctor` checks the project, and `research --help` lists every command.
+
+## With VS Code
+
 > **Before your first run:** set up your Python (and cluster) environment once, see [SETUP.md](SETUP.md).
 
 1. Create an empty folder (for example `~/Code/sparse-ct`) and open it in VS Code.
@@ -29,7 +50,6 @@ Nothing is pushed for you; add a remote in the wizard (or later) and push from `
     scientific changes) ask for your approval PIN on the terminal; the first one offers to create it. Optional: `research telegram setup` for alerts and chat commands.
     `./research` is linked in `main/` so you can run it from there. Details: [SUPERVISOR.md](SUPERVISOR.md), [GOVERNANCE.md](GOVERNANCE.md).
 
-CLI equivalents: `research project-init FOLDER --agents claude,codex --apply`, `research dispatch implementer T-001 --profile codex`,
-`research execution list`, `research provider list`. Details: `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`.
+Providers and configuration: `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`.
 
 Existing classic projects keep working. To move one to the worktree layout: `research ledger enable` (dry run), then `--apply`.
