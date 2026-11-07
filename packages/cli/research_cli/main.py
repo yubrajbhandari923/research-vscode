@@ -2826,7 +2826,7 @@ def cmd_execution(a, p) -> int:
     from research import agents as AG, execution as EX
     act = a.action
     if act == "list":
-        rows = [{k: r.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at")} | {"profile": (r.get("request") or {}).get("profile"),
+        rows = [{**{k: r.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at")}, "profile": (r.get("request") or {}).get("profile"),
                  "model": (r.get("request") or {}).get("model")} for r in EX.list_all(p, getattr(a, "task", None))]
         if a.json:
             out_json(rows)
@@ -2860,7 +2860,7 @@ def cmd_provider(a, p) -> int:
     from research import providers as PR, workspace as W
     profs = (p.config.get("agents") or {}).get("profiles") or {}
     if a.action == "list":
-        rows = [PR.readiness(prof, name, p.root) | {"models": PR.available_models(PR.provider_of(prof, name), prof.get("command") or name, profs)}
+        rows = [{**PR.readiness(prof, name, p.root), "models": PR.available_models(PR.provider_of(prof, name), prof.get("command") or name, profs)}
                 for name, prof in profs.items() if name in ("claude", "codex", "agy") or prof.get("provider")]
         default = (p.config.get("agents") or {}).get("default_profile")
         if a.json:

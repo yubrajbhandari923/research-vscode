@@ -160,8 +160,10 @@ def test_log_copies_and_registers_the_result_plot_and_respects_max_figures(proj,
 
 def test_a_supported_review_logs_automatically_and_auto_log_can_be_turned_off(proj, monkeypatch):
     G.init(proj)
+    # Agents cannot create experiments directly (governance), so a human sets up the experiment and run.
+    rid = GS.R.create_run(proj, S.create_experiment(proj, "e")["id"], command="x", status="completed")["id"]
     as_agent(proj, "claude", "implementer", monkeypatch)
-    f = S.create_finding(proj, "Alpha matters", statement="Alpha changes the outcome", supports=[GS.R.create_run(proj, S.create_experiment(proj, "e")["id"], command="x", status="completed")["id"]])["id"]
+    f = S.create_finding(proj, "Alpha matters", statement="Alpha changes the outcome", supports=[rid])["id"]
     as_agent(proj, "claude", "verifier", monkeypatch)
     V.review_finding(proj, f, "supported", "ok")
     assert f"research:result {f}" in read(proj, "results.qmd")

@@ -406,7 +406,7 @@ def _plan_finished(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> bool:
 
 def _flat(st: Dict[str, Any], tid: str) -> Dict[str, Any]:
     key = next((k for k, v in st["tasks"].items() if v == tid), None)
-    return (st.get("spec_tasks") or {}).get(key or "", {}) | {"_key": key}
+    return {**(st.get("spec_tasks") or {}).get(key or "", {}), "_key": key}
 
 
 def _active(rs: Dict[str, Any]) -> List[str]:

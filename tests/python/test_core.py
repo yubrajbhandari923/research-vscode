@@ -212,10 +212,15 @@ def test_synthesis_required_before_new_experiment(proj):
     e = S.create_experiment(proj, "E")
     R.attach_run(proj, e["id"], command="x")
     _agent(proj)
-    with pytest.raises(BudgetExceeded):
+    # Agents can never create experiments directly (governance, propose_only), so the synthesis gate is only
+    # reachable inside an approved grant (how an approved proposal is applied). Test it there, by message.
+    from research import governance
+    with governance.approved("test"):
+        with pytest.raises(BudgetExceeded) as ex:
+            S.create_experiment(proj, "E2")
+        assert "synthesis" in str(ex.value).lower()
+        S.synthesize(proj, e["id"], interpretation="ok")
         S.create_experiment(proj, "E2")
-    S.synthesize(proj, e["id"], interpretation="ok")
-    S.create_experiment(proj, "E2")
 
 
 # ---------------------------------------------------------------------------- execution

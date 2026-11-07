@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -9,8 +10,40 @@ sys.path.insert(0, os.path.join(ROOT, "packages", "core"))
 sys.path.insert(0, os.path.join(ROOT, "packages", "cli"))
 
 
+_GIT_ID = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+
+
+@pytest.fixture(scope="session")
+def _launcher_dir(tmp_path_factory):
+    """A `research` launcher on PATH, as an installed CLI would provide (tests that spawn `research` got exit 127 without one)."""
+    d = tmp_path_factory.mktemp("launcher")
+    exe = d / "research"
+    exe.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m research_cli "$@"\n')
+    exe.chmod(0o755)
+    return str(d)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _reap_daemons(tmp_path_factory):
+    """Tests that start a supervisor (plan_resume, Telegram /resume) leave a detached daemon behind; stop every one under the session tmp root."""
+    yield
+    import signal
+    base = str(tmp_path_factory.getbasetemp())
+    # Scan processes, not daemon.json: a test may delete its project (and the pid file) while the daemon lives on.
+    for line in subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout.splitlines():
+        pid, _, cmd = line.strip().partition(" ")
+        if "research.supervisord" in cmd and "--root " + base in cmd:
+            root = cmd.split("--root ", 1)[1].split(" ")[0]
+            try:
+                os.makedirs(os.path.join(root, ".research", "supervisor"), exist_ok=True)
+                open(os.path.join(root, ".research", "supervisor", "stop"), "w").write("stop\n")
+                os.kill(int(pid), signal.SIGTERM)
+            except OSError:
+                pass
+
+
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch, tmp_path_factory):
+def _clean_env(monkeypatch, tmp_path_factory, _launcher_dir):
     for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "RESEARCH_AGENT", "RESEARCH_AGENT_MODEL", "RESEARCH_AUTHOR_TYPE",
               "RESEARCH_ROOT", "RESEARCH_RUN_DIR", "RESEARCH_RUN_ID", "RESEARCH_IN_JOB", "CODEX_SANDBOX",
               "CODEX_SANDBOX_NETWORK_DISABLED", "RESEARCH_CONFIG"):
@@ -20,6 +53,9 @@ def _clean_env(monkeypatch, tmp_path_factory):
     # "no HPC configured" tests fail. A test that wants the layer sets XDG_CONFIG_HOME itself.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-empty")))
     env_pp = os.pathsep.join([os.path.join(ROOT, "packages", "core"), os.path.join(ROOT, "packages", "cli")])
+    for k, v in _GIT_ID.items():   # CI has no git identity
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("PATH", _launcher_dir + os.pathsep + os.environ.get("PATH", ""))
     monkeypatch.setenv("PYTHONPATH", env_pp + os.pathsep + os.environ.get("PYTHONPATH", ""))
 
 

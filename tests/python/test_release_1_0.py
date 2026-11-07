@@ -153,11 +153,16 @@ def O_passed(proj, tid):
 def test_required_unapproved_hook_blocks_every_completion_path(proj):
     hooks.add(proj, 'gate', 'post_implementation', 'true', required=True)
     plan = plans.create_plan(proj, 'p')
+    # Agents may only auto-create typed tasks inside their experiment: give the agent one, so the refusals below come from the hook.
     from research.util import detect_author
+    from research import services as S
+    eid = S.create_experiment(proj, 'E')['id']
     proj.author = detect_author(agent='claude')
-    with pytest.raises(PolicyBlocked):
-        plans.create_task(proj, plan['id'], 'born done', checks=['cmd:true'], status='done')
-    t = plans.create_task(proj, plan['id'], 'x', checks=['cmd:true'])
+    kw = dict(checks=['cmd:true'], task_type='verification', related_experiment_id=eid)
+    with pytest.raises(PolicyBlocked) as ex:
+        plans.create_task(proj, plan['id'], 'born done', status='done', **kw)
+    assert 'hook' in str(ex.value).lower() or 'approv' in str(ex.value).lower()
+    t = plans.create_task(proj, plan['id'], 'x', **kw)
     plans.start_task(proj, t['id'])
     for finish in (lambda: plans.update_task(proj, t['id'], status='done'), lambda: plans.complete_task(proj, t['id']),
                    lambda: verification.verify_task(proj, t['id'])):

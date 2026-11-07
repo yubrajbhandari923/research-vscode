@@ -10,6 +10,7 @@ host runs — under Remote SSH that is the remote machine, next to the files.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -891,7 +892,7 @@ class Server:
                 r["profiles"] = sorted(n for n, x in profs.items() if PR.provider_of(x, n) == r["provider"] and n != name)
                 rows.append(r)
         return {"default": (p.config.get("agents") or {}).get("default_profile"), "strategy": S.active_name(p),
-                "providers": rows, "recent": [{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")} | {
+                "providers": rows, "recent": [{**{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")},
                     "profile": (e.get("request") or {}).get("profile"), "model": (e.get("request") or {}).get("model")} for e in EX.list_all(p)[:15]],
                 "instructions": PR.instruction_files(p.root)}
 
@@ -1186,13 +1187,19 @@ def serve(root: str, stdin=None, stdout=None) -> None:
             if "author" in params:  # optional author override from the UI
                 author = params.pop("author")
                 if not isinstance(author, dict):
-                    raise TypeError("author must be an object")
+                    send({"id": rid, "error": {"message": "bad parameters for " + method + ": author must be an object", "code": -32602}})
+                    continue
                 srv.author = detect_author(**{k: v for k, v in author.items()
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
             if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "init_yaml_template", "init_yaml_check", "init_yaml_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
+            try:
+                inspect.signature(fn).bind(**params)
+            except TypeError as e:  # only a bad call shape is -32602; a TypeError inside the method is a real error
+                send({"id": rid, "error": {"message": f"bad parameters for {method}: {e}", "code": -32602}})
+                continue
             result = fn(**params)
             if method in MUTATING and srv.p is not None:
                 try:
@@ -1203,8 +1210,6 @@ def serve(root: str, stdin=None, stdout=None) -> None:
         except ResearchError as e:
             send({"id": rid, "error": {"message": str(e), "hint": e.hint, "code": e.exit_code, "data": e.data,
                                        "kind": type(e).__name__}})
-        except TypeError as e:
-            send({"id": rid, "error": {"message": f"bad parameters for {method}: {e}", "code": -32602}})
         except Exception as e:  # pragma: no cover
             send({"id": rid, "error": {"message": f"{type(e).__name__}: {e}", "code": -32603,
                                        "trace": traceback.format_exc(limit=6)}})

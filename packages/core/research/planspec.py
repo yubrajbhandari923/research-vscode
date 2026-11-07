@@ -246,7 +246,7 @@ def normalize(doc: Dict[str, Any], known: Optional[Any] = None) -> Dict[str, Any
             exp_keys.add(ek)
             if not e.get("title"):
                 errs.append(f"experiment {key}/{ek}: title is required")
-            norm["experiments"].append({k: e.get(k) for k in EXP_FIELDS if k not in ("tasks",) and k in e} | {"key": ek})
+            norm["experiments"].append({**{k: e.get(k) for k in EXP_FIELDS if k not in ("tasks",) and k in e}, "key": ek})
             for t in _list(e.get("tasks")):
                 add_task(t, f"{ew}.tasks", ek)
         for t in _list(pl.get("tasks")):
