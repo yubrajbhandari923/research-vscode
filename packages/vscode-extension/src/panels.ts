@@ -4,8 +4,7 @@ import * as vscode from 'vscode';
 import { Model } from './model';
 import { renderArtifact, renderCheckpoint, renderCompare, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
 import { FormSpec, renderForm } from './render/form';
-import { renderHome, renderOverviewHome } from './render/home';
-import { renderResume } from './render/resume';
+import { renderOverviewHome } from './render/home';
 import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
@@ -42,7 +41,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'resume' | 'form' | 'compare' | 'setup' | 'control';
+  kind: 'entity' | 'form' | 'compare' | 'setup' | 'control';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -85,8 +84,7 @@ export class Panels implements vscode.Disposable {
         if (kind !== 'form') ep.loaded = false; // hidden webviews drop messages; re-render fully when shown
         return;
       }
-      if (kind === 'resume') this.renderResume(ep);
-      else if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
+      if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
       else if (kind === 'compare') this.renderComparison(ep).catch(() => undefined);
       else if (kind === 'setup') this.renderSetup(ep).catch(() => undefined);
     });
@@ -95,13 +93,6 @@ export class Panels implements vscode.Disposable {
   }
 
   // ------------------------------------------------------------------ public API
-  async openResume() {
-    const ep = this.create('resume', 'Research Home · ' + (this.model.tree?.project.name || 'Research'), 'beaker', 'resume');
-    ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Research Home' });
-    if (!this.model.resume) await this.model.refresh();
-    this.renderResume(ep);
-  }
-
   /** The React Control Center (Home / Work / Research / Settings). The core owns all logic; this only relays allow-listed RPC calls. */
   /** Only configuration files (those the core reported, or .research/*.yaml in the folder) can be opened from the webview. */
   private async openConfigFile(p: string) {
@@ -249,8 +240,7 @@ export class Panels implements vscode.Disposable {
   // ------------------------------------------------------------------ rendering
   private refreshAll() {
     for (const ep of this.panels.values()) {
-      if (ep.kind === 'resume') this.renderResume(ep);
-      else if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
+      if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
       else if (ep.kind === 'compare' && ep.panel.visible) this.renderComparison(ep).catch(() => undefined);
       else if (ep.kind === 'setup' && ep.panel.visible) this.renderSetup(ep).catch(() => undefined);
     }
@@ -261,23 +251,6 @@ export class Panels implements vscode.Disposable {
       ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, html, { index: this.model.index?.items || [] });
       ep.loaded = ep.panel.visible;
     } else ep.panel.webview.postMessage({ t: 'render', html });
-  }
-
-  private async renderResume(ep: EntityPanel) {
-    // Try new Research Home first, fall back to legacy Resume if home endpoint fails
-    try {
-      const home = await this.model.client.request('home');
-      this.model.resume = home;
-      ep.panel.title = 'Research Home · ' + (home.project?.name || '');
-      const ctx = this.rctx(ep);
-      this.post(ep, renderHome(home, { uri: ctx.uri }));
-    } catch {
-      // Fall back to legacy Resume view
-      const r = this.model.resume;
-      if (!r) return;
-      ep.panel.title = 'Resume · ' + (r.project?.name || '');
-      this.post(ep, renderResume(r));
-    }
   }
 
   private rctx(ep: EntityPanel): RenderCtx {

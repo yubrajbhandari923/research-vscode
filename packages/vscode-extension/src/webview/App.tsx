@@ -1,12 +1,10 @@
 import { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import type { Host } from './host';
 import { HomePage, ResearchPage, WorkPage } from './pages';
-import { Incompatible, Setup } from './Setup';
 import { InitProject } from './InitProject';
 import { ProvidersPage } from './Providers';
 import { PlansPage } from './PlansPage';
 import { GuidePage } from './GuidePage';
-import { NewExperiment } from './NewExperiment';
 import { Banner, Icon, PinHost, useAsync } from './common';
 import { SettingsPage } from './SettingsPage';
 import type { Page } from './types';
@@ -23,8 +21,6 @@ const TABS: { id: Page; label: string; hint: string }[] = [
 
 export function App({ host, initial }: { host: Host; initial?: { page?: Page; target?: string } }) {
   const ping = useAsync<any>(() => host.call('ping'), []);
-  const [ready, setReady] = useState(0);
-  const [classic, setClassic] = useState(false);
   if (ping.loading && !ping.data) return <div className="state" role="status"><span className="spinner" aria-hidden /> Starting…</div>;
   if (ping.error && /config\.ya?ml/.test(ping.error)) return (
     <main><Banner kind="bad"><b>The project configuration could not be read.</b>
@@ -32,11 +28,20 @@ export function App({ host, initial }: { host: Host; initial?: { page?: Page; ta
       <div className="row"><button type="button" className="primary" onClick={() => host.openFile('.research/config.yaml')}><Icon name="file" /> Open configuration file</button><button type="button" onClick={ping.reload}>Try again</button></div>
       <p className="meta" style={{ marginTop: 6 }}>Nothing was changed or rewritten. Fix the file, then try again; no migration or other step is needed.</p></Banner></main>);
   if (ping.error) return <div className="state error" role="alert"><b>Could not load.</b> {ping.error} <button className="link" onClick={ping.reload}>Try again</button></div>;
-  if (ping.data?.incompatible) return <Incompatible host={host} message={ping.data.incompatible} />;
-  if (ping.data && !ping.data.initialized && !ready) return classic
-    ? <Setup host={host} onDone={() => { setReady(1); ping.reload(); }} />
-    : <InitProject host={host} onClassic={() => setClassic(true)} onDone={(r) => host.setState({ ...host.getState(), initialized: r })} />;
+  if (ping.data?.incompatible) return <Incompatible message={ping.data.incompatible} />;
+  if (ping.data && !ping.data.initialized) return <InitProject host={host} onDone={(r) => host.setState({ ...host.getState(), initialized: r })} />;
   return <Shell host={host} initial={initial} name={ping.data?.name || 'Research'} />;
+}
+
+function Incompatible({ message }: { message: string }) {
+  return (
+    <div className="page-body">
+      <h1>This is not a Research OS 2 project</h1>
+      <div className="banner bad" role="alert">{message}</div>
+      <p>Nothing was changed, and your old records are untouched. To keep them and start fresh:</p>
+      <ol><li>Rename the folder <code>.research</code> to <code>.research-v1-archive</code> (rename, don’t delete).</li><li>Reload this window and set up a new project.</li></ol>
+    </div>
+  );
 }
 
 function Shell({ host, initial, name }: { host: Host; initial?: { page?: Page; target?: string }; name: string }) {

@@ -224,34 +224,6 @@ PR.prepare(p, ws["id"], commits=[sha], title="Solver")
 });
 
 
-test('first run: two answers create a v2 project; advanced options stay folded away; unavailable choices explain themselves', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-fresh-'));
-  const core = startCore(dir); const host = hostFor(core);
-  const { el, unmount } = await lib.mount(host);
-  try {
-    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
-    await click(byText(el, 'button', 'Use a single folder instead'));
-    await waitFor(() => /Set up Research OS/.test(el.textContent), 8000);
-    assert.equal(q(el, '#su-name').value, path.basename(dir), 'the folder name is the default project name');
-    assert.equal(q(el, '[role=tab]'), null, 'no navigation until a project exists');
-    await type(q(el, '#su-goal'), 'Learn the effect of alpha');
-    await click(byText(el, 'button', 'Next'));
-    assert.match(q(el, 'main, .wizard').textContent, /Try ideas on separate git branches/);
-    const box = byText(el, 'label', 'Use a shared research ledger').querySelector('input');
-    assert.ok(box.disabled, 'the ledger option is disabled without a git repository, and says why');
-    assert.match(el.textContent, /Needs an existing git repository/);
-    await click(byText(el, 'button', 'Skip to review'));
-    await waitFor(() => /Research OS will:/.test(el.textContent));
-    assert.match(el.textContent, /project format 2/);
-    assert.ok(!fs.existsSync(path.join(dir, '.research')), 'nothing is written before Create');
-    await click(byText(el, 'button', 'Create project'));
-    await waitFor(() => q(el, '[role=tab]'), 12000);
-    assert.ok(fs.existsSync(path.join(dir, '.research', 'format.json')) && fs.existsSync(path.join(dir, 'AGENTS.md')));
-    assert.match(fs.readFileSync(path.join(dir, '.research', 'config.yaml'), 'utf8'), /Learn the effect of alpha/);
-    assert.ok(!fs.existsSync(path.join(dir, '.git')), 'no git repository was created behind your back');
-  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
 test('Initialize Project: teaches first, previews the layout, creates main/ledger/experiments and shows the Agents page', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-init-'));
   const core = startCore(dir); const host = hostFor(core);

@@ -118,30 +118,15 @@ class Server:
         from . import doctor
         return doctor.apply_fix(self.root, fix) if fix else doctor.run(self.root)
 
-    def m_setup_environment(self) -> Dict[str, Any]:
-        from . import setup
-        return setup.environment(self.root)
-
-    def m_setup_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
-        from . import setup
-        return setup.plan(self.root, spec)
-
-    def m_setup_apply(self, spec: Dict[str, Any]) -> Dict[str, Any]:
-        from . import setup
-        if self.p:
-            self.p.close()
-            self.p = None
-        return setup.apply(self.root, spec)
-
     def m_new_experiment_preview(self, spec: Dict[str, Any]) -> Dict[str, Any]:
-        from . import setup
-        return setup.new_experiment_plan(self.project(sync=False), spec)
+        from . import services
+        return services.new_experiment_plan(self.project(sync=False), spec)
 
     def m_new_experiment(self, spec: Dict[str, Any], pin: Optional[str] = None) -> Dict[str, Any]:
-        from . import governance, setup
+        from . import governance, services
         p = self.project()
         governance.confirm_human_experiment(p, pin)     # only asks when the optional setting is on
-        return setup.new_experiment(p, spec)
+        return services.new_experiment(p, spec)
 
     def m_settings(self, category: Optional[str] = None, search: Optional[str] = None) -> Dict[str, Any]:
         from . import registry
@@ -325,15 +310,8 @@ class Server:
             return R.submit_run(p, experiment, command, **kw, **slurm)
         return R.exec_run(p, experiment, command, detach=True, **kw)
 
-    def m_run_create(self, experiment: str, **kw: Any) -> Dict[str, Any]:
-        """Register a run to be executed in a VS Code terminal via `research run exec`."""
-        return R.create_run(self.project(), experiment, **kw)
-
     def m_run_cancel(self, id: str) -> Dict[str, Any]:
         return R.cancel_run(self.project(), id)
-
-    def m_run_update(self, id: str, **kw: Any) -> Dict[str, Any]:
-        return R.update_run(self.project(), id, **kw)
 
     def m_run_refresh(self, id: Optional[str] = None) -> Any:
         p = self.project(sync=False)
@@ -352,24 +330,6 @@ class Server:
     def m_write_context(self) -> Dict[str, Any]:
         return {"path": C.write_current_md(self.project())}
 
-    def m_install_bin(self, force: bool = False) -> Dict[str, Any]:
-        from . import localbin
-        r = localbin.install(self.root, force=force)
-        # one-time migration: refresh the managed AGENTS.md block so agents learn about .research/bin/research
-        path = os.path.join(self.root, "AGENTS.md")
-        try:
-            text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
-            if "<!-- research:begin" in text and ".research/bin/research" not in text:
-                r["agents_md"] = self.project(sync=False).write_agents_md()
-        except OSError:
-            pass
-        from . import notify
-        r["supervisor"] = notify.ensure_running(self.project(sync=False))      # Telegram or a running plan needs the supervisor process; an old one is replaced
-        return r
-
-    def m_agents_md(self) -> Dict[str, Any]:
-        return {"path": self.project(sync=False).write_agents_md()}
-
     def m_sync(self) -> Dict[str, Any]:
         return self.project(sync=False).sync()
 
@@ -380,18 +340,6 @@ class Server:
         return self.project(sync=False).q("SELECT * FROM events ORDER BY id DESC LIMIT ?", (int(limit),))
 
     # plans / tasks ----------------------------------------------------------------------
-    def m_list_plans(self, status: Optional[str] = None) -> Any:
-        return P.list_plans(self.project(), status)
-
-    def m_list_tasks(self, plan_id: Optional[str] = None, status: Optional[str] = None) -> Any:
-        return P.list_tasks(self.project(), plan_id, status)
-
-    def m_get_plan(self, id: str) -> Dict[str, Any]:
-        return P.get_plan_with_tasks(self.project(), id)
-
-    def m_get_task(self, id: str) -> Dict[str, Any]:
-        return P.get_task_with_deps(self.project(), id)
-
     def m_task_context(self, id: str) -> Dict[str, Any]:
         return P.task_context(self.project(), id)
 
@@ -399,13 +347,6 @@ class Server:
         """The task context as Markdown (what an agent reads)."""
         from . import agents as AG
         return AG.task_brief_md(P.task_context(self.project(), id))
-
-    def m_next_task(self, plan_id: Optional[str] = None) -> Any:
-        """Get the next ready task (dependencies satisfied, status=todo)."""
-        return P.get_next_ready_task(self.project(), plan_id)
-
-    def m_start_task(self, id: str, assigned_role: Optional[str] = None, force: bool = False) -> Dict[str, Any]:
-        return P.start_task(self.project(), id, assigned_role, force)
 
     def m_release_task(self, id: str, note: Optional[str] = None) -> Dict[str, Any]:
         return P.release_task(self.project(), id, note)
@@ -495,10 +436,6 @@ class Server:
                          journal: Optional[str] = None, url: Optional[str] = None) -> Dict[str, Any]:
         from . import guide as G
         return G.cite_add(self.project(), bibtex, key, title, authors, year, doi, journal, url)
-
-    def m_guide_chapter_add(self, path: str, title: Optional[str] = None) -> Dict[str, Any]:
-        from . import guide_quarto as GQ
-        return GQ.chapter_add(self.project(), path, title)
 
     def m_guide_validate(self) -> Dict[str, Any]:
         """Deterministic claim/figure/section provenance validation. Read-only; not a scientific review."""
@@ -1137,20 +1074,17 @@ class Server:
     def m_skills_link(self) -> Dict[str, Any]:
         return SK.link_skills(self.project(sync=False))
 
-    def m_complete_task(self, id: str, result: Optional[str] = None,
-                        completed_by: Optional[str] = None, artifacts: Any = None) -> Dict[str, Any]:
-        return P.complete_task(self.project(), id, result, completed_by, artifacts)
-
-    def m_block_task(self, id: str, blockers: str) -> Dict[str, Any]:
-        return P.block_task(self.project(), id, blockers)
 
 
-MUTATING = {"pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve", "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin", "init_yaml_apply", "supervisor_daemon", "intervention_request", "intervention_action", "debug_run", "telegram_set", "telegram_test", "telegram_clear", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize", "supersede_finding", "run_attach",
-            "run_start", "run_create", "run_cancel", "run_update", "register_artifact", "log_metric", "init",
-            "update_project", "sync", "rebuild",
-            "start_task", "complete_task", "block_task", "release_task", "task_note", "verify_task",
-            "review_finding", "report", "dispatch", "skills_add", "skills_remove", "skills_update", "skills_set",
-            "strategy_use", "setup_agents", "hook_approve", "hook_toggle", "hook_run", "task_pin", "experiment_check"}
+MUTATING = {
+    "pack_set", "skill_install", "skill_toggle", "skills_upgrade", "hook_install", "hook_install_starters", "skills_link", "hook_approve",
+    "hook_toggle", "hook_run", "guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done",
+    "guide_cite_add", "plan_promote", "plan_yaml_apply", "plan_control", "supervisor_task", "proposal_decide", "approval_set_pin",
+    "init_yaml_apply", "supervisor_daemon", "intervention_request", "intervention_action", "debug_run", "telegram_set", "telegram_test",
+    "telegram_clear", "hpc_submit", "hpc_init", "hpc_sync", "freeze_tests", "create", "update", "set_status", "set_baseline", "synthesize",
+    "supersede_finding", "run_attach", "run_start", "run_cancel", "register_artifact", "log_metric", "init", "update_project", "sync",
+    "rebuild", "release_task", "task_note", "verify_task", "review_finding", "report", "dispatch", "skills_add", "skills_remove",
+    "skills_update", "skills_set", "strategy_use", "setup_agents", "task_pin", "experiment_check"}
 
 
 def serve(root: str, stdin=None, stdout=None) -> None:
@@ -1193,7 +1127,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
                                               if k in ("agent", "model", "author_type")})
                 if srv.p:
                     srv.p.author = srv.author
-            if method not in ("ping", "init", "setup_environment", "setup_preview", "setup_apply", "doctor", "init_environment", "init_preview", "init_apply", "init_yaml_template", "init_yaml_check", "init_yaml_apply", "hpc_discover", "hpc_test") and not srv.initialized():
+            if method not in ("ping", "init", "doctor", "init_environment", "init_preview", "init_apply", "init_yaml_template", "init_yaml_check", "init_yaml_apply", "hpc_discover", "hpc_test") and not srv.initialized():
                 raise NotInitialized("Project not initialized", hint="Run 'Research: Initialize Project'.")
             try:
                 inspect.signature(fn).bind(**params)

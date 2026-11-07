@@ -68,15 +68,13 @@ def test_mcp_install_uses_launcher_when_research_not_on_path(proj, monkeypatch):
     assert r["command"].endswith("mcp")
 
 
-def test_rpc_install_bin_refreshes_outdated_agents_block(proj):
-    from research.rpc import Server
+def test_write_agents_md_refreshes_outdated_block(proj):
     path = os.path.join(proj.root, "AGENTS.md")
     with open(path, "w") as f:
         f.write("# mine\n\n<!-- research:begin — old -->\nold block\n<!-- research:end -->\n\nkeep me\n")
-    r = Server(proj.root).m_install_bin()
+    assert proj.write_agents_md()
     text = open(path).read()
-    assert ".research/bin/research" in text and "keep me" in text and "# mine" in text
-    assert r.get("agents_md")
+    assert ".research/bin/research" in text and "keep me" in text and "# mine" in text and "old block" not in text
 
 
 def test_the_project_binary_refuses_to_upgrade_itself(proj, repo):

@@ -344,11 +344,11 @@ def test_rpc_guide_methods_and_what_is_read_only(proj, story, repo):
     from test_plans_tasks_interfaces import rpc
     proj.close()
     r = rpc(repo, ("guide_init", {}), ("guide_log", {}), ("guide_status", {}), ("guide_highlight", {"id": story["f1"], "on": False}),
-            ("guide_cite_add", {"bibtex": BIB}), ("guide_cite_list", {}), ("guide_chapter_add", {"path": "investigations/new.qmd", "title": "New"}),
+            ("guide_cite_add", {"bibtex": BIB}), ("guide_cite_list", {}),
             ("guide_draft_done", {"ids": [story["f1"]]}))
     assert all("result" in x for x in r.values()), r
     assert r[3]["result"]["undrafted"] == 2 and len(r[3]["result"]["highlights"]) == 2 and r[6]["result"]["entries"][0]["key"] == "lee2021alpha"
-    assert {"guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add", "guide_chapter_add"} <= MUTATING
+    assert {"guide_init", "guide_build", "guide_highlight", "guide_log", "guide_draft", "guide_draft_done", "guide_cite_add"} <= MUTATING
     d = rpc(repo, ("guide_draft", {"results": [story["f2"]]}))[1]["result"]
     assert d["targets"] == [story["f2"]] and d["shell"] is None and d["limits"]["max_words"] == 150
 

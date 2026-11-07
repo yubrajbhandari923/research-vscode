@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { renderArtifact, renderCheckpoint, renderDecision, renderExperiment, renderFinding, renderQuestion, renderRun } from '../src/render/detail';
 import { renderForm } from '../src/render/form';
-import { renderOverview, renderResume } from '../src/render/resume';
 
 const [, , dataFile, outDir, mediaDir, theme] = process.argv;
 const data = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
@@ -17,8 +16,6 @@ function page(name: string, body: string, sidebar = false, index: any[] = []) {
   <script>window.acquireVsCodeApi=()=>({postMessage:()=>{}});</script><script src="file://${mediaDir}/ui.js"></script></body></html>`;
   fs.writeFileSync(path.join(outDir, name + '.html'), html);
 }
-page('resume', renderResume(data.resume));
-page('overview', renderOverview(data.resume), true);
 page('experiment', renderExperiment(data.experiment, ctx));
 page('experiment2', renderExperiment(data.experiment2, ctx));
 page('finding', renderFinding(data.finding, ctx));

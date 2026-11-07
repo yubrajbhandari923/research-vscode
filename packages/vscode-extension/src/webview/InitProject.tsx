@@ -26,7 +26,7 @@ const Learn = ({ title, children }: { title: string; children: any }) => (
 );
 
 /** Initialize Project: from an empty folder to a working shared-ledger workspace. Nothing is written until the last step. */
-export function InitProject({ host, onDone, onClassic }: { host: Host; onDone: (r: any) => void; onClassic: () => void }) {
+export function InitProject({ host, onDone }: { host: Host; onDone: (r: any) => void }) {
   const env = useAsync<Env>(() => host.call('init_environment'), []);
   const [mode, setMode] = useState<'guided' | 'yaml'>('guided');
   const [done, setDone] = useState<any>(null);
@@ -37,7 +37,7 @@ export function InitProject({ host, onDone, onClassic }: { host: Host; onDone: (
       <button type="button" aria-pressed={mode === 'guided'} onClick={() => setMode('guided')}>Guided setup</button>
       <button type="button" aria-pressed={mode === 'yaml'} onClick={() => setMode('yaml')}>Edit YAML</button></div>
     {mode === 'yaml' ? <YamlInit host={host} onDone={finish} />
-      : <State a={env}>{(e) => <Wizard host={host} env={e} onDone={finish} onClassic={onClassic} />}</State>}
+      : <State a={env}>{(e) => <Wizard host={host} env={e} onDone={finish} />}</State>}
   </div>;
 }
 
@@ -71,7 +71,7 @@ function YamlInit({ host, onDone }: { host: Host; onDone: (r: any) => void }) {
     </div>);
 }
 
-function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone: (r: any) => void; onClassic: () => void }) {
+function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) => void }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(env.folder_name);
   const [goal, setGoal] = useState('');
@@ -321,7 +321,6 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
       {err && <div className="field-error" role="alert">{err}</div>}
       <div className="wizard-actions">
         {step > 0 && <button type="button" onClick={() => go(step - 1)}>Back</button>}
-        {step === 0 && <button type="button" className="link" onClick={onClassic}>Use a single folder instead (classic)</button>}
         <span className="spacer" />
         {step < REVIEW ? <button type="button" className="primary" disabled={!canNext} onClick={() => go(step + 1)}>Next</button>
           : <button type="button" className="primary" disabled={busy || !plan?.ok} onClick={create}>{busy ? 'Creating…' : 'Create project'}</button>}

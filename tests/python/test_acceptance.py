@@ -239,7 +239,7 @@ def test_acceptance_scenario(existing, cluster, tmp_path):
     assert "Tried α | 0.1 ünïcode" in text1
 
     # ---- 3. close and reopen the project -----------------------------------------------------
-    user_bytes_before = AM.outside_bytes(p)
+    user_bytes_before = AM.outside_bytes_for_root(p.root)
     agents_before = open(os.path.join(root, "AGENTS.md"), "rb").read()
     p.close()
     shutil.rmtree(os.path.join(root, ".research", "reports"), ignore_errors=True)
@@ -256,7 +256,7 @@ def test_acceptance_scenario(existing, cluster, tmp_path):
     state = AM.state(p)
     assert state["problem"] is None
     AM.apply(p)
-    assert AM.outside_bytes(p) == user_bytes_before
+    assert AM.outside_bytes_for_root(p.root) == user_bytes_before
     now = open(os.path.join(root, "AGENTS.md"), encoding="utf-8").read()
     assert now.startswith(USER_AGENTS_HEAD) and now.endswith(USER_AGENTS_TAIL)
     assert "Always use float64" in now and "Never write to `data/raw/`" in now
