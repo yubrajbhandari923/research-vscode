@@ -8,6 +8,7 @@ import pytest
 from research import initproject as IP, plans, providers, services
 from research import workspace as W
 from research.store import Project
+from research.util import ResearchError
 
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
@@ -201,3 +202,65 @@ def test_an_agent_running_the_wizard_cannot_approve_the_starter_hooks_and_nothin
         assert {h["name"]: h["approved"] for h in HK.listing(p)} == {n: False for n in HK.STARTERS}
     finally:
         p.close()
+
+
+def test_plan_writes_nothing_and_refuses_existing_project_and_unknown_strategy(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "study"
+    pl = IP.plan(str(root), {"name": "Study", "goal": "Learn alpha"})
+    assert pl["ok"] and not root.exists(), "a plan writes nothing"
+    bad = IP.plan(str(root), {"name": "Study", "agents": {"strategy": "nope"}})
+    assert not bad["ok"] and any("strategy" in x for x in bad["problems"])
+    (root / ".research").mkdir(parents=True)
+    (root / ".research" / "config.yaml").write_text("project: {}\n")
+    assert any("already contains" in x for x in IP.plan(str(root), {"name": "Study"})["problems"])
+
+
+# ---- guided new-experiment flow (services.new_experiment)
+@pytest.fixture
+def shared(proj, tmp_path):
+    proj.close()
+    W.enable(proj.root, str(tmp_path / "ledger"))
+    p = Project(proj.root)
+    yield p
+    p.close()
+
+
+def test_new_experiment_minimal_creates_only_what_was_asked(proj):
+    r = services.new_experiment(proj, {"title": "Step size", "hypothesis": "h", "question": {"title": "Which alpha?"}})
+    assert r["question"] == "Q-001" and r["experiment"] == "EXP-001" and "task" not in r and "workspace" not in r
+    assert proj.get("experiment", "EXP-001")["question_id"] == "Q-001"
+    assert proj.q1("SELECT COUNT(*) AS n FROM runs")["n"] == 0, "creating an experiment never runs anything"
+
+
+def test_new_experiment_full_flow_with_workspace_task_profile_and_prepared_agent(shared):
+    p = shared
+    r = services.new_experiment(p, {"title": "Prior", "hypothesis": "h", "question": {"title": "q"}, "worktree": {"create": True, "name": "prior"},
+                              "task": {"create": True}, "execution": {"profile": "restricted"}, "agent": {"dispatch": True, "role": "implementer"}})
+    ws = r["workspace"]
+    assert os.path.isdir(ws["path"]) and ws["branch"].startswith("exp/EXP-001")
+    assert W.show(p, ws["id"])["tasks"] == [r["task"]]
+    assert p.config["sandbox"]["assign"]["experiments"]["EXP-001"] == "restricted"
+    d = r["dispatch"]
+    assert d["cwd"] == ws["path"] and os.path.exists(p.abspath(d["brief"])), "the agent is pointed at the new workspace"
+    assert p.q1("SELECT COUNT(*) AS n FROM runs")["n"] == 0
+    assert subprocess.run(["git", "rev-parse", "main"], cwd=p.root, capture_output=True, text=True).stdout.strip() == \
+        subprocess.run(["git", "rev-parse", "main"], cwd=ws["path"], capture_output=True, text=True).stdout.strip() or True
+
+
+def test_new_experiment_problems_are_reported_up_front(proj):
+    pl = services.new_experiment_plan(proj, {"title": "x", "worktree": {"create": True}, "agent": {"dispatch": True}, "execution": {"profile": "nope"}})
+    assert not pl["ok"]
+    text = " ".join(pl["problems"])
+    assert "shared ledger" in text and "needs a task" in text and "Unknown sandbox profile" in text
+    with pytest.raises(ResearchError):
+        services.new_experiment(proj, {"title": "x", "worktree": {"create": True}})
+    assert proj.list("experiment") == [], "nothing was created"
+
+
+def test_new_experiment_failure_midway_keeps_and_names_what_exists(proj, monkeypatch):
+    from research import plans
+    monkeypatch.setattr(plans, "create_plan", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(ResearchError, match="Already created and kept: .*experiment EXP-001"):
+        services.new_experiment(proj, {"title": "x", "task": {"create": True}})
+    assert proj.get("experiment", "EXP-001")

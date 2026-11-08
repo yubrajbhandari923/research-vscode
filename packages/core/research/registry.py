@@ -8,7 +8,8 @@ metadata the editor and the CLI need, so validation, help text and approval rule
     apply(p, ...)      validate, enforce approval rules, write surgically, audit, regenerate agent context
     reset(p, ...)      remove an override so the inherited value applies again
 
-Defaults are NOT repeated here: they are read from `store.DEFAULT_CONFIG`, so a default can never disagree with the code.
+This module OWNS every default: `defaults()` builds the nested dict (`store.DEFAULT_CONFIG` is that dict), `section(p, name)` is the
+merged view modules read, and `default(key)` one value. No other module keeps a default of its own.
 Anything the registry does not describe keeps working and stays editable in YAML; it is simply not offered as a form.
 """
 from __future__ import annotations
@@ -20,8 +21,174 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import configfile, yamlio
-from .util import ResearchError, now_iso
+import copy
+
+from . import configfile, providers as _providers, strategy as _strategy, yamlio
+from .util import ResearchError, deep_merge, now_iso
+
+# ------------------------------------------------------------------------------------------------ defaults (the only place)
+SUPERVISOR: Dict[str, Any] = {
+    "poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
+    "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
+    "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
+    "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "investigator": {"auto": False, "max_per_plan": 3, "budget_usd": 2.0},   # on-demand investigator agent (investigator.py); auto = also on unclassified failures
+    "usage_limit": {"on_limit": "halt", "wait_buffer_seconds": 120, "max_wait_hours": 8,      # H.10: what a provider usage/rate limit does (supervisor.py)
+                    "unknown_reset_backoff_minutes": [15, 30, 60], "short_backoff_minutes": [1, 2, 5]},
+    "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
+    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
+}
+GOVERNANCE: Dict[str, Any] = {
+    "experiments": {"agent_creation": "propose_only"},
+    "tasks": {"agent_creation": "bounded_auto", "allowed_auto_types": ["bugfix", "diagnostic", "verification"], "max_auto_per_experiment": 3},
+    "scientific_changes": {"require_human_approval": True},
+    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False,
+                 "chat": {"enabled": False}, "chat_allow": []},
+    "experiment_overrides": {},
+}
+AUTO_PROMOTION: Dict[str, Any] = {
+    "test_command": None, "numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True,
+    "review_timeout_minutes": 120, "max_file_mb": 5,
+    "protected_test_globs": ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
+}
+NOTIFICATIONS: Dict[str, Any] = {
+    "halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False},
+    "discord": {"enabled": False, "thread_per_task": True},
+    "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit"],
+               "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
+    "digest": {"at": None, "silent_if_unchanged": True},
+}
+
+_CONFIG: Dict[str, Any] = {
+    "project": {
+        "name": "", "description": "", "goal": "", "status": "active",
+        "created_at": None, "git_repo": None, "default_backend": "local",
+    },
+    # Where things live for projects made by `Initialize Project`; relative paths are under the container folder (the parent of
+    # the main checkout). null = legacy placement (<name>-ledger / <name>-experiments beside the checkout).
+    "layout": {"main_dir": None, "ledger_dir": None, "experiments_dir": None, "workspace_file": None},
+    "agent_policy": {
+        "max_runs_without_synthesis": 5,
+        "max_failed_runs_without_review": 3,
+        "require_experiment_registration": True,
+        "require_synthesis_before_new_experiment": True,
+        "enforce_for_humans": False,
+    },
+    "backends": {
+        "slurm": {
+            "partition": None, "account": None, "time": "01:00:00", "cpus": None, "mem": None,
+            "gpus": None, "extra_args": [],
+            "setup": [],
+        },
+    },
+    "artifacts": {"hash_max_bytes": 64 * 1024 * 1024},
+    # Remote HPC execution. Opt-in: with no clusters configured, every `research hpc` command says so and
+    # nothing else changes. Never put passwords, keys or tokens here — OpenSSH (~/.ssh/config) owns auth.
+    "hpc": {
+        "default_cluster": None,
+        "clusters": {},                      # name -> see hpc.CLUSTER_DEFAULTS
+        "bundle": {
+            # Dirty/untracked sources are packaged (a commit alone is not a snapshot), minus these.
+            "exclude": [".git", ".research", "__pycache__", "*.pyc", ".venv", "venv", "node_modules",
+                        ".mypy_cache", ".pytest_cache", ".DS_Store", "*.egg-info", ".ipynb_checkpoints"],
+            "max_file_bytes": 8 * 1024 * 1024,     # a bigger source file must be named in `include` explicitly
+            "max_total_bytes": 256 * 1024 * 1024,
+            "include": [],                          # extra paths to package (datasets stay on the cluster)
+        },
+        "collect": {
+            "max_artifact_bytes": 32 * 1024 * 1024,  # bigger outputs stay remote and are referenced
+        },
+    },
+    "resume": {"stale_checkpoint_days": 14},
+    # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
+    "agents": {
+        "default_profile": "claude",
+        # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
+        "handoff": {"enabled": False, "fallback_order": list(_providers.KNOWN), "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
+        "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
+        # Generated from the provider registry: one plain profile per provider, `<provider>-fast|balanced|deep` model profiles
+        # (the strategies' levels point at these; swap a model here, not in routing) and `gemini`. A new provider needs no edit here.
+        "profiles": _providers.default_profiles(),
+    },
+    "verification": {
+        "require_review_for_supported": True,   # agents can't mark findings supported; a review must
+        "independent_reviewer": True,           # the reviewer must not be the finding's author
+        "require_evidence_for_supported": True,
+        "checks_gate_task_completion": True,    # `task done` runs the task's checks; failures block agents
+        "check_timeout_seconds": 600,
+    },
+    "coordination": {"stale_task_hours": 4},
+    "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
+    "skills": {"link": ["claude", "agents"], "packs": ["core-research"], "disabled": []},    # expose .research/skills to .claude/skills and .agents/skills
+    # The Scientist Guide is a Quarto book on the main branch (docs/scientist-guide). `highlights` decides which findings count as
+    # important results; `draft.*` bounds what an agent may write into it (see guide.py).
+    "guide": {"enabled": True, "dir": "docs/scientist-guide", "profile": None, "model": "claude-opus-5-5",
+              "auto_log": True, "highlights": "supported",
+              "draft": {"trigger": "result", "max_words": 150, "max_sections": 3, "max_figures": 1},
+              "publish": {"workflow": True}},
+    # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
+    "orchestration": {
+        "enabled": False,
+        "tiers": {
+            "opus": {"model": "claude-opus-5-5", "fallback": ["opus"]},
+            "sonnet": {"model": "claude-sonnet-5-5", "fallback": ["sonnet"]},
+            "haiku": {"model": "claude-haiku-5-5", "fallback": ["haiku"]},
+        },
+        "available": [],
+        "active_strategy": None,    # null → legacy tier routing above; else a name from `strategies` (research strategy use)
+        "strategies": _strategy.BUILTIN,
+        "limits": {"haiku_attempts": 3, "sonnet_attempts": 2, "escalations": 2, "max_turns": None,
+                   "tuning_evaluations": 50},
+    },
+    # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
+    "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
+                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300, "require_seed": False},   # hooks: see hooks.py (human approval required)
+    "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
+    # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
+    # profile other than `native` applies, and a restrictive profile never silently falls back to native.
+    # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
+    "environment": {"python": None, "packages": []},
+    "supervisor": SUPERVISOR,
+    "governance": GOVERNANCE,   # who may create experiments/tasks; PIN approvals (governance.py)
+    "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
+    # Opt-in unattended promotion (autopromote.py), supervisor interventions (intervene.py) and halt notifications (notify.py). Secrets (Telegram) are NOT here.
+    "auto_promotion": AUTO_PROMOTION,
+    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900},
+    "intervention": {"require_approval": False},
+    "notifications": NOTIFICATIONS,
+    "sandbox": {
+        "enabled": False,                         # true → `default_profile` applies to jobs that name no profile
+        "default_profile": "native",
+        "approved_roots": [],                     # when set, datasets and extra mounts must live under one of these
+        "agent": {"mode": "none"},                # none | advisory (written boundaries in briefs; NOT enforced)
+        "assign": {"experiments": {}, "tasks": {}},
+        "profiles": {
+            "native": {"runtime": "native"},
+            "restricted": {"runtime": "auto", "network": {"mode": "disabled"}},
+            "gpu-research": {"runtime": "auto", "gpu": True, "network": {"mode": "disabled"}},
+            "custom": {"runtime": "auto"},
+        },
+    },
+}
+
+
+def defaults() -> Dict[str, Any]:
+    """A fresh copy of the full default configuration (callers may edit it)."""
+    return copy.deepcopy(_CONFIG)
+
+
+def default(key: str) -> Any:
+    """One default by dotted key, e.g. `default("context.max_chars")`."""
+    present, v = configfile._get(_CONFIG, key)
+    if not present:
+        raise KeyError(key)
+    return copy.deepcopy(v)
+
+
+def section(p, name: str) -> Dict[str, Any]:
+    """The merged view of one top-level section: its defaults under whatever `p.config` holds (which may be a partial dict)."""
+    return deep_merge(_CONFIG[name], p.config.get(name) or {})
+
 
 CATEGORIES = [
     ("project", "Project"), ("policy", "Research policy"), ("verification", "Verification"),
@@ -40,10 +207,14 @@ class Option:
                  depends_on: Optional[str] = None, doc: Optional[str] = None, unit: Optional[str] = None, advanced: bool = False):
         self.key, self.type, self.category, self.label, self.help = key, type_, category, label, help_
         self.why, self.effect, self.risk = why, effect, risk
-        self.choices, self.min, self.max, self.nullable = choices, min_, max_, nullable
+        self._choices, self.min, self.max, self.nullable = choices, min_, max_, nullable
         self.affects = affects or []
         self.scopes, self.restart, self.depends_on, self.doc, self.unit = scopes, restart, depends_on, doc, unit
         self.advanced = advanced
+
+    @property
+    def choices(self) -> Optional[List[Any]]:
+        return self._choices() if callable(self._choices) else self._choices   # callable: resolved late (packs import the store)
 
     def meta(self) -> Dict[str, Any]:
         return {"key": self.key, "type": self.type, "category": self.category, "label": self.label, "help": self.help,
@@ -118,12 +289,12 @@ OPTIONS: List[Option] = [
        why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
     _o("layout.ledger_dir", "str", "git", "Ledger folder", "Folder name of the shared-ledger worktree (informational; set by Initialize Project).", nullable=True,
        why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
-    _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (claude, codex, gemini, or one you define) `research dispatch` starts when a role names none.",
+    _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (" + ", ".join(_providers.KNOWN) + ", gemini, or one you define) `research agent dispatch` starts when a role names none.",
        why="Lets you hand work to your usual agent without choosing each time.", effect="Only affects new dispatches. The CLI must be installed on the machine that runs it."),
     _o("orchestration.enabled", "bool", "agents", "Model routing", "Route work to cheaper or stronger models by level (fast, balanced, deep) instead of one model for everything.",
-       why="Spends the expensive model only where it matters.", effect="Off: dispatch uses the default profile. Run `research setup agents --apply` to refresh generated agent files.",
+       why="Spends the expensive model only where it matters.", effect="Off: dispatch uses the default profile. Run `research agent setup --apply` to refresh generated agent files.",
        affects=[".claude/agents/"]),
-    _o("orchestration.active_strategy", "str", "agents", "Allocation strategy", "Which named strategy maps task levels to models (for example sonnet_first or opus_first). Empty uses the legacy tier routing.",
+    _o("orchestration.active_strategy", "str", "agents", "Allocation strategy", "Which named strategy maps task levels to models (for example balanced_first or deep_first). Empty uses the legacy tier routing.",
        why="Strategies make cost/quality trade-offs explicit and auditable.", effect="Changes which model each new dispatch uses. Running sessions keep the policy recorded at dispatch.",
        nullable=True, affects=[".claude/agents/"]),
     _o("orchestration.limits.haiku_attempts", "int", "agents", "Fast-model attempts", "How many times the fast model may retry a task before work escalates.", min_=1, max_=20,
@@ -136,7 +307,7 @@ OPTIONS: List[Option] = [
     _o("harness.hooks_timeout_seconds", "int", "hooks", "Hook timeout", "How long an approved hook command may run before it is stopped.", min_=1, max_=86400, unit="seconds",
        why="Hooks run shell commands; a hung one must not stall dispatch.", effect="Applies to every hook without its own timeout."),
     _o("skills.packs", "list", "hooks", "Skill packs", "Which skill packs are on. Core Research is always on; the others add skills for a field (Scientific Python, Machine Learning, Physics, Medical Imaging, Quantum, HPC, Frontend, Scientific Writing). Put it in the machine file to choose the default for every new project.",
-       choices=[x["id"] for x in __import__("research.packs", fromlist=["x"]).pack_defs()], why="Skills only help when they fit the work; more is not better.",
+       choices=lambda: [x["id"] for x in __import__("research.packs", fromlist=["x"]).pack_defs()], why="Skills only help when they fit the work; more is not better.",
        effect="Enabling a pack installs its skills (yours are never overwritten). Disabling stops it being on.", affects=[".research/skills", ".research/skills.yaml"]),
     _o("skills.disabled", "list", "hooks", "Disabled skills", "Skills that stay on disk but are not suggested to agents or linked into .claude/skills and .agents/skills.",
        why="Switch a skill off without deleting it or its history.", effect="Takes effect on the next skills refresh.", affects=[".claude/skills", ".agents/skills"]),
@@ -171,6 +342,16 @@ OPTIONS: List[Option] = [
        why="An agent saying it is finished is not evidence.", effect="Off lets any actor complete supervised tasks through the ordinary gates.", risk="policy"),
     _o("supervisor.auto_apply_operational", "bool", "supervisor", "Auto-apply operational plan changes", "Agent proposals that only add new tasks (diagnostics, follow-ups) are applied without asking, up to the limit below.",
        why="Lets agents add a missing diagnostic step without stalling the plan.", effect="Off: every proposal waits for you.", risk="policy"),
+    _o("supervisor.usage_limit.on_limit", "enum", "supervisor", "When a provider's usage limit is hit", "halt: stop the task for you (today's behaviour). wait: pause only the tasks that use that provider until it resets, then relaunch them by themselves. fallback_then_wait: first try the next provider in agents.handoff.fallback_order (only where strategy, roles and orchestration.available allow it), else wait.",
+       choices=["halt", "wait", "fallback_then_wait"], why="A 5-hour or weekly limit ends by itself; nobody needs to be there to press Retry.", effect="Applies to the next limit. Attempts refused by a limit never count against the budgets; approvals and governance are untouched.", risk="policy"),
+    _o("supervisor.usage_limit.wait_buffer_seconds", "int", "supervisor", "Extra wait after the reset", "Seconds added after the provider's stated reset time before the task is relaunched.", why="Clocks differ by a minute or two.", effect="Applies to the next limit.", min_=0, max_=3600, unit="seconds"),
+    _o("supervisor.usage_limit.max_wait_hours", "float", "supervisor", "Longest unattended wait", "A reset further away than this (a weekly limit, say) is not waited out silently: the supervisor asks you (wait, switch provider, or stop).", why="Never an unattended multi-day wait unless you raise it.", effect="Applies to the next limit.", min_=0, max_=720, unit="hours", risk="policy"),
+    _o("supervisor.usage_limit.unknown_reset_backoff_minutes", "list", "supervisor", "Retry intervals when the reset time is unknown", "Minutes between relaunches when the provider did not say when the limit ends; the last value repeats. A refused relaunch costs nothing.", why="The relaunch is the probe; no extra paid call is made.", effect="Applies to the next limit.", unit="minutes"),
+    _o("supervisor.usage_limit.short_backoff_minutes", "list", "supervisor", "Retry intervals for rate and overload errors", "Minutes between relaunches after a short-lived rate-limit or overload error with no reset time; the last value repeats.", why="These clear in minutes, not hours.", effect="Applies to the next limit.", unit="minutes"),
+    _o("supervisor.investigator.auto", "bool", "supervisor", "Investigate failures automatically", "When a task hits a failure the supervisor cannot classify, run the investigator agent once (read-mostly, never approves). Off: it only runs when you ask (`research investigate`, or a free-text answer to a decision request).",
+       why="Novel failures need judgment the rules do not have.", effect="Spends model budget; capped by the two settings below. Protected changes still need your PIN.", risk="policy"),
+    _o("supervisor.investigator.max_per_plan", "int", "supervisor", "Investigator runs per plan", "Most investigator runs for one plan; after that the supervisor just asks you in plain text.", why="Bounds spend.", effect="Further questions wait for you.", min_=0, max_=50),
+    _o("supervisor.investigator.budget_usd", "float", "supervisor", "Investigator budget (USD)", "Total provider-reported cost the investigator may use for this project; runs with no reported cost count toward the per-plan limit only.", why="Bounds spend.", effect="Beyond it the supervisor asks you in plain text.", min_=0, max_=1000),
     _o("supervisor.max_auto_tasks", "int", "supervisor", "Auto-added task limit", "Most tasks agents may add to a plan through auto-applied proposals.", why="Bounds uncontrolled plan growth.",
        effect="Further proposals wait for approval.", min_=0, max_=200, risk="policy"),
     _o("supervisor.require_approval_for_scientific_changes", "bool", "supervisor", "Approve scientific changes", "Proposals that change hypotheses, methods, checks, acceptance, parameters or existing task definitions always wait for you.",
@@ -185,10 +366,14 @@ OPTIONS: List[Option] = [
     _o("governance.approval.require_pin", "bool", "governance", "Ask for the PIN", "Protected actions (approving a proposal, changing policy, promoting to main) ask for your PIN once one is set.", why="Stops accidental autonomous changes. Not a defence against a hostile agent.", effect="Off: protected actions need only a human actor.", risk="policy"),
     _o("governance.approval.require_rationale", "bool", "governance", "Ask for a reason", "Approving a proposal needs a written reason, recorded in the audit trail.", why="The audit trail explains itself.", effect="Off: the note is optional.", risk="policy"),
     _o("governance.approval.record_rejections", "bool", "governance", "Record rejections", "Rejected and revision-requested proposals are written to the audit trail.", why="Rejected ideas stay visible.", effect="Off: only the proposal file records it."),
+    _o("governance.approval.chat.enabled", "bool", "governance", "Approve from chat with an authenticator code", "Lets an approver on a paired chat account approve some PIN-protected proposals by sending a 6-digit authenticator (TOTP) code. Also needs `research approval chat-enroll` on this machine. Frozen tests, scientific plan or hypothesis edits, governance/approval settings, the PIN/authenticator and the chat allow-list always stay computer-only.",
+       why="Approving from a phone when you are away. As strong as your chat account AND your authenticator device.", effect="Off: chat can only ask you to approve at the computer.", risk="policy"),
+    _o("governance.approval.chat_allow", "list", "governance", "What chat may approve", "Narrows what chat may approve: experiment_proposal, plan_add_tasks, budget_increase, retry, role_change, promotion, resume, decision_option. Empty means all of these (never the computer-only ones).",
+       why="Least privilege for the phone.", effect="Anything not listed needs the PIN at the computer.", risk="policy"),
     _o("governance.approval.confirm_human_experiment_creation", "bool", "governance", "Confirm my own experiments", "Ask for the PIN when you create an experiment yourself. Off by default: creating one interactively needs no PIN.", why="Optional extra care.", effect="Applies to the CLI and the panel."),
     _o("agents.handoff.enabled", "bool", "agents", "Automatic provider fallback", "When a provider is unavailable or hits its limit, continue the same task with the next provider in the fallback order. Off: the task pauses for you (you can still press Continue with another agent).",
        why="Keeps long plans moving when one provider runs out of credit.", effect="Bounded by the attempt limits; never used when an attempt's state is unknown.", risk="policy"),
-    _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: claude, codex, agy. Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=["claude", "codex", "agy"]),
+    _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: " + ", ".join(_providers.KNOWN) + ". Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=list(_providers.KNOWN)),
     _o("agents.handoff.on_provider_unavailable", "enum", "agents", "When a provider is unavailable", "try_next continues with the next provider; pause stops the task for you.", choices=["pause", "try_next"], why="Opt-in.", effect="Needs automatic fallback on."),
     _o("agents.handoff.on_unknown_execution_state", "enum", "agents", "When an attempt's state is unknown", "Always pause: a task is never relaunched while its previous process might still be running.", choices=["pause"], why="Prevents two agents editing one worktree.", effect="Fixed."),
     _o("supervisor.session_resume", "enum", "supervisor", "Continue the agent's own session", "auto continues the provider's native conversation for repairs when the installed CLI proves it can; never always starts fresh with a generated hand-off.",
@@ -220,8 +405,24 @@ OPTIONS: List[Option] = [
        nullable=True, why="Diagnosing a stuck research plan is worth the strongest model.", effect="Applies to the next intervention or diagnosis; costs follow the model.", risk="policy"),
     _o("intervention.require_approval", "bool", "supervisor", "Always approve interventions", "Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN.",
        why="Lets a cautious team review every instruction before it runs.", effect="Operational interventions wait in 'proposed' until approved."),
-    _o("notifications.telegram.enabled", "bool", "supervisor", "Telegram notifications", "Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Telegram, or `research telegram setup`).",
+    _o("notifications.telegram.enabled", "bool", "supervisor", "Telegram notifications", "Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`).",
        why="An overnight run that stops should reach you.", effect="The supervisor contacts api.telegram.org while enabled."),
+    _o("notifications.discord.enabled", "bool", "supervisor", "Discord notifications", "Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only.",
+       why="Answer a halted run from your phone with buttons and threads.", effect="The chat gateway keeps an outbound connection to discord.com while enabled."),
+    _o("notifications.discord.thread_per_task", "bool", "supervisor", "One Discord thread per task", "Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals.",
+       why="Keeps a busy project channel readable.", effect="Applies to the next alert; existing threads are kept."),
+    _o("notifications.alerts.on", "list", "supervisor", "Alert kinds", "Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit.",
+       why="Silence the kinds you do not want on your phone.", effect="Alerts of other kinds are not queued."),
+    _o("notifications.alerts.cooldown_minutes", "int", "supervisor", "Alert cooldown", "The same alert is not repeated inside this time; after it, one reminder ('still: ...').", min_=1, max_=10080, unit="minutes",
+       why="An unattended run must not repeat itself.", effect="Applies to the next alert."),
+    _o("notifications.alerts.escalate_after", "int", "supervisor", "Escalate after", "After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan).", min_=1, max_=100,
+       why="Repeated failure needs a decision, not more retries.", effect="Applies to the next alert."),
+    _o("notifications.alerts.approval_expiry_hours", "int", "supervisor", "Approval buttons expire after", "Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting.", min_=1, max_=720, unit="hours",
+       why="Old buttons on a phone should not be tappable for ever.", effect="Applies to cards sent afterwards."),
+    _o("notifications.digest.at", "str", "supervisor", "Digest time", "Local time (HH:MM) for a daily summary of what changed. Empty turns the digest off.", nullable=True,
+       why="The morning question 'what happened overnight'.", effect="The chat gateway sends it to the home chat once a day."),
+    _o("notifications.digest.silent_if_unchanged", "bool", "supervisor", "Digest only when something changed", "Skip the digest when nothing happened since the last one.",
+       why="No noise on quiet days.", effect="Applies to the next digest."),
     _o("notifications.halt_grace_seconds", "int", "supervisor", "Halt grace period", "How long a plan must stay halted before it is reported and diagnosed.", min_=0, max_=86400, unit="seconds",
        why="Avoids alerts for stops that resolve themselves.", effect="Takes effect on the next scheduling pass."),
     _o("notifications.auto_debug", "bool", "supervisor", "Diagnose halts automatically", "Run the debug agent when a plan halts and send its summary and options (Telegram, if enabled, and Control Center). Off (the default) sends only the halt notice; you can still ask for a diagnosis any time.",
@@ -369,6 +570,13 @@ def validate(key: str, value: Any) -> Tuple[bool, Any, Optional[str]]:
             return False, None, f"Unsupported option type {t}."
     except (ValueError, TypeError):
         return False, None, "Expected a " + ("whole number." if t == "int" else "number." if t == "float" else "valid value.")
+    if o.key.startswith("supervisor.usage_limit.") and o.type == "list":
+        try:
+            nums = [float(x) for x in v]
+        except ValueError:
+            nums = []
+        if not nums or any(n <= 0 for n in nums):
+            return False, None, "Give one or more positive numbers, for example 15,30,60."
     if o.key == "backends.slurm.time" and not re.fullmatch(r"(\d+-)?\d{1,3}:\d{2}:\d{2}|\d+", str(v)):
         return False, None, "Use HH:MM:SS (or D-HH:MM:SS)."
     return True, v, None

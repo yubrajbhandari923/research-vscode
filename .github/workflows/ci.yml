@@ -4,6 +4,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python: ["3.8", "3.12"]
     steps:
@@ -13,7 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "20" }
       - run: pip install -e ".[dev]" build
-      - run: python -m pytest -q
+      - run: python -m pytest -q -m "not daemon"
+      - run: python -m pytest -q -n 0 -m daemon
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm run test:client

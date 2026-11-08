@@ -74,20 +74,21 @@ def test_rpc_task_create_and_edit_with_ui_form_payloads(proj, repo):
 
 def test_rpc_plan_task_methods(proj, repo):
     _plan_with_tasks(proj)
-    r = rpc(repo, ("next_task", {"plan_id": "PLAN-001"}), ("start_task", {"id": "T-001"}),
-            ("complete_task", {"id": "T-001", "result": "ok"}), ("task_context", {"id": "T-002"}),
-            ("block_task", {"id": "T-002", "blockers": "no data"}), ("home", {}), ("tree", {}),
-            ("set_status", {"id": "PLAN-001", "status": "blocked"}))
+    assert P.get_next_ready_task(proj, "PLAN-001")["id"] == "T-001"
+    assert P.start_task(proj, "T-001")["id"] == "T-001"
+    done = P.complete_task(proj, "T-001", "ok")
+    assert done["status"] == "done" and done["completed_at"]
+    assert P.task_context(proj, "T-002")["is_ready"] is True
+    P.block_task(proj, "T-002", "no data")
+    proj.close()
+    r = rpc(repo, ("task_context", {"id": "T-002"}), ("home", {}), ("tree", {}), ("set_status", {"id": "PLAN-001", "status": "blocked"}))
     assert all("result" in r[i] for i in r), r
-    assert r[1]["result"]["id"] == "T-001"
-    assert r[3]["result"]["status"] == "done" and r[3]["result"]["completed_at"]
-    assert r[4]["result"]["is_ready"] is True
-    home = r[6]["result"]
+    home = r[2]["result"]
     assert home["active_plan"]["id"] == "PLAN-001"
     assert [a["kind"] for a in home["attention_items"]][:1] == ["task_blocked"]
     assert home["current_focus"]["source"] == "plan" and home["current_focus"]["blocker"] == "no data"
-    assert r[7]["result"]["plans"][0]["tasks"][1]["status"] == "blocked"
-    assert r[8]["result"]["status"] == "blocked"
+    assert r[3]["result"]["plans"][0]["tasks"][1]["status"] == "blocked"
+    assert r[4]["result"]["status"] == "blocked"
 
 
 # ---------------------------------------------------------------------------- bug 2: commands named in AGENTS.md exist
@@ -308,8 +309,8 @@ def test_the_hpc_context_key_is_actually_set():
 def test_extension_commands_only_call_rpc_methods_that_exist():
     """A typo'd RPC name is a runtime error the user sees as a broken button."""
     import re
-    from research.rpc import Server
-    methods = {n[2:] for n in dir(Server) if n.startswith("m_")}
+    from research.api import OPS
+    methods = set(OPS)
     with open(_ext("src", "commands.ts"), encoding="utf-8") as f:
         src = f.read()
     called = set(re.findall(r"rpc\('([a-z_]+)'", src))

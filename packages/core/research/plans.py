@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from .schema import STATUSES, TASK_TYPES, TASK_ROLES, normalize_id
+from .schema import STATUSES, normalize_id
 from .store import Project
 from .util import NotFound, PolicyBlocked, ResearchError, as_list, now_iso, parse_iso
 
@@ -552,16 +552,3 @@ def task_context(project: Project, task_id: str) -> Dict[str, Any]:
         "experiment": experiment,
         "policy": project.policy,
     }
-
-
-def add_task_artifact(project: Project, task_id: str, artifact_id: str) -> Dict[str, Any]:
-    """Add an artifact reference to a task."""
-    tid = normalize_id(task_id, "T")
-    task = project.get("task", tid)
-
-    current = task.get("artifacts") or []
-    aid = normalize_id(artifact_id, "A")
-    if aid not in current:
-        current.append(aid)
-
-    return update_task(project, task_id, artifacts=current)

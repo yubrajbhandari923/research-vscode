@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-panel"
-version = "2.6.0"
+version = "3.1.0"
 description = "Project-local research memory: questions → experiments → runs → findings → decisions → checkpoints. Core + CLI for the Research Panel VS Code extension."
 readme = "README.md"
 requires-python = ">=3.8"
@@ -17,7 +17,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "pytest-xdist>=3"]
+tui = ["textual>=0.80; python_full_version >= '3.8.1'"]
+discord = ["discord.py>=2.4,<3; python_version >= '3.10'"]  # aiohttp needs 3.10; chat setup prints the install line
 
 [project.scripts]
 research = "research_cli.main:main"
@@ -31,13 +33,18 @@ research = ["templates/**/*", "templates/*", "_vendor/yaml/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
-# `-m "not slow"` skips the end-to-end scenarios (bundles executed in subprocesses, the acceptance run)
-# for a fast inner loop; CI and the release build run everything.
+# Default = fast inner loop (parallel, no slow/daemon tests). Full run: `-m "slow or not slow or daemon"`;
+# daemon tests run serially: `-n 0 -m daemon`. Markers are assigned in tests/python/conftest.py.
+addopts = '-m "not slow and not daemon" -n auto'
 markers = [
-    "slow: end-to-end scenarios that execute bundles or whole workflows in subprocesses",
+    "slow: end-to-end scenarios or tests over ~2 s (bundles, whole workflows, real Quarto builds)",
+    "daemon: starts a supervisor or gateway process (run serially, -n 0)",
+    "pty: needs /dev/tty",
+    "ext: needs node",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "pytest-xdist>=3",
 ]

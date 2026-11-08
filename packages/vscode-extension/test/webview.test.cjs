@@ -12,6 +12,8 @@ const ROOT = path.resolve(__dirname, '../../..');
 const PY = process.env.RESEARCH_PYTHON || path.join(ROOT, '.venv/bin/python');
 const PYPATH = [path.join(ROOT, 'packages/core'), path.join(ROOT, 'packages/cli')].join(path.delimiter);
 let proj, lib, dom;
+// Deterministic when launched from inside an agent: the core treats these variables as "an agent is acting" and demands a PIN.
+for (const k of Object.keys(process.env)) if (/^(CLAUDE|AI_AGENT|RESEARCH_AGENT|RESEARCH_EXECUTION|CODEX_SANDBOX)/.test(k)) delete process.env[k];
 
 function startCore(root, xdg = path.join(os.tmpdir(), 'rp-xdg-empty')) {
   const proc = spawn(PY, ['-m', 'research.rpc', '--root', root], { env: { ...process.env, XDG_CONFIG_HOME: xdg, PYTHONPATH: PYPATH, RESEARCH_CONFIG: '' } });
@@ -98,7 +100,11 @@ test('settings page: every setting has an accessible ? and hover, focus, click a
 });
 
 test('editing a setting: validation, diff review, save, audit, persists after restart, reset', async () => {
-  let core = startCore(proj); let host = hostFor(core);
+  // Policy changes need the approval PIN (fail closed), so this machine config gets one and the dialog is answered.
+  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-xdg-set-'));
+  let core = startCore(proj, xdg); let host = hostFor(core);
+  await core.call('approval_set_pin', { new: '4321' });
+  const pin = async () => { await waitFor(() => q(document, '#pin-in'), 8000); await type(q(document, '#pin-in'), '4321'); await click(byText(q(document, '#pin-in').closest('[role=dialog]'), 'button', 'Confirm')); };
   let { el, unmount } = await lib.mount(host, { page: 'settings' });
   try {
     await ready(el);
@@ -118,22 +124,22 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     assert.ok(!fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8').split('\n').some((l) => !l.startsWith('#') && l.includes('max_runs')));
     await click(byText(el, 'button', 'Review changes'));
     await click(byText(q(el, '[role=dialog]'), 'button', 'Save changes'));
-    await lib.tick(500);
+    await pin(); await waitFor(() => q(el, ".banner.ok"), 10000);
     assert.match(q(el, '.banner.ok').textContent, /Saved/);
     assert.match(fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8'), /max_runs_without_synthesis: 8/);
     assert.match(fs.readFileSync(path.join(proj, '.research/context/policy.md'), 'utf8'), /Maximum runs without synthesis.*8/);
     // restart everything: a new core process and a new UI see the saved value with its source
     await unmount(); core.stop();
-    core = startCore(proj); host = hostFor(core); ({ el, unmount } = await lib.mount(host, { page: 'settings' }));
+    core = startCore(proj, xdg); host = hostFor(core); ({ el, unmount } = await lib.mount(host, { page: 'settings' }));
     await ready(el);
     const row = qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     assert.equal(q(row, 'input').value, '8'); assert.ok(q(row, '.src-project'), 'shows it is a project override');
     // reset removes only the override
-    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await lib.tick(500);
+    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await pin(); await waitFor(() => q(el, ".banner.ok"), 10000);
     const rowOf = () => qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     await waitFor(() => q(rowOf(), 'input').value === '5');
     assert.equal(q(rowOf(), 'input').value, '5'); assert.ok(q(rowOf(), '.src-default'));
-  } finally { await unmount(); core.stop(); }
+  } finally { await unmount(); core.stop(); fs.rmSync(xdg, { recursive: true, force: true }); }
 });
 
 test('search finds settings across categories; unknown search says so', async () => {
@@ -163,10 +169,31 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
+    await waitFor(() => /Job isolation/.test(q(el, 'main').textContent), 15000);
     assert.match(q(el, 'main').textContent, /Job isolation/); assert.match(q(el, 'main').textContent, /Optional: try ideas on separate git branches/);
     await click(qa(el, '[role=tab]')[2]); await lib.tick(300);
     await click(byText(el, 'button.link', 'EXP-001')); assert.deepEqual(host.log.entities, ['EXP-001']);
     assert.match(q(el, 'main').textContent, /Step size/);
+  } finally { await unmount(); core.stop(); }
+});
+
+test('chat box: gateway and pairing state, Connect needs a token, a wrong pairing code is explained', async () => {
+  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-xdg-chat-'));
+  const core = startCore(proj, xdg); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host, { page: 'plans' });
+  try {
+    await ready(el);
+    await waitFor(() => /Chat \(Telegram\)/.test(el.textContent), 8000);
+    assert.match(el.textContent, /no token/); assert.match(el.textContent, /gateway stopped/); assert.match(el.textContent, /Nobody yet/);
+    const connect = byText(el, 'button', 'Connect');
+    assert.ok(connect.disabled, 'Connect waits for a token');
+    await type(q(el, '#tg-token'), '123456:ABCDEFGHIJKLMNOPQRSTUVWX'); assert.equal(connect.disabled, false);
+    const approve = byText(el, 'button', 'Approve');
+    assert.ok(approve.disabled, 'a pairing code has 8 characters');
+    await type(q(el, '#chat-code'), 'abcd2345'); assert.equal(approve.disabled, false); assert.equal(q(el, '#chat-code').value, 'ABCD2345');
+    await click(approve);
+    await waitFor(() => /wrong or expired/.test(el.textContent), 8000);
+    assert.match(el.textContent, /wrong or expired/);
   } finally { await unmount(); core.stop(); }
 });
 
@@ -224,34 +251,6 @@ PR.prepare(p, ws["id"], commits=[sha], title="Solver")
 });
 
 
-test('first run: two answers create a v2 project; advanced options stay folded away; unavailable choices explain themselves', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-fresh-'));
-  const core = startCore(dir); const host = hostFor(core);
-  const { el, unmount } = await lib.mount(host);
-  try {
-    await waitFor(() => /Initialize Research Project/.test(el.textContent), 8000);
-    await click(byText(el, 'button', 'Use a single folder instead'));
-    await waitFor(() => /Set up Research OS/.test(el.textContent), 8000);
-    assert.equal(q(el, '#su-name').value, path.basename(dir), 'the folder name is the default project name');
-    assert.equal(q(el, '[role=tab]'), null, 'no navigation until a project exists');
-    await type(q(el, '#su-goal'), 'Learn the effect of alpha');
-    await click(byText(el, 'button', 'Next'));
-    assert.match(q(el, 'main, .wizard').textContent, /Try ideas on separate git branches/);
-    const box = byText(el, 'label', 'Use a shared research ledger').querySelector('input');
-    assert.ok(box.disabled, 'the ledger option is disabled without a git repository, and says why');
-    assert.match(el.textContent, /Needs an existing git repository/);
-    await click(byText(el, 'button', 'Skip to review'));
-    await waitFor(() => /Research OS will:/.test(el.textContent));
-    assert.match(el.textContent, /project format 2/);
-    assert.ok(!fs.existsSync(path.join(dir, '.research')), 'nothing is written before Create');
-    await click(byText(el, 'button', 'Create project'));
-    await waitFor(() => q(el, '[role=tab]'), 12000);
-    assert.ok(fs.existsSync(path.join(dir, '.research', 'format.json')) && fs.existsSync(path.join(dir, 'AGENTS.md')));
-    assert.match(fs.readFileSync(path.join(dir, '.research', 'config.yaml'), 'utf8'), /Learn the effect of alpha/);
-    assert.ok(!fs.existsSync(path.join(dir, '.git')), 'no git repository was created behind your back');
-  } finally { await unmount(); core.stop(); fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
 test('Initialize Project: teaches first, previews the layout, creates main/ledger/experiments and shows the Agents page', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-init-'));
   const core = startCore(dir); const host = hostFor(core);
@@ -265,7 +264,7 @@ test('Initialize Project: teaches first, previews the layout, creates main/ledge
     await click(byText(el, 'button', 'Next'));
     assert.match(el.textContent, /top level/); await click(byText(el, 'button', 'Next'));
     assert.match(el.textContent, /Claude Code/); assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Google Antigravity/);
-    assert.match(el.textContent, /sonnet_first/);
+    assert.match(el.textContent, /balanced_first/);
     await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
     await click(byText(el, 'button', 'Next'));
     // the Skills step: packs with descriptions, Core Research always on, nine cheap hooks, nothing injected into every prompt

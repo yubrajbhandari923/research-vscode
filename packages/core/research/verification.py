@@ -17,6 +17,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from . import registry
 from .schema import REVIEW_VERDICTS, normalize_id, type_of
 from .store import Project, append_jsonl
 from .processes import shell_check
@@ -108,7 +109,7 @@ def run_check(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, 
     ws = W.for_task(p, task["id"]) if task.get("id") else None
     base = ws["path"] if ws else None
     if c["type"] == "command":
-        timeout = float(_policy(p).get("check_timeout_seconds") or 600)
+        timeout = float(_policy(p).get("check_timeout_seconds") or registry.default("verification.check_timeout_seconds"))
         from . import envcheck
         r = shell_check(envcheck.expand(p, c["run"]), cwd=base or p.root, timeout=timeout, output_limit=2000,
                         env={**os.environ, "RESEARCH_ROOT": p.root, "PATH": envcheck.path_with_python(p)})
@@ -237,13 +238,13 @@ def gate_task_completion(p: Project, task_id: str) -> List[str]:
 
 def check_finding_status(p: Project, status: Optional[str], via_review: bool = False) -> None:
     """Gate: agents can't set a finding to `supported` except through an independent review."""
-    if status != "supported" or via_review or not _policy(p).get("require_review_for_supported", True):
+    if status != "supported" or via_review or not _policy(p).get("require_review_for_supported", registry.default("verification.require_review_for_supported")):
         return
     if _enforced(p):
         raise PolicyBlocked(
             "Agents can't mark a finding `supported` directly; it stays preliminary until an independent review.",
             hint="Create it as preliminary. A human or a different agent/role reviews it: "
-                 "`research finding review F-… --verdict supported --notes \"…\"` (or `research dispatch verifier F-…`).")
+                 "`research finding review F-… --verdict supported --notes \"…\"` (or `research agent dispatch verifier F-…`).")
 
 
 @atomic
@@ -260,7 +261,7 @@ def review_finding(p: Project, finding_id: str, verdict: str, notes: Optional[st
     if (pol.get("independent_reviewer", True) and me.get("author_type") == "agent"
             and f.get("author_type") == "agent" and (me.get("author_name") or "") == (f.get("author_name") or "")):
         raise PolicyBlocked(f"{fid} was written by {f.get('author_name')}; it needs an independent reviewer.",
-                            hint="Ask a human, or dispatch a different agent or role: `research dispatch verifier "
+                            hint="Ask a human, or dispatch a different agent or role: `research agent dispatch verifier "
                                  f"{fid}` (roles count as different reviewers, e.g. claude/implementer vs claude/verifier).")
     if verdict == "supported" and pol.get("require_evidence_for_supported", True) and not f["links"].get("supports"):
         raise PolicyBlocked(f"{fid} has no supporting evidence, so it can't be marked supported.",

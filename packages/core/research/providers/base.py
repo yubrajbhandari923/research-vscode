@@ -1,0 +1,97 @@
+"""The adapter record and the helpers every provider module shares. Providers import from here, never from the package root."""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
+
+from ..util import ResearchError
+
+LEVELS = ("fast", "balanced", "deep")   # the logical levels every provider's level pack and every strategy speak
+
+
+@dataclass(frozen=True)
+class Adapter:
+    """Everything the rest of the code may know about one agent CLI (design D.1). Fields that are None mean "not supported"."""
+    name: str
+    label: str
+    build: Callable[..., List[str]]                  # (prof, model, effort, prompt, cwd, extra_dirs, headless) -> argv
+    caps: Dict[str, Any]                             # honest capability table
+    levels: Dict[str, Dict[str, Any]]                # level pack: fast|balanced|deep -> {"model", "effort"}
+    blurb: str = ""
+    profile: Dict[str, Any] = field(default_factory=dict)        # the plain provider profile (agents.profiles.<name>)
+    level_extra: Dict[str, Any] = field(default_factory=dict)    # keys every level profile carries besides command/args/model/effort
+    usage_parser: Optional[str] = None
+    resume_probe: Optional[Callable[[str], bool]] = None         # does the INSTALLED cli prove native resume?
+    resume_argv: Optional[Callable[[List[str], str], Optional[List[str]]]] = None
+    session_id: Optional[Callable[[str], Optional[str]]] = None
+    list_models: Optional[Callable[[str], Optional[List[Dict[str, str]]]]] = None
+    mcp_install: Optional[Callable[[str, Optional[str]], Dict[str, Any]]] = None     # (root, command) -> {"provider","where","scope"}
+    mcp_registered: Optional[Callable[[str], Optional[bool]]] = None
+    version_info: Optional[Callable[[str], Dict[str, Any]]] = None     # (command) -> {"raw", "major", "minor", "patch", "line"}
+    final_event: Optional[Callable[[str], bool]] = None                # (stdout line) -> is it the provider's last event? enables the watchdog
+    env: Optional[Callable[[Dict[str, Any], Dict[str, str], bool], Dict[str, str]]] = None   # (profile, dispatch env, headless) -> extra env
+    checks: Optional[Callable[[str, str], List[Dict[str, Any]]]] = None   # (root, command) -> extra doctor rows {id, level, title, detail, fix}
+    limit_info: Optional[Callable[[str, str, Optional[int]], Optional["LimitInfo"]]] = None   # (stdout, stderr, exit_code) -> LimitInfo|None
+
+
+@dataclass(frozen=True)
+class LimitInfo:
+    """A provider refusal because of a usage/rate/overload/credit limit. `reset_at` is a tz-aware UTC datetime, None when unknown."""
+    kind: str                                  # usage | rate | overload | credit
+    reset_at: Optional[datetime]
+    raw: str
+
+
+def run(argv: List[str], cwd: Optional[str] = None, timeout: float = 15.0) -> Optional[subprocess.CompletedProcess]:
+    try:
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def server_cmd(root: str) -> List[str]:
+    if shutil.which("research"):
+        return ["research", "mcp"]
+    from .. import localbin
+    return [localbin.install(root)["path"], "mcp"]
+
+
+def merge_json(path: str, key: str, name: str, entry: Dict[str, Any]) -> str:
+    """Set `entry` as server `name` under `key` in a JSON config file (other servers and keys are kept). Returns the path."""
+    from ..store import _atomic_write
+    data: Dict[str, Any] = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError:
+            raise ResearchError(f"{path} is not valid JSON; fix or remove it first")
+    data.setdefault(key, {})[name] = entry
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    _atomic_write(path, json.dumps(data, indent=2) + "\n")
+    return path
+
+
+def json_has_research(root: str, rel: str, key: str) -> bool:
+    try:
+        return "research" in (json.load(open(os.path.join(root, rel), encoding="utf-8")).get(key) or {})
+    except (OSError, ValueError):
+        return False
+
+
+def last_json_value(output: str, key: str, reverse: bool = True) -> Optional[str]:
+    """First (or last) JSON line of `output` that is an object carrying `key`."""
+    lines = (output or "").strip().splitlines()
+    for line in (reversed(lines) if reverse else lines):
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get(key):
+            return str(d[key])
+    return None

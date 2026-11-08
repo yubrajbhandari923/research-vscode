@@ -1,122 +1,56 @@
-"""Halt detection, the debug agent, and the Telegram channel (all opt-in).
+"""Halt detection, the debug agent, and the supervisor's side of chat (all opt-in).
 
 * A plan is HALTED when it is `running` yet nothing can move: no task is running, verifying, waiting for HPC, ready or repairing, no automatic
   promotion is advancing, and at least one task waits for a human (blocked / attention / awaiting approval). `supervisor.plan_health` computes it;
   `status` reports it instead of an unqualified "running".
 * After `notifications.halt_grace_seconds` of the same halt the supervisor can run a DEBUG AGENT (read-only, strongest model by default) that reads the
   blocked tasks and logs and returns a few sentences plus a few concrete options. The options become interventions (`intervene.py`) when chosen.
-* Telegram: the bot token and chat id are stored on THIS machine only (`telegram.json`, 0600, next to the approval PIN), never in the project, git,
-  prompts or events. Only messages from the configured chat are obeyed. Chat can read status, ask for a diagnosis, choose an option, give a text
-  instruction, pause or resume. It can never approve a protected change: that needs the PIN at a terminal or in VS Code.
+* Chat: supervisors never talk to Telegram or Discord. `step` writes alerts to the project's outbox (`chat/alerts.py`); the machine's gateway process
+  (`chat/gateway.py`) delivers them and obeys commands. Credentials live on THIS machine only (`chat/telegram.py`). Chat can read status, ask for a
+  diagnosis, choose an option, instruct, pause or resume; it never approves a protected change without the PIN or an enrolled authenticator.
+  The Telegram functions below (`credentials`, `send`, `poll`, ...) are thin shims kept for old callers.
 """
 from __future__ import annotations
 
 import json
 import os
-import re
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from typing import Any, Dict, List, Optional
 
+from . import registry
 from .util import PolicyBlocked, ResearchError, now_iso
 
-API = "https://api.telegram.org"
-DEFAULTS = {"halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False}}
 _threads: Dict[str, threading.Thread] = {}
 
-
-# ----------------------------------------------------------------------------------------------- credentials (machine-local)
-def _path() -> str:
-    from .configfile import machine_path
-    return os.path.join(os.path.dirname(machine_path() or os.path.expanduser("~/.config/research-os/config.yaml")), "telegram.json")
-
-
-def credentials() -> Dict[str, Any]:
-    try:
-        with open(_path(), encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
+# Telegram shims: the implementation moved to research.chat
+from .chat import telegram as _tg                                  # noqa: E402
+from .chat.telegram import clear_credentials, credentials, discover_chat, send, set_credentials, status  # noqa: E402,F401
+_path = _tg.path
 
 
-def set_credentials(token: str, chat_id: Optional[Any] = None) -> None:
-    token = (token or "").strip()
-    if not re.fullmatch(r"\d{5,}:[A-Za-z0-9_-]{20,}", token):
-        raise ResearchError("That does not look like a Telegram bot token (expected 123456:ABC…) ", hint="Create a bot with @BotFather and copy its token.")
-    path = _path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"token": token, "chat_id": chat_id, "offset": 0}, f)
-    os.replace(tmp, path)
+def chat_enabled(p) -> bool:
+    return bool(cfg(p)["telegram"].get("enabled") and credentials().get("token"))
 
 
-def clear_credentials() -> None:
-    try:
-        os.unlink(_path())
-    except OSError:
-        pass
-
-
-def status(p=None) -> Dict[str, Any]:
-    c = credentials()
-    en = bool(((p.config.get("notifications") or {}).get("telegram") or {}).get("enabled")) if p is not None else None
-    return {"token_set": bool(c.get("token")), "chat_id_set": c.get("chat_id") is not None, "enabled": en,
-            "ready": bool(c.get("token") and c.get("chat_id") is not None and en is not False), "stored_at": _path()}
-
-
-def _api(token: str, method: str, params: Dict[str, Any], timeout: float = 15.0) -> Dict[str, Any]:
-    """The only network call. Tests replace it. The token appears only in the URL path, never in logs, errors or events."""
-    base = os.environ.get("RESEARCH_TELEGRAM_API") or API       # override: a proxy, or a local fake in tests
-    req = urllib.request.Request(f"{base.rstrip('/')}/bot{token}/{method}", data=urllib.parse.urlencode(params).encode(), method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            d = json.loads(r.read().decode())
-    except urllib.error.HTTPError as ex:
-        raise ResearchError(f"Telegram refused the request (HTTP {ex.code})") from None
-    except (urllib.error.URLError, OSError, ValueError) as ex:
-        raise ResearchError(f"Telegram is unreachable: {type(ex).__name__}") from None
-    if not d.get("ok"):
-        raise ResearchError("Telegram error: " + str(d.get("description", "unknown"))[:120])
-    return d
-
-
-def send(text: str, chat_id: Optional[Any] = None) -> bool:
-    c = credentials()
-    if not c.get("token") or (chat_id or c.get("chat_id")) is None:
-        return False
-    from .taskprompt import redact
-    text = redact(text) or ""
-    for i in range(0, len(text), 3800):             # Telegram's limit is 4096 characters
-        _api(c["token"], "sendMessage", {"chat_id": chat_id or c["chat_id"], "text": text[i:i + 3800]})
-    return True
-
-
-def discover_chat(token: str, wait: float = 60.0) -> Optional[Any]:
-    """Setup helper: the first chat that messages the bot becomes the authorized chat."""
-    t0, offset = time.time(), 0
-    while time.time() - t0 < wait:
-        for u in _api(token, "getUpdates", {"timeout": 0, "offset": offset}, 10).get("result", []):
-            offset = u["update_id"] + 1
-            m = u.get("message") or {}
-            if (m.get("chat") or {}).get("id") is not None:
-                return m["chat"]["id"]
-        time.sleep(2)
-    return None
+def ensure_gateway(p) -> Dict[str, Any]:
+    """Start (or replace a stale) chat gateway when chat is enabled for this project. Cheap, never raises."""
+    if not chat_enabled(p):
+        return {"action": "none"}
+    from .chat import gateway
+    return gateway.ensure_running(p)
 
 
 def ensure_running(p) -> Dict[str, Any]:
-    """One step that keeps the pieces alive without extra switches (called when the extension opens a project and by `telegram setup`):
-    start the supervisor process if Telegram is enabled and ready, or a plan is running, and it is not up; replace a running supervisor that is on
-    older Research OS code (agents are untouched, the new process reconciles them). Never raises."""
+    """One step that keeps the pieces alive without extra switches (called when the extension opens a project and by `chat setup`):
+    start the supervisor process if chat is enabled and ready, or a plan is running, and it is not up; replace a running supervisor that is on
+    older Research OS code (agents are untouched, the new process reconciles them); make sure the gateway runs. Never raises."""
     from . import supervisor as SV
     try:
-        c, cr = cfg(p), credentials()
-        wants_chat = bool(c["telegram"].get("enabled") and cr.get("token") and cr.get("chat_id") is not None)
+        cr = credentials()
+        wants_chat = bool(cfg(p)["telegram"].get("enabled") and cr.get("token") and cr.get("chat_id") is not None)
+        if wants_chat:
+            ensure_gateway(p)
         d = SV.daemon_status(p)
         if d["running"]:
             return {"action": "restart", **SV.daemon_restart(p, timeout=60)} if d.get("restart_required") else {"action": "none"}
@@ -125,6 +59,12 @@ def ensure_running(p) -> Dict[str, Any]:
     except (ResearchError, PolicyBlocked, OSError) as ex:
         return {"action": "none", "error": str(ex)[:200]}
     return {"action": "none"}
+
+
+def poll(p=None) -> int:
+    """One Telegram receive pass through the gateway's router (debugging; the gateway process does this continuously)."""
+    from .chat import gateway
+    return gateway.poll_once(p)
 
 
 # ----------------------------------------------------------------------------------------------- state files
@@ -148,8 +88,7 @@ def _write(path: str, d: Dict[str, Any]) -> None:
 
 
 def cfg(p) -> Dict[str, Any]:
-    n = p.config.get("notifications") or {}
-    return {**DEFAULTS, **n, "telegram": {**DEFAULTS["telegram"], **(n.get("telegram") or {})}}
+    return registry.section(p, "notifications")
 
 
 def latest_debug(p) -> Optional[Dict[str, Any]]:
@@ -221,12 +160,78 @@ def message_for(rec: Dict[str, Any], halt: Dict[str, Any]) -> str:
 
 
 # ----------------------------------------------------------------------------------------------- the watcher (called by the supervisor process every pass)
+def _halt_actions(rec: Dict[str, Any], plan_key: str) -> List[Dict[str, Any]]:
+    acts: List[Dict[str, Any]] = [{"label": "Diagnose", "op": "chat_cmd_debug"}] if rec.get("state") != "done" else []
+    acts += [{"label": f"Option {i + 1}: {o['label']}"[:40], "op": "chat_cmd_choose", "params": {"n": str(i + 1)}} for i, o in enumerate(rec.get("options") or [])]
+    return acts + [{"label": "Pause plan", "op": "chat_cmd_pause", "params": {"plan": plan_key}}]
+
+
+def _alert_halt(p, plan_key: str, fingerprint: str, text: str, rec: Dict[str, Any]) -> None:
+    from .chat import alerts, commands
+    acts, dec = _halt_actions(rec, plan_key), None
+    if rec.get("state") == "done" and rec.get("options"):
+        try:                     # H.7: the diagnosis is a decision request, so every surface answers the same object (buttons, text reply, TUI, CLI)
+            from . import decisions as D
+            d = D.from_diagnosis(p, rec)
+            if d:
+                dec, acts = d["id"], commands.decision_actions(d) + [{"label": "Pause plan", "op": "chat_cmd_pause", "params": {"plan": plan_key}}]
+        except Exception:        # noqa: BLE001 - fall back to the option buttons
+            pass
+    alerts.raise_(p, f"halt:{plan_key}", "halt", "error", text, actions=acts, decision=dec)
+
+
+def _scan(p, c: Dict[str, Any]) -> None:
+    """Other alert producers, stateless: the alert key dedupes, and a condition that ended is cleared once."""
+    from . import intervene as I, planspec as PS, supervisor as SV
+    from .chat import alerts, commands
+    want = set()
+    for pr in SV.list_proposals(p):
+        if pr.get("status") == "pending":
+            k = f"approval:{pr['id']}"
+            want.add(k)
+            acts = [{"label": "Reject", "op": "chat_cmd_reject", "params": {"kind": "proposal", "id": pr["id"]}, "style": "danger"},
+                    {"label": "Approve on my computer", "text": f"Approve with the PIN on your computer:\n  research proposal approve {pr['id']}\n(or VS Code → Plans → Approvals, or `research tui`)"}]
+            alerts.raise_(p, k, "approval_needed", "warn", f"Proposal {pr['id']} needs your approval: {(pr.get('rationale') or '')[:200]}",
+                          actions=acts + commands.card_actions(p, "proposal", pr["id"]))
+    for it in I.list_all(p):
+        if it.get("state") == "proposed":
+            k = f"approval:{it['id']}"
+            want.add(k)
+            alerts.raise_(p, k, "approval_needed", "warn", f"Intervention {it['id']} for {it['task']} needs your approval: {it['instruction'][:160]}",
+                          actions=[{"label": "Reject", "op": "chat_cmd_reject", "params": {"kind": "intervention", "id": it["id"]}, "style": "danger"},
+                                   {"label": "Approve on my computer", "text": f"Approve with the PIN on your computer:\n  research intervention approve {it['id']}"}],
+                          task=it["task"])
+    for k in alerts.open_keys(p, "approval:") - want:
+        alerts.clear(p, k, f"{k.split(':', 1)[1]} was decided.")
+    try:
+        from . import decisions as D
+        open_ds = [d for d in D.list_all(p) if d.get("created_by") != "debug agent"]       # a diagnosis rides on its halt card
+    except Exception:           # noqa: BLE001
+        open_ds = []
+    for d in open_ds:
+        alerts.raise_(p, f"decision:{d['id']}", "decision", "warn", D.text_for(d), actions=commands.decision_actions(d), decision=d["id"],
+                      task=(d.get("subject") or {}).get("id"))
+    for k in alerts.open_keys(p, "decision:") - {f"decision:{d['id']}" for d in open_ds}:
+        alerts.clear(p, k, f"{k.split(':', 1)[1]} was answered or closed.")
+    for rs in SV.all_runs(p):
+        st = PS.load_state(p, rs["plan_key"])
+        if not st:
+            continue
+        if SV.plan_health(p, st, rs)["state"] == "completed":
+            alerts.raise_(p, f"plan_finished:{rs['plan_key']}", "plan_finished", "ok", f"Plan {rs['plan_key']} finished.", once=True)
+        for tid, e in (rs.get("tasks") or {}).items():
+            if e.get("phase") == "failed":
+                alerts.raise_(p, f"task_failed:{tid}:{len(e.get('attempts') or [])}", "task_failed", "error",
+                              f"{tid} failed after {len(e.get('attempts') or [])} attempt(s): {(e.get('reason') or '')[:200]}", task=tid,
+                              actions=[{"label": "Show logs", "op": "chat_cmd_logs", "params": {"task": tid}, "min_role": "viewer"}])
+
+
 def step(p) -> None:
-    """Detect new halts, run the debug agent in a background thread, send Telegram messages, and obey Telegram commands. Never raises."""
+    """Detect new halts, run the debug agent in a background thread, queue chat alerts, keep the gateway alive. Never raises."""
     from . import supervisor as SV
     try:
         c = cfg(p)
-        tg = c["telegram"].get("enabled") and credentials().get("token")
+        tg = chat_enabled(p)
         for rs in SV.all_runs(p):
             if rs.get("state") != "running":
                 continue
@@ -241,11 +246,16 @@ def step(p) -> None:
                 if m:
                     os.unlink(marker)
                     if tg and m.get("notified"):
-                        send(f"Plan {st['plan_key']} is moving again ({h['state']}).")
+                        from .chat import alerts
+                        alerts.clear(p, f"halt:{st['plan_key']}", f"Plan {st['plan_key']} is moving again ({h['state']}).")
                 continue
             if not m or m.get("fingerprint") != h["fingerprint"]:
                 m = {"fingerprint": h["fingerprint"], "since": time.time(), "notified": False, "debugged": False}
                 _write(marker, m)
+            if _auto_investigator(p) and not m.get("investigated") and time.time() - m["since"] >= float(c["halt_grace_seconds"]):
+                m["investigated"] = True
+                _write(marker, m)
+                threading.Thread(target=_auto_investigate, args=(p.root, h), daemon=True).start()       # H.5: once per halt, off the supervisor's tick
             if time.time() - m["since"] < float(c["halt_grace_seconds"]) or m.get("notified"):
                 continue
             key = st["plan_key"] + h["fingerprint"]
@@ -254,7 +264,7 @@ def step(p) -> None:
                     continue
                 m["debugged"] = True
                 _write(marker, m)
-                th = threading.Thread(target=_debug_and_send, args=(p.root, st["plan_key"], h, bool(tg)), daemon=True)
+                th = threading.Thread(target=_debug_and_alert, args=(p.root, st["plan_key"], h), daemon=True)
                 _threads[key] = th
                 th.start()
                 continue
@@ -262,9 +272,10 @@ def step(p) -> None:
                 m["notified"] = True
                 _write(marker, m)
                 if tg:
-                    send(message_for({"state": "none"}, h))
+                    _alert_halt(p, st["plan_key"], h["fingerprint"], message_for({"state": "none"}, h), {})
         if tg:
-            poll(p)
+            _scan(p, c)
+            ensure_gateway(p)
     except Exception as ex:      # noqa: BLE001 - notifications must never stop scheduling
         try:
             with open(p.path("supervisor", "daemon.log"), "a") as lf:
@@ -273,7 +284,26 @@ def step(p) -> None:
             pass
 
 
-def _debug_and_send(root: str, plan_key: str, halt: Dict[str, Any], tg: bool) -> None:
+def _auto_investigator(p) -> bool:
+    from . import investigator
+    return bool(investigator.cfg(p)["auto"])
+
+
+def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:
+    """Worker thread: the investigator once per blocked task of a halted plan (failures the rules could not settle or whose retries ran out; limits and
+    approval waits are not blocked tasks). `maybe_auto` applies max_per_plan, budget_usd and once-per-(task, fingerprint)."""
+    from .store import Project
+    from . import investigator
+    try:
+        with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
+            for b in halt["blocking"]:
+                if b["phase"] == "blocked":
+                    investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
+    except Exception:    # noqa: BLE001 - a diagnosis must never break the watcher
+        pass
+
+
+def _debug_and_alert(root: str, plan_key: str, halt: Dict[str, Any]) -> None:
     from .store import Project
     try:
         with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
@@ -282,43 +312,10 @@ def _debug_and_send(root: str, plan_key: str, halt: Dict[str, Any], tg: bool) ->
             m = _read(marker) or {}
             m["notified"] = True
             _write(marker, m)
-            if tg:
-                send(message_for(rec, {**halt, "plan": plan_key}))
+            if chat_enabled(p):
+                _alert_halt(p, plan_key, halt.get("fingerprint", ""), message_for(rec, {**halt, "plan": plan_key}), rec)
     except Exception:    # noqa: BLE001
         pass
-
-
-# ----------------------------------------------------------------------------------------------- Telegram commands
-HELP = ("/status  all plans\n/blocked  what is stuck and why\n/task T-12  one task\n/logs T-12  last log lines\n/debug  diagnose the halt now\n"
-        "/options  show the latest diagnosis\n/choose N  pick an option\n/say <text>  or /say T-12 <text>  instruct the supervisor\n"
-        "/interventions  list\n/pause  /resume  the running plan\n/help\nProtected changes (science, resources, frozen tests) are approved with the PIN in VS Code or the terminal, never here.")
-
-
-def poll(p) -> int:
-    """Handle new messages from the authorized chat. Everything from any other chat is ignored."""
-    c = credentials()
-    if not c.get("token") or c.get("chat_id") is None:
-        return 0
-    n = 0
-    for u in _api(c["token"], "getUpdates", {"timeout": 0, "offset": int(c.get("offset") or 0)}, 10).get("result", []):
-        c["offset"] = u["update_id"] + 1
-        m = u.get("message") or {}
-        if str((m.get("chat") or {}).get("id")) != str(c["chat_id"]) or not m.get("text"):
-            continue
-        n += 1
-        try:
-            reply = handle(p, m["text"].strip())
-        except (ResearchError, PolicyBlocked) as ex:
-            reply = "Not done: " + str(ex)[:600]
-        except Exception as ex:   # noqa: BLE001
-            reply = f"Error: {type(ex).__name__}"
-        send(reply, c["chat_id"])
-    path = _path()
-    with open(path + ".tmp", "w", encoding="utf-8") as f:
-        json.dump(c, f)
-    os.chmod(path + ".tmp", 0o600)
-    os.replace(path + ".tmp", path)
-    return n
 
 
 def _plans(p) -> List[Any]:
@@ -337,84 +334,7 @@ def _blocked(p) -> List[Dict[str, Any]]:
             for b in SV.plan_health(p, st, rs)["blocking"]]
 
 
-def handle(p, text: str) -> str:
-    from . import intervene as I, supervisor as SV
-    cmd, _, rest = text.partition(" ")
-    cmd = cmd.lower().split("@")[0]
-    rest = rest.strip()
-    human = p.author
-    p.author = {"author_type": "human", "author_name": "telegram", "author_model": None}      # the authorized chat is the researcher; recorded as such
-    try:
-        if cmd in ("/start", "/help"):
-            return HELP
-        if cmd == "/status":
-            rows = []
-            for st, rs in _plans(p):
-                h = SV.plan_health(p, st, rs)
-                s = SV.status(p, st["plan_key"])
-                rows.append(f"{st['plan_key']}: {h['label']} · {s['progress']} verified · {s['concurrency']['running']} running"
-                            + (f" · blocked: {', '.join(b['task'] for b in h['blocking'])}" if h["blocking"] else ""))
-            return "\n".join(rows) or "No plan has been run."
-        if cmd == "/blocked":
-            b = _blocked(p)
-            return "\n".join(f"{x['task']} {x['title'][:40]} [{x['phase']}]\n  {(x.get('reason') or '')[:240]}" for x in b) or "Nothing is blocked."
-        if cmd == "/task":
-            g = I.gather(p, rest)
-            return f"{g['task']} {g['title']}\nphase {g['phase']} · {len(g['attempts'])} attempt(s)\n{(g['reason'] or '')[:400]}"
-        if cmd == "/logs":
-            return (I.gather(p, rest)["logs"] or "(no log yet)")[-1500:]
-        if cmd == "/debug":
-            plan = next((st["plan_key"] for st, rs in _plans(p) if SV.plan_health(p, st, rs)["blocking"]), None)
-            if not plan:
-                return "Nothing is blocked."
-            threading.Thread(target=_debug_and_send, args=(p.root, plan, SV.plan_health(p, *_plan_pair(p, plan)), True), daemon=True).start()
-            return "Diagnosing; I will message you when it is done."
-        if cmd == "/options":
-            d = latest_debug(p)
-            return message_for(d, {"plan": d["plan"], "blocking": [{"task": t, "title": "", "phase": "blocked"} for t in d["tasks"]]}) if d else "No diagnosis yet. Try /debug."
-        if cmd in ("/choose", "/say") or not cmd.startswith("/"):
-            return _instruct(p, cmd, rest, text)
-        if cmd in ("/pause", "/resume"):
-            running = [st["plan_key"] for st, rs in _plans(p) if rs.get("state") in (("running",) if cmd == "/pause" else ("paused", "blocked", "attention"))]
-            if len(running) != 1:
-                return "Name exactly one plan state to change: " + (", ".join(running) or "none applies")
-            (SV.plan_pause if cmd == "/pause" else SV.plan_resume)(p, running[0])
-            return f"{running[0]} {'paused' if cmd == '/pause' else 'resumed'}."
-        if cmd == "/interventions":
-            return "\n".join(f"{i['id']} {i['task']} {i['state']}: {i['instruction'][:70]}" for i in I.list_all(p)[-8:]) or "None."
-        return "Unknown command. /help"
-    finally:
-        p.author = human
-
-
 def _plan_pair(p, plan_key):
     from . import planspec as PS, supervisor as SV
     st = PS.load_state(p, plan_key)
     return st, SV.load_run(p, st["plan_id"])
-
-
-def _instruct(p, cmd: str, rest: str, text: str) -> str:
-    from . import intervene as I
-    if cmd == "/choose":
-        d = latest_debug(p)
-        if not d or not rest.isdigit() or not 1 <= int(rest) <= len(d.get("options") or []):
-            return "Choose a number from /options."
-        opt, tid = d["options"][int(rest) - 1], d["tasks"][0]
-        msg = opt["instruction"]
-    else:
-        body = rest if cmd == "/say" else text
-        m = re.match(r"(T-\d+)\s+(.*)", body, re.S)
-        blocked = _blocked(p)
-        if m:
-            tid, msg = m.group(1), m.group(2)
-        elif len(blocked) == 1:
-            tid, msg = blocked[0]["task"], body
-        else:
-            return "Which task? Use /say T-12 <instruction>. Blocked: " + (", ".join(b["task"] for b in blocked) or "none")
-    it = I.request(p, tid, msg, source="telegram")
-    if it["state"] == "approved":
-        return f"{it['id']}: {it['summary']}\nApplied under your instruction; the supervisor is resuming {tid}."
-    if it["state"] == "proposed":
-        return (f"{it['id']}: {it['summary']}\nThis changes " + ", ".join(it["protected"]) + " and needs your approval with the PIN:\n"
-                f"  research intervention approve {it['id']}\n(or in VS Code → Plans → {tid} → Instruct).")
-    return f"{it['id']} {it['state']}: {(it.get('history') or [{}])[-1].get('note', '')}"

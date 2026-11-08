@@ -4,13 +4,10 @@ import * as vscode from 'vscode';
 import { Model } from './model';
 import { renderArtifact, renderCheckpoint, renderCompare, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
 import { FormSpec, renderForm } from './render/form';
-import { renderHome, renderOverviewHome } from './render/home';
-import { renderResume } from './render/resume';
-import { renderSetup } from './render/setup';
+import { renderOverviewHome } from './render/home';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'interventions', 'debug_run', 'debug_latest', 'telegram_status', 'telegram_set', 'telegram_test', 'telegram_clear', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'init_yaml_template', 'init_yaml_check', 'init_yaml_apply', 'init_yaml_export', 'governance', 'approval_set_pin', 'provider_status', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
-const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'debug_run', 'telegram_set', 'telegram_test', 'telegram_clear', 'setup_apply', 'init_apply', 'init_yaml_apply', 'approval_set_pin', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_add', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full']);
+const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'interventions', 'debug_run', 'debug_latest', 'telegram_status', 'telegram_set', 'telegram_test', 'telegram_clear', 'chat_status', 'chat_setup', 'chat_remove', 'chat_test', 'chat_pair', 'chat_users', 'chat_gateway', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'init_yaml_template', 'init_yaml_check', 'init_yaml_apply', 'init_yaml_export', 'governance', 'approval_set_pin', 'provider_status', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'agent_setup', 'strategy_use', 'task_pin', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
@@ -42,7 +39,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'resume' | 'form' | 'compare' | 'setup' | 'control';
+  kind: 'entity' | 'form' | 'compare' | 'control';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -85,23 +82,14 @@ export class Panels implements vscode.Disposable {
         if (kind !== 'form') ep.loaded = false; // hidden webviews drop messages; re-render fully when shown
         return;
       }
-      if (kind === 'resume') this.renderResume(ep);
-      else if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
+      if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
       else if (kind === 'compare') this.renderComparison(ep).catch(() => undefined);
-      else if (kind === 'setup') this.renderSetup(ep).catch(() => undefined);
     });
     panel.webview.onDidReceiveMessage((m) => this.onMessage(ep, m));
     return ep;
   }
 
   // ------------------------------------------------------------------ public API
-  async openResume() {
-    const ep = this.create('resume', 'Research Home · ' + (this.model.tree?.project.name || 'Research'), 'beaker', 'resume');
-    ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Research Home' });
-    if (!this.model.resume) await this.model.refresh();
-    this.renderResume(ep);
-  }
-
   /** The React Control Center (Home / Work / Research / Settings). The core owns all logic; this only relays allow-listed RPC calls. */
   /** Only configuration files (those the core reported, or .research/*.yaml in the folder) can be opened from the webview. */
   private async openConfigFile(p: string) {
@@ -170,11 +158,11 @@ export class Panels implements vscode.Disposable {
         if (!CONTROL_RPC.has(m.method)) throw new Error(`Not available from the Control Center: ${m.method}`);
         const result = await this.model.client.request(m.method, m.params || {});
         if (m.method === 'settings') for (const f of [result?.machine_config, result?.project_config]) if (f) this.configFiles.add(path.resolve(String(f)));
-        if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
         if ((m.method === 'init_apply' || m.method === 'init_yaml_apply') && result?.workspace_file) {   // the user approved the reviewed plan; open the new multi-root workspace
           await this.ctx.globalState.update('research.justInitialized', result.main);
           setTimeout(() => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(result.workspace_file)), 4000);
         }
+        if (m.method === 'ping' && result && typeof result === 'object') result.ops = this.model.client.readyInfo?.ops;   // lets the page hide features this core lacks
         w.postMessage({ type: 'rpc-result', id: m.id, result });
       } catch (e: any) {
         w.postMessage({ type: 'rpc-result', id: m.id, error: String(e?.message || e) });
@@ -188,21 +176,7 @@ export class Panels implements vscode.Disposable {
       const uri = vscode.Uri.file(path.join(this.model.root, file));
       try { await vscode.workspace.fs.stat(uri); return void (await vscode.commands.executeCommand('markdown.showPreview', uri)); } catch { /* not in this workspace */ }
     }
-    vscode.window.showInformationMessage(`Documentation: ${rel} in the Research OS repository (docs/SPEC.md).`);
-  }
-
-  async openSetup() {
-    const ep = this.create('setup', 'Agent setup', 'hubot', 'setup');
-    if (!ep.panel.webview.html) ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Agent setup' });
-    await this.renderSetup(ep);
-  }
-
-  private async renderSetup(ep: EntityPanel) {
-    try {
-      this.post(ep, renderSetup(await this.model.client.request('agent_setup')));
-    } catch (e: any) {
-      this.post(ep, `<div class="page"><div class="banner" style="--c:var(--red)"><i class="codicon codicon-error"></i><div class="grow">${esc(e.message)}</div></div></div>`);
-    }
+    vscode.window.showInformationMessage(`Documentation: ${rel} in the Research OS repository (docs/spec/).`);
   }
 
   async openEntity(id: string, side = false) {
@@ -249,10 +223,8 @@ export class Panels implements vscode.Disposable {
   // ------------------------------------------------------------------ rendering
   private refreshAll() {
     for (const ep of this.panels.values()) {
-      if (ep.kind === 'resume') this.renderResume(ep);
-      else if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
+      if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
       else if (ep.kind === 'compare' && ep.panel.visible) this.renderComparison(ep).catch(() => undefined);
-      else if (ep.kind === 'setup' && ep.panel.visible) this.renderSetup(ep).catch(() => undefined);
     }
   }
 
@@ -261,23 +233,6 @@ export class Panels implements vscode.Disposable {
       ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, html, { index: this.model.index?.items || [] });
       ep.loaded = ep.panel.visible;
     } else ep.panel.webview.postMessage({ t: 'render', html });
-  }
-
-  private async renderResume(ep: EntityPanel) {
-    // Try new Research Home first, fall back to legacy Resume if home endpoint fails
-    try {
-      const home = await this.model.client.request('home');
-      this.model.resume = home;
-      ep.panel.title = 'Research Home · ' + (home.project?.name || '');
-      const ctx = this.rctx(ep);
-      this.post(ep, renderHome(home, { uri: ctx.uri }));
-    } catch {
-      // Fall back to legacy Resume view
-      const r = this.model.resume;
-      if (!r) return;
-      ep.panel.title = 'Resume · ' + (r.project?.name || '');
-      this.post(ep, renderResume(r));
-    }
   }
 
   private rctx(ep: EntityPanel): RenderCtx {

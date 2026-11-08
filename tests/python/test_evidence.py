@@ -12,7 +12,7 @@ from research import services as S
 from research import verification as V
 from research.util import PolicyBlocked, ResearchError
 from research_cli.main import main
-from test_research_os import as_agent
+from conftest import as_agent
 
 
 def _report(p):

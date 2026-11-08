@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { State, useAsync } from './common';
 import type { Host } from './host';
 
-interface Prov { name: string; provider: string; installed: boolean; version: string | null; capabilities: any; models: { source: string; models: { id: string; label: string }[] }; problem?: string }
+interface Prov { name: string; label: string; blurb: string; provider: string; installed: boolean; version: string | null; capabilities: any; models: { source: string; models: { id: string; label: string }[] }; problem?: string }
 interface Env {
   uv?: { path?: string | null; version?: string | null };
   root: string; folder_name: string; entries: string[]; empty: boolean; existing_project: boolean;
@@ -13,12 +13,6 @@ interface Env {
 
 const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Skills', 'Guide', 'Review'];
 const REVIEW = STEPS.length - 1;
-const BLURB: Record<string, string> = {
-  claude: 'Anthropic’s Claude Code. Default. Interactive and headless, per-task model choice, reports token usage.',
-  codex: 'OpenAI Codex CLI. Interactive and headless (`codex exec`), model and reasoning effort, runs in a sandbox.',
-  agy: 'Google Antigravity CLI (`agy`). Interactive and headless, model and effort, JSON output. Not the same tool as Gemini CLI.',
-};
-const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'OpenAI Codex', agy: 'Google Antigravity' };
 
 /** A short "what is this and why" box. Every step has one so the wizard teaches as it asks. */
 const Learn = ({ title, children }: { title: string; children: any }) => (
@@ -26,7 +20,7 @@ const Learn = ({ title, children }: { title: string; children: any }) => (
 );
 
 /** Initialize Project: from an empty folder to a working shared-ledger workspace. Nothing is written until the last step. */
-export function InitProject({ host, onDone, onClassic }: { host: Host; onDone: (r: any) => void; onClassic: () => void }) {
+export function InitProject({ host, onDone }: { host: Host; onDone: (r: any) => void }) {
   const env = useAsync<Env>(() => host.call('init_environment'), []);
   const [mode, setMode] = useState<'guided' | 'yaml'>('guided');
   const [done, setDone] = useState<any>(null);
@@ -37,7 +31,7 @@ export function InitProject({ host, onDone, onClassic }: { host: Host; onDone: (
       <button type="button" aria-pressed={mode === 'guided'} onClick={() => setMode('guided')}>Guided setup</button>
       <button type="button" aria-pressed={mode === 'yaml'} onClick={() => setMode('yaml')}>Edit YAML</button></div>
     {mode === 'yaml' ? <YamlInit host={host} onDone={finish} />
-      : <State a={env}>{(e) => <Wizard host={host} env={e} onDone={finish} onClassic={onClassic} />}</State>}
+      : <State a={env}>{(e) => <Wizard host={host} env={e} onDone={finish} />}</State>}
   </div>;
 }
 
@@ -71,16 +65,16 @@ function YamlInit({ host, onDone }: { host: Host; onDone: (r: any) => void }) {
     </div>);
 }
 
-function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone: (r: any) => void; onClassic: () => void }) {
+function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) => void }) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(env.folder_name);
   const [goal, setGoal] = useState('');
   const [lay, setLay] = useState({ main_dir: 'main', ledger_dir: 'ledger', experiments_dir: 'experiments' });
   const [wsFile, setWsFile] = useState(true);
   const [remote, setRemote] = useState('');
-  const [enabled, setEnabled] = useState<string[]>(['claude']);
-  const [dflt, setDflt] = useState('claude');
-  const [strategy, setStrategy] = useState('sonnet_first');
+  const [enabled, setEnabled] = useState<string[]>(env.providers.slice(0, 1).map((x) => x.name));
+  const [dflt, setDflt] = useState(env.providers[0]?.name || '');
+  const [strategy, setStrategy] = useState('balanced_first');
   const [review, setReview] = useState(true);
   const [hpc, setHpc] = useState(false);
   const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '', python: '', required_packages: '' });
@@ -98,7 +92,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
 
   const spec = () => ({
     name, goal, layout: lay, create_workspace: wsFile, git: remote ? { remote_url: remote } : {},
-    agents: { enabled, default: dflt, strategy: dflt === 'claude' || enabled.includes('claude') ? strategy : undefined },
+    agents: { enabled, default: dflt, strategy },
     verification: { independent_review: review }, hpc: hpc ? { enabled: true, ...h } : undefined,
     python: py.mode === 'none' ? undefined : py, guide, tools: { packs, link_skills: true, starter_hooks: starter },
   });
@@ -143,7 +137,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
             <ol>
               <li><b>Ask</b> a research <em>question</em>, then register an <em>experiment</em> (hypothesis, method, parameters, success criteria).</li>
               <li><b>Plan</b>: break the work into small <em>tasks</em> with acceptance checks (a command that must pass, a file that must exist, a metric threshold).</li>
-              <li><b>Dispatch</b> a task to an AI agent (Claude, Codex or Antigravity). It works in that experiment’s own git worktree, so experiments never collide.</li>
+              <li><b>Dispatch</b> a task to an AI agent (any agent listed on the Agents page). It works in that experiment’s own git worktree, so experiments never collide.</li>
               <li><b>Run</b> everything through <code>research run exec</code>: each run records code version, parameters, metrics and artifacts.</li>
               <li><b>Verify</b>: finishing the agent’s session is not the same as the task passing. The task’s checks must pass, and findings need an independent review before they count as “supported”.</li>
               <li><b>Switch agents any time.</b> All records live in the shared ledger, not in any agent, so another agent continues with the same history.</li>
@@ -191,14 +185,14 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
           </Learn>
           {env.providers.map((p) => (
             <div key={p.name} className="card" style={{ margin: '8px 0', padding: 10 }}>
-              <label className="check"><input type="checkbox" checked={enabled.includes(p.name)} onChange={() => toggle(p.name)} aria-label={`Enable ${LABEL[p.name]}`} />
-                <b> {LABEL[p.name]}</b> {p.installed ? <span className="badge k-ok">installed {p.version || ''}</span> : <span className="badge k-warn">not installed: configurable, cannot run yet</span>}</label>
-              <p className="muted small">{BLURB[p.name]}</p>
+              <label className="check"><input type="checkbox" checked={enabled.includes(p.name)} onChange={() => toggle(p.name)} aria-label={`Enable ${p.label}`} />
+                <b> {p.label}</b> {p.installed ? <span className="badge k-ok">installed {p.version || ''}</span> : <span className="badge k-warn">not installed: configurable, cannot run yet</span>}</label>
+              <p className="muted small">{p.blurb}</p>
               {enabled.includes(p.name) && <label className="check"><input type="radio" name="dflt" checked={dflt === p.name} onChange={() => setDflt(p.name)} /> Use as the default agent</label>}
             </div>))}
-          <label htmlFor="ip-strat">Model allocation (Claude)</label>
-          <select id="ip-strat" value={strategy} onChange={(e) => setStrategy(e.target.value)}>{env.strategies.map((s) => <option key={s} value={s}>{s}{s === 'sonnet_first' ? ' (recommended)' : ''}</option>)}</select>
-          <p className="muted small">“sonnet_first” plans and implements with Sonnet, uses a faster model for simple steps and escalates to Opus for hard scientific synthesis. Codex and Antigravity use the model you pick per dispatch or in their profile.</p>
+          <label htmlFor="ip-strat">Model allocation</label>
+          <select id="ip-strat" value={strategy} onChange={(e) => setStrategy(e.target.value)}>{env.strategies.map((s) => <option key={s} value={s}>{s}{s === 'balanced_first' ? ' (recommended)' : ''}</option>)}</select>
+          <p className="muted small">“balanced_first” plans and implements with the default agent’s balanced level, uses its fast level for simple steps and escalates to its deep level for hard scientific synthesis. Each agent’s fast, balanced and deep levels are listed in its profiles (<code>agents.profiles.&lt;agent&gt;-fast</code>…) and can be changed there.</p>
           <label className="check"><input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} /> A finding needs an independent review before it counts as “supported” (recommended)</label>
         </section>)}
 
@@ -253,7 +247,7 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
       {step === 5 && (
         <section aria-label="Skills">
           <Learn title="Skills and hooks: what your agents are equipped with">
-            <b>Skills</b> are short written procedures an agent follows (how to design a hypothesis, build validation oracles, triage a failed run, audit reproducibility…). They sit in the project and are linked for Claude Code and Codex, but a skill reaches an agent’s brief only when the task type or role matches, so a bigger toolbox does not mean a bigger prompt.
+            <b>Skills</b> are short written procedures an agent follows (how to design a hypothesis, build validation oracles, triage a failed run, audit reproducibility…). They sit in the project and are linked into each agent’s skills folder, but a skill reaches an agent’s brief only when the task type or role matches, so a bigger toolbox does not mean a bigger prompt.
             <b> Hooks</b> are deterministic checks <i>you</i> approve. The nine starter hooks are cheap, never block and never run your code: syntax, whitespace, git integrity, a secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity. Linters, formatters and test runs are offered later, once there is code to detect.
           </Learn>
           <fieldset className="stack"><legend>Skill packs</legend>
@@ -321,7 +315,6 @@ function Wizard({ host, env, onDone, onClassic }: { host: Host; env: Env; onDone
       {err && <div className="field-error" role="alert">{err}</div>}
       <div className="wizard-actions">
         {step > 0 && <button type="button" onClick={() => go(step - 1)}>Back</button>}
-        {step === 0 && <button type="button" className="link" onClick={onClassic}>Use a single folder instead (classic)</button>}
         <span className="spacer" />
         {step < REVIEW ? <button type="button" className="primary" disabled={!canNext} onClick={() => go(step + 1)}>Next</button>
           : <button type="button" className="primary" disabled={busy || !plan?.ok} onClick={create}>{busy ? 'Creating…' : 'Create project'}</button>}

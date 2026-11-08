@@ -1,4 +1,8 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+
+/** Ops the core lists in its ready event (undefined = unknown, show everything). A feature whose op is missing is hidden, not broken. */
+export const OpsContext = createContext<string[] | undefined>(undefined);
+export const useHasOp = () => { const ops = useContext(OpsContext); return (op: string) => !ops || ops.includes(op); };
 
 export interface Async<T> { data?: T; error?: string; loading: boolean; reload: () => void }
 export function useAsync<T>(fn: () => Promise<T>, deps: any[]): Async<T> {
@@ -99,7 +103,6 @@ export function Progress({ value, max, label, ok }: { value: number; max?: numbe
 export function EmptyState({ icon, title, children, actions, center, inline }: { icon?: string; title: string; children?: ReactNode; actions?: ReactNode; center?: boolean; inline?: boolean }) {
   return <div className={'empty' + (center ? ' center' : '') + (inline ? ' inline' : '')}>{icon && <div className="ico"><Icon name={icon} /></div>}<b>{title}</b>{children && <p>{children}</p>}{actions && <div className="actions">{actions}</div>}</div>;
 }
-export const Empty = ({ title, children }: { title: string; children?: ReactNode }) => <EmptyState inline title={title}>{children}</EmptyState>;
 
 export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: { id: T; label: string; n?: number }[]; onChange: (v: T) => void; label: string }) {
   return <div className="segmented" role="group" aria-label={label}>{options.map((o) => <button key={o.id} type="button" aria-pressed={value === o.id} onClick={() => onChange(o.id)}>{o.label}{o.n !== undefined && <span className="n">{o.n}</span>}</button>)}</div>;

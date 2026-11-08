@@ -2,7 +2,8 @@
   "name": "research-panel",
   "displayName": "Research Panel",
   "description": "Research memory for computational projects: questions → experiments → runs → findings → decisions → checkpoints. Project-local, agent-aware, Remote-SSH friendly.",
-  "version": "2.6.0",
+  "version": "3.1.0",
+  "researchCore": "3.1",
   "publisher": "research-local",
   "license": "MIT",
   "engines": {
@@ -38,9 +39,10 @@
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "package": "node esbuild.mjs --production && node scripts/bundle-python.mjs && vsce package --no-dependencies --out ../../dist/",
+    "package": "node esbuild.mjs --production && vsce package --no-dependencies --out ../../dist/",
     "test:ext": "node test/run.mjs",
     "test:client": "node --test test/client.test.cjs",
+    "test:unit": "node --test test/util.test.cjs",
     "test:webview": "node --test --test-force-exit --test-timeout=180000 test/webview.test.cjs"
   },
   "devDependencies": {
@@ -158,6 +160,11 @@
         "title": "Initialize Project",
         "category": "Research",
         "icon": "$(add)"
+      },
+      {
+        "command": "research.showVersionInfo",
+        "title": "Show Version Info",
+        "category": "Research"
       },
       {
         "command": "research.resume",
@@ -539,7 +546,7 @@
       },
       {
         "command": "research.setup.agents",
-        "title": "Set Up Claude Code Agents…",
+        "title": "Set Up Agent Files…",
         "category": "Research"
       },
       {
@@ -1449,20 +1456,10 @@
     "configuration": {
       "title": "Research Panel",
       "properties": {
-        "research.pythonPath": {
+        "research.cliPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Python ≥ 3.8 used to run the bundled research core **on the machine where the workspace lives** (the remote host under Remote SSH). Empty = auto-detect `python3`."
-        },
-        "research.terminalCommand": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Put a `research` command on `PATH` in VS Code terminals (so you and coding agents can use the CLI without installing it)."
-        },
-        "research.projectCli": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Keep a project-local CLI at `.research/bin/research` (gitignored, refreshed automatically). Agents whose shells don't get VS Code's terminal `PATH` — e.g. the Claude Code extension's Bash tool — can run it without installing anything."
+          "markdownDescription": "Path to the `research` CLI that backs this extension, **on the machine where the workspace lives** (the remote host under Remote SSH). Empty = `research` on `PATH`, then `~/.local/bin/research`."
         },
         "research.pollIntervalSeconds": {
           "type": "number",

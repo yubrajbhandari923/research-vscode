@@ -198,6 +198,7 @@ def _agents(r: _Report, p) -> None:
               "Only needed to dispatch agents from Research OS; you can still run agents yourself and they use `research` normally.")
     elif cmd:
         r.add("agents.cli", "Agents", "ok", f"Agent CLI `{cmd}` found")
+    _providers(r, p, ag, prof, name)
     try:
         from . import skills as SK
         miss = SK.required_for(p)["missing"]
@@ -213,7 +214,7 @@ def _agents(r: _Report, p) -> None:
         r.add("approval.pin", "Agents", "ok", "Approval PIN is set (stored on this machine only)")
     else:
         r.add("approval.pin", "Agents", "info", "No approval PIN set",
-              "Approving agent proposals, changing policy and promoting to main are not PIN-gated until you set one. Agents still cannot do them.",
+              "Approving agent proposals, changing policy and promoting to main need a PIN. In a terminal you are asked to create one the first time; the VS Code panel and other non-interactive tools refuse until you do. Agents can never do them.",
               {"command": "research approval set-pin"})
     from . import mcp as MCP
     st = MCP.status(p.root)
@@ -222,6 +223,38 @@ def _agents(r: _Report, p) -> None:
         r.add("mcp", "Agents", "ok", "MCP server registered", ", ".join(reg))
     else:
         r.add("mcp", "Agents", "info", "MCP server not registered in any client", "Optional: `research mcp install` lets agents call Research OS as tools.")
+
+
+_AUTH_FILES = {"codex": "~/.codex/auth.json", "opencode": "~/.local/share/opencode/auth.json"}   # existence only; never read
+
+
+def _providers(r: _Report, p, ag: Dict[str, Any], default_prof: Dict[str, Any], default_name: Optional[str]) -> None:
+    """Per provider that is the default or installed: version, MCP registration, adapter-specific rows. Offline; reads no credentials."""
+    from . import providers as PR
+    profs = ag.get("profiles") or {}
+    names = [n for n in PR.KNOWN if n in profs and (shutil.which(profs[n].get("command") or n) or n == default_name)]
+    if default_name and default_name not in names and PR.provider_of(default_prof, default_name) in PR.KNOWN:
+        names.append(PR.provider_of(default_prof, default_name))
+    for n in dict.fromkeys(names):
+        a, prof = PR.ADAPTERS[n], profs.get(n) or {}
+        cmd = prof.get("command") or n
+        if not shutil.which(cmd):
+            r.add(f"agents.{n}.cli", "Agents", "info", f"{a.label}: `{cmd}` is not on PATH", "Only needed to dispatch this provider from Research OS.")
+            continue
+        ver = PR.version(cmd)
+        r.add(f"agents.{n}.version", "Agents", "ok" if ver else "warn", f"{a.label}: {ver or 'version unreadable'}")
+        if a.mcp_install:
+            reg = PR.mcp_registered(n, p.root)
+            if reg is False:
+                r.add(f"agents.{n}.mcp", "Agents", "info", f"{a.label}: Research MCP server is not registered",
+                      "Agents of this provider cannot call Research OS as tools.", {"command": f"research agent setup {n} --apply"})
+            elif reg:
+                r.add(f"agents.{n}.mcp", "Agents", "ok", f"{a.label}: Research MCP server registered")
+        if n in _AUTH_FILES:
+            has = os.path.exists(os.path.expanduser(_AUTH_FILES[n]))
+            r.add(f"agents.{n}.auth", "Agents", "ok" if has else "info", f"{a.label}: " + ("credential file present" if has else "no credential file found (environment keys or a login on first use also work)"))
+        for row in (a.checks(p.root, cmd) if a.checks else []):
+            r.add(row["id"], "Agents", row["level"], row["title"], row.get("detail", ""), row.get("fix"))
 
 
 def _sandbox(r: _Report, p) -> None:
@@ -281,7 +314,7 @@ def _context(r: _Report, p) -> None:
               {"text": "Fix the `research:begin` / `research:end` markers by hand; nothing was changed."})
     elif not st.get("up_to_date", True):
         r.add("agents_md.stale", "Agent context", "warn", "AGENTS.md's managed block is out of date",
-              "Only the text between the research markers is rewritten; everything else is yours.", {"text": "`research agents-md --diff` previews it.", "safe": True})
+              "Only the text between the research markers is rewritten; everything else is yours.", {"text": "`research agent instructions --diff` previews it.", "safe": True})
     else:
         r.add("agents_md", "Agent context", "ok", "AGENTS.md managed block is current")
     from . import localbin

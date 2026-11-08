@@ -610,3 +610,83 @@ def list_agent_files(p: Project, kind: str) -> List[Dict[str, Any]]:
             path = os.path.join(root, fn)
             out.append({"name": os.path.relpath(path, d), "path": p.rel(path), "size": os.path.getsize(path)})
     return sorted(out, key=lambda x: x["name"])
+
+
+# guided new-experiment flow: a thin sequence over the services above; validates up front, never runs, merges or deletes
+def new_experiment_plan(p, spec: Dict[str, Any]) -> Dict[str, Any]:
+    problems: List[str] = []
+    actions: List[str] = []
+    if not (spec.get("title") or "").strip():
+        problems.append("The experiment needs a title.")
+    q = spec.get("question") or {}
+    if q.get("id"):
+        try:
+            p.get("question", q["id"])
+        except Exception:
+            problems.append(f"Question {q['id']} does not exist.")
+    elif q.get("title"):
+        actions.append(f"Create question “{q['title']}”")
+    actions.append(f"Create experiment “{spec.get('title')}” (status proposed)")
+    wt = spec.get("worktree") or {}
+    if wt.get("create"):
+        if not p.location.linked:
+            problems.append("An isolated workspace needs the shared ledger (Settings → Git & workspaces).")
+        else:
+            actions.append("Create a git branch and worktree for it (your current branch is not touched)")
+    tk = spec.get("task") or {}
+    if tk.get("create"):
+        actions.append(f"Create task “{tk.get('title') or spec.get('title')}” in " + (f"plan {tk['plan']}" if tk.get("plan") else "a new plan"))
+    prof = (spec.get("execution") or {}).get("profile")
+    if prof:
+        try:
+            from . import sandbox as SB
+            SB.profile(p, prof)
+            actions.append(f"Run this experiment's jobs under the {prof} sandbox profile")
+        except ResearchError as e:
+            problems.append(str(e))
+    if (spec.get("agent") or {}).get("dispatch"):
+        if not tk.get("create"):
+            problems.append("Preparing an agent needs a task to hand over (tick 'Create a task').")
+        actions.append("Prepare the agent's brief and command (nothing is started)")
+    return {"ok": not problems, "problems": problems, "actions": actions}
+
+
+def new_experiment(p, spec: Dict[str, Any]) -> Dict[str, Any]:
+    """Create everything the user ticked, in order. Records are created individually and kept even if a later step fails;
+    the error then says what exists. Runs, merges, and deletions are never part of this flow."""
+    from . import agents, plans, registry
+    from . import workspace as W
+    pl = new_experiment_plan(p, spec)
+    if not pl["ok"]:
+        raise ResearchError("Cannot create: " + " ".join(pl["problems"]))
+    out: Dict[str, Any] = {}
+    try:
+        q = spec.get("question") or {}
+        qid = q.get("id") or (create_question(p, q["title"])["id"] if q.get("title") else None)
+        out["question"] = qid
+        e = create_experiment(p, spec["title"].strip(), question=qid, hypothesis=spec.get("hypothesis") or None,
+                                       parameters=spec.get("parameters") or None, planned_runs=spec.get("planned_runs") or None)
+        out["experiment"] = e["id"]
+        tk = spec.get("task") or {}
+        if tk.get("create"):
+            plan_id = tk.get("plan") or plans.create_plan(p, f"Work on {e['id']}", objective=spec.get("hypothesis") or spec["title"])["id"]
+            t = plans.create_task(p, plan_id, tk.get("title") or spec["title"], goal=spec.get("hypothesis") or None)
+            out["plan"], out["task"] = plan_id, t["id"]
+        if (spec.get("worktree") or {}).get("create"):
+            ws = W.create(p, e["id"], name=(spec["worktree"].get("name") or None))
+            out["workspace"] = {"id": ws["id"], "path": ws["path"], "branch": ws["branch"]}
+            if out.get("task"):
+                W.link_task(p, ws["id"], out["task"])
+        prof = (spec.get("execution") or {}).get("profile")
+        if prof:
+            registry.set_assignment(p, "experiments", e["id"], prof)
+            out["sandbox_profile"] = prof
+        ag = spec.get("agent") or {}
+        if ag.get("dispatch"):
+            d = agents.dispatch(p, ag.get("role") or "implementer", out["task"], profile=ag.get("profile") or None)
+            out["dispatch"] = {"brief": d["brief"], "cwd": d["cwd"], "command": d["shell"], "available": d["available"]}
+        out["next"] = [f"research run exec {e['id']} -- <your command>" + (f"   (run it inside {out['workspace']['path']})" if out.get("workspace") else "")]
+    except Exception as err:
+        raise ResearchError(f"Stopped part-way: {err}. Already created and kept: " + ", ".join(f"{k} {v if isinstance(v, str) else v.get('id')}" for k, v in out.items() if v),
+                            hint="Nothing is rolled back; finish the remaining steps from the Work or Research pages.")
+    return out

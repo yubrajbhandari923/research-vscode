@@ -26,4 +26,4 @@ description: Turn finished runs into a synthesis, findings and (if warranted) de
 6. Mark the experiment: `research experiment complete EXP-00X` or `research experiment fail EXP-00X`.
 7. Do not write into the Scientist Guide yourself. Important results (supported or starred findings) are logged there
    automatically, and the researcher decides when to ask for a short draft (`research guide draft`).
-8. `research context` to refresh `.research/context/current.md`.
+8. `research current --quiet` to refresh `.research/context/current.md`.

@@ -1,13 +1,11 @@
 /**
- * JSON-RPC client for the bundled Python core (`python -m research.rpc`).
+ * JSON-RPC client for the installed `research` CLI (`research rpc`).
  *
  * The process is spawned by the extension host. Because the extension declares
  * extensionKind=workspace, under Remote SSH this happens on the remote machine, next to the
  * project files, git, SQLite and SLURM.
  */
 import * as cp from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
 import { StringDecoder } from 'string_decoder';
 
@@ -31,40 +29,34 @@ export class CoreClient implements vscode.Disposable {
   private pending = new Map<number, Pending>();
   private ready?: Promise<any>;
   private restarts = 0;
-  public python?: string;
   public readyInfo: any;
+  /** Called when a response says the call wrote to the project database (`changed`): views refresh from it. */
+  public onChanged?: () => void;
+  /** Variables that mark a process as an agent's. The core's `ping` is the source (util.AGENT_ENV_STRIP); this seed covers the first spawn only. */
+  public agentEnv: string[] = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
+    'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE'];
 
   constructor(
     public readonly root: string,
-    private readonly pythonPath: string,
+    private readonly cliPath: string,
     private readonly out: vscode.OutputChannel,
   ) {}
-
-  static corePath(ext: vscode.ExtensionContext): string {
-    // Packaged VSIX: <ext>/python ; dev checkout: <repo>/packages/core + packages/cli
-    const bundled = path.join(ext.extensionPath, 'python');
-    if (fs.existsSync(path.join(bundled, 'research', '__init__.py'))) return bundled;
-    const repo = path.resolve(ext.extensionPath, '..');
-    return [path.join(repo, 'core'), path.join(repo, 'cli')].join(path.delimiter);
-  }
 
   private start(): Promise<any> {
     if (this.disposed) return Promise.reject(new RpcError('Research client disposed'));
     if (this.ready) return this.ready;
     this.ready = new Promise((resolve, reject) => {
-      const python = this.pythonPath;
-      this.python = python;
-      const env = { ...process.env, PYTHONPATH: [CoreClient.pythonPathEnv, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter), PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' };
+      const python = this.cliPath;
+      const env = { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' };
       // UI actions are the human's, even when VS Code itself was launched from an agent's shell.
-      for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
-        'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE']) delete (env as any)[k];
-      this.out.appendLine(`[core] starting ${python} -m research.rpc --root ${this.root}`);
+      for (const k of this.agentEnv) delete (env as any)[k];
+      this.out.appendLine(`[core] starting ${python} rpc --root ${this.root}`);
       let proc: cp.ChildProcessWithoutNullStreams;
       try {
-        proc = cp.spawn(python, ['-m', 'research.rpc', '--root', this.root], { cwd: this.root, env });
+        proc = cp.spawn(python, ['rpc', '--root', this.root], { cwd: this.root, env });
       } catch (e: any) {
         this.ready = undefined;
-        return reject(new RpcError(`Could not start Python (${python}): ${e.message}`));
+        return reject(new RpcError(`Could not start ${python}: ${e.message}`));
       }
       this.proc = proc;
       let started = false;
@@ -85,7 +77,7 @@ export class CoreClient implements vscode.Disposable {
       proc.stdin.on('error', (e) => {
         if (this.proc === proc) this.rejectPending(`Research core input failed: ${e.message}`);
       });
-      proc.on('error', (e) => failStart(`Could not start Python (${python}): ${e.message}. Set "research.pythonPath".`));
+      proc.on('error', (e) => failStart(`Could not start ${python}: ${e.message}. Set "research.cliPath".`));
       proc.stderr.on('data', (d) => this.out.append(`[core stderr] ${d}`));
       proc.stdout.on('data', (d: Buffer) => {
         if (this.proc !== proc) return;
@@ -120,12 +112,15 @@ export class CoreClient implements vscode.Disposable {
             const e = msg.error;
             if (e.trace) this.out.appendLine(`[core] ${p.method} failed:\n${e.trace}`);
             p.reject(new RpcError(e.message, e.code, e.hint, e.kind, e.data));
-          } else p.resolve(msg.result);
+          } else {
+            if (msg.changed) this.onChanged?.();
+            p.resolve(msg.result);
+          }
         }
       });
       proc.on('exit', (code, sig) => {
         this.out.appendLine(`[core] exited (code=${code}, signal=${sig})`);
-        failStart(`Research core exited during start-up (code ${code}). Is ${python} Python ≥ 3.8? See Output → Research.`);
+        failStart(`Research core exited during start-up (code ${code}). See Output → Research.`);
         clearTimeout(startupTimer);
         if (this.proc !== proc) return;
         this.rejectPending('Research core process exited');
@@ -135,8 +130,6 @@ export class CoreClient implements vscode.Disposable {
     });
     return this.ready;
   }
-
-  static pythonPathEnv = '';
 
   async request<T = any>(method: string, params: any = {}, timeoutMs = 120_000): Promise<T> {
     try {
@@ -171,6 +164,12 @@ export class CoreClient implements vscode.Disposable {
     });
   }
 
+  /** False only when the core listed its ops and this one is missing (a newer extension on an older 3.x core). */
+  hasOp(name: string): boolean {
+    const ops = this.readyInfo?.ops;
+    return !Array.isArray(ops) || ops.includes(name);
+  }
+
   private rejectPending(message: string) {
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
@@ -191,26 +190,4 @@ export class CoreClient implements vscode.Disposable {
     this.disposed = true;
     this.restart();
   }
-}
-
-/** Find a usable Python ≥ 3.8 on the extension-host machine. */
-export function detectPython(configured: string, out: vscode.OutputChannel): string {
-  const candidates = configured ? [configured] : process.platform === 'win32' ? ['py', 'python', 'python3'] : ['python3', 'python'];
-  for (const c of candidates) {
-    try {
-      const r = cp.spawnSync(c, ['-c', 'import sys;print("%d.%d"%sys.version_info[:2]);print(sys.executable)'], { encoding: 'utf8', timeout: 8000 });
-      if (r.status === 0) {
-        const [ver, exe] = r.stdout.trim().split(/\r?\n/);
-        const [maj, min] = ver.split('.').map(Number);
-        if (maj === 3 && min >= 8) {
-          out.appendLine(`[core] using Python ${ver} at ${exe}`);
-          return exe || c;
-        }
-        out.appendLine(`[core] ${c} is Python ${ver} (< 3.8), skipping`);
-      }
-    } catch {
-      /* try next */
-    }
-  }
-  return configured || 'python3';
 }

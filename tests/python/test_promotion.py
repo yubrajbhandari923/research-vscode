@@ -39,7 +39,7 @@ def world(repo, tmp_path):
     W.enable(str(repo), str(tmp_path / "ledger"))
     p = Project(str(repo))
     p.author = dict(ALICE)
-    p.save_config({"promotion.test_command": "test -f solver.py && test ! -e scratch_notes.txt", "promotion.require_supported_finding": False})
+    p.save_config({"governance.approval.require_pin": False, "promotion.test_command": "test -f solver.py && test ! -e scratch_notes.txt", "promotion.require_supported_finding": False})
     p.config = p.load_config()
     q = services.create_question(p, "q")
     e = services.create_experiment(p, "faster solver", question=q["id"], hypothesis="h")

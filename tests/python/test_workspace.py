@@ -251,18 +251,19 @@ def test_implementer_brief_states_the_hpc_result_contract(shared):
 def test_ui_hpc_submit_ships_the_experiment_worktree_not_main(shared):
     """The Control Center/RPC submit path must bundle the experiment's own code (CLI users cd into the worktree)."""
     repo, _ = shared
-    from research.rpc import Server
+    from research import api
+    from research.api.hpc import _exp_project
     with Project(str(repo)) as p:
         from research import services
         e = services.create_experiment(p, "e", hypothesis="h", question=services.create_question(p, "q")["id"])
         ws = W.create(p, e["id"])
-    srv = Server(str(repo))
+    sess = api.Session(str(repo))
     try:
-        q = srv._exp_project(e["id"])
-        assert q.root == ws["path"] and q is not srv.p
+        q, owned = _exp_project(sess.project(), e["id"])
+        assert q.root == ws["path"] and owned and q is not sess.p
         q.close()
         with pytest.raises(ResearchError):
-            srv.m_hpc_submit(e["id"], "  ")
+            api.call("hpc_submit", sess, {"experiment": e["id"], "command": "  "})
     finally:
-        if srv.p:
-            srv.p.close()
+        if sess.p:
+            sess.p.close()

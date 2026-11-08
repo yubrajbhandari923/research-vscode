@@ -14,17 +14,9 @@ exports.run = async function () {
     const api = await ext.activate();
     const { model } = api;
     check('extension path is the installed VSIX (not the dev tree)', !ext.extensionPath.includes('packages/vscode-extension'), ext.extensionPath);
-    check('bundled python core present', fs.existsSync(path.join(ext.extensionPath, 'python', 'research', '__init__.py')));
+    check('extension ships no bundled python', !fs.existsSync(path.join(ext.extensionPath, 'python')));
     await model.refresh();
     check('core started + project initialized', model.initialized, model.error);
-    {
-      const ws = vscode.workspace.workspaceFolders[0].uri.fsPath;
-      const bin = path.join(ws, '.research', 'bin', 'research');
-      for (let i = 0; i < 40 && !fs.existsSync(bin); i++) await new Promise((r) => setTimeout(r, 250));
-      check('project-local CLI written to .research/bin', fs.existsSync(bin), bin);
-      const r = cp.spawnSync(bin, ['--json', 'status'], { cwd: ws, env: { HOME: process.env.HOME, PATH: '/usr/bin:/bin' }, encoding: 'utf8' });
-      check('project-local CLI runs without PATH or install', r.status === 0, r.stderr);
-    }
     const t = model.tree;
     check('questions reconstructed', t.questions.length === 2, t.questions.map((q) => q.id));
     check('experiments reconstructed', t.experiments.length === 2, t.experiments.map((e) => e.id));
@@ -67,11 +59,11 @@ exports.run = async function () {
     const tA = await submit('Add Task form saves', `new-task-${planId}`, taskVals('Task A', []), { plan_id: planId });
     await vscode.commands.executeCommand('research.task.create', planId);
     const tB = await submit('Add Task form saves (with dependency)', `new-task-${planId}`, taskVals('Task B', [tA]), { plan_id: planId });
-    let next = await model.client.request('next_task', { plan_id: planId });
+    let next = (await model.client.request('show', { id: planId })).next_task;
     check('next ready task is the one without deps', next && next.id === tA, next && next.id);
     await vscode.commands.executeCommand('research.task.start', tA);
     await vscode.commands.executeCommand('research.setStatus', tA, 'done');
-    next = await model.client.request('next_task', { plan_id: planId });
+    next = (await model.client.request('show', { id: planId })).next_task;
     check('Start + Change Status → dependent task becomes ready', next && next.id === tB, next && next.id);
     await vscode.commands.executeCommand('research.edit', tB);
     await submit('Edit task form saves', `edit-${tB}`, { ...taskVals('Task B edited', []), goal: 'new goal', task_type: null,
@@ -101,7 +93,7 @@ exports.run = async function () {
 
     // ---------------------------------------------------------------- Research OS: checks, reviews, compare, skills, …
     const ws = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    const shimPath = path.join(process.env.RESEARCH_TEST_USERDIR, 'User', 'globalStorage', 'research-local.research-panel', 'bin', 'research');
+    const cli = process.env.RESEARCH_TEST_CLI || 'research'; // the installed CLI the extension also spawns
     await vscode.commands.executeCommand('research.task.create', planId);
     const tC = await submit('Add Task form saves (checks + skills)', `new-task-${planId}`, {
       ...taskVals('Task C', []), checks: 'file: outputs/plot.png\nmetric: EXP-001:final_error <= 1e9', skills: ['run-experiment'] }, { plan_id: planId });
@@ -112,7 +104,7 @@ exports.run = async function () {
     check('Verify command runs checks (pass recorded)', tc.verifications && tc.verifications[0] && tc.verifications[0].verdict === 'pass', tc.verifications);
     const brief = await model.client.request('task_brief', { id: tC });
     check('agent brief lists checks and skills', brief.includes('file: outputs/plot.png') && brief.includes('run-experiment'));
-    cp.execSync(`${shimPath} finding create "agent claim for review" --supports RUN-0001`, { cwd: ws, env: { ...process.env, CLAUDECODE: '1' } });
+    cp.execSync(`${cli} finding create "agent claim for review" --supports RUN-0001`, { cwd: ws, env: { ...process.env, CLAUDECODE: '1' } });
     // look it up through the core directly: model.refresh() may coalesce with a watcher refresh already in flight
     const af = (await model.client.request('tree')).findings.find((f) => f.title === 'agent claim for review');
     let home2 = await model.client.request('home');
@@ -153,13 +145,10 @@ exports.run = async function () {
     await model.refresh();
     check('create via UI core is reflected in tree', model.tree.questions.some((x) => x.id === q.id), q.id);
     check('UI actions are authored as human', q.author_type === 'human', q.author_type);
-    // terminal shim
-    const found = path.join(process.env.RESEARCH_TEST_USERDIR, 'User', 'globalStorage', 'research-local.research-panel', 'bin', 'research');
-    check('terminal shim written', fs.existsSync(found), found);
-    if (found) {
-      const outp = cp.execFileSync(found, ['--json', 'status'], { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '' } }).toString();
-      check('shim runs bundled CLI', JSON.parse(outp).project.name === 'alpha-sweep demo');
-    }
+    // installed CLI on PATH
+    const found = process.env.RESEARCH_TEST_CLI || 'research';
+    const outp = cp.execFileSync(found, ['--json', 'status'], { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '' } }).toString();
+    check('installed CLI runs', JSON.parse(outp).project.name === 'alpha-sweep demo');
     // file watcher: CLI change shows up without manual refresh
     cp.execFileSync(found, ['finding', 'create', 'watcher test finding'], { cwd: vscode.workspace.workspaceFolders[0].uri.fsPath, env: { ...process.env, CLAUDECODE: '1' } });
     await new Promise((res) => setTimeout(res, 2500));

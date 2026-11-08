@@ -4,7 +4,7 @@ You write (or have an AI write) a plan in YAML, import it, press **Run plan**, a
 checks their work itself, repairs failures within limits, watches HPC jobs, and stops for you when it must. It never needs an LLM to
 decide what to run next.
 
-If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first. **Set up your Python and cluster environments once: [SETUP.md](SETUP.md).**
+If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first. **Set up your Python and cluster environments once: [SETUP.md](SETUP.md).** The runtime is specified in [spec/08-supervisor.md](spec/08-supervisor.md).
 
 ## 1. Who does what
 
@@ -99,7 +99,7 @@ Apply saves its key map after every entity, so an interrupted apply is finished 
 
 ## 4. How a task moves (state machine)
 
-Task status keeps its Research OS v2 values (`todo`, `running`, `verify`, `done`, `blocked`). The supervisor adds a **phase** per task:
+Task status keeps its values (`todo`, `running`, `verify`, `done`, `blocked`). The supervisor adds a **phase** per task:
 
 ```
 waiting ─► ready ─► (awaiting_approval) ─► running ─► verifying ─► verified
@@ -129,7 +129,7 @@ engineering failure: checks decide, not the sign of the result.
 | Checks fail (incorrect implementation, ambiguous spec, weak oracle) | Repair attempt with the diagnostics, up to `max_attempts_per_task` and `max_total_attempts` |
 | Environment (missing module, permissions) or resource limit | Task blocked for a human: not repairable by retrying |
 | Agent process crashed | Counts as an attempt; repaired within limits |
-| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically |
+| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically, unless `agents.handoff` is enabled with `on_provider_unavailable: try_next`, which continues with the next provider in `fallback_order`, or you opt in to waiting for the reset (§21) |
 | Unknown process state | *Attention*; never retried automatically; you settle it (`supervisor resolve`, UI **Retry**) |
 | Scientific assumption reported by the agent | *Attention* and a proposal; nothing continues |
 
@@ -144,10 +144,10 @@ You can void attempts that were not the agent's fault (UI: Details → *Void thi
   per attempt (`.research/supervisor/prompts/`) and shown in the UI. Credentials are redacted.
 * **Native resumption**: a repair continues the provider's own session only if the installed CLI proves it (`claude --help` lists
   `--resume`; the session id is read from the agent's JSON output) and the role and profile match. **Codex** works the same way: the
-  `thread_id` from `codex exec --json` is stored and a repair runs `codex exec resume --json … <id> <prompt>` (verified against
-  codex-cli 0.163; resume takes no `-s/-C/--add-dir`, so the sandbox and writable roots are passed with `-c`). **Context hand-off**
+  `thread_id` from `codex exec --json` is stored and a repair runs `codex exec resume --json … <id> <prompt>` (the adapter
+  passes the sandbox and writable roots with `-c`, because `codex exec resume` takes no `-s/-C/--add-dir`). **Context hand-off**
   (a fresh agent with the persisted history) is used when native resume is unavailable, and always works. Verifier tasks never resume an
-  implementer's session. Codex's workspace-write sandbox has no network, so a Codex task cannot itself run `research hpc submit`.
+  implementer's session. The Codex adapter runs with `-s workspace-write`; whether a Codex task can reach the cluster for `research hpc submit` depends on your Codex sandbox settings.
 * `session_group` marks tasks meant to share a session; the supervisor only continues a session for repairs of the same task.
 
 ## 8. HPC
@@ -174,7 +174,7 @@ yourself; tests, review, approval and the explicit merge confirmation then follo
 existing definitions, hypotheses, checks, parameters or experiments is **scientific** and waits for you in Plans → *Proposed plan changes*.
 Approved changes go through the same `apply` engine, so revisions and history are preserved.
 
-Since 2.4 an operational proposal auto-applies only if `governance.tasks` allows it (type allow-list, per-experiment cap), `supervisor.auto_apply_operational` is on and `max_auto_tasks` holds; approving anything else needs your reason and PIN. Agents can also propose experiments. See [GOVERNANCE.md](GOVERNANCE.md).
+An operational proposal auto-applies only if `governance.tasks` allows it (type allow-list, per-experiment cap), `supervisor.auto_apply_operational` is on and `max_auto_tasks` holds; approving anything else needs your reason and PIN. Agents can also propose experiments. See [GOVERNANCE.md](GOVERNANCE.md).
 
 ## 10. Recovery and troubleshooting
 
@@ -236,7 +236,8 @@ Manual Research OS workflows are unchanged when no plan is running. Supervision 
 
 `supervisor.poll_seconds`, `max_parallel_agents`, `max_attempts_per_task`, `max_total_attempts`, `max_wall_minutes`,
 `attempt_timeout_minutes`, `on_failure`, `enforce_completion`, `auto_apply_operational`, `max_auto_tasks`,
-`require_approval_for_scientific_changes`, `session_resume`, `context_max_chars`, `hpc_poll_seconds`, `max_hpc_resubmissions`.
+`require_approval_for_scientific_changes`, `session_resume`, `context_max_chars`, `hpc_poll_seconds`, `max_hpc_resubmissions`, `launch_grace_seconds`, `escalation`,
+`commit_verified_work`, `commit_exclude`. The generated [settings reference](spec/10-configuration.md#reference-generated) lists defaults and help for each.
 All live in `.research/config.yaml`; a plan's `execution:` block overrides them for that plan.
 
 ## 14. Automatic code promotion (opt-in, unattended)
@@ -302,7 +303,7 @@ final promotions before it reports `completed`; tests run inside the tick (a ver
 
 ## 15. The `research` command from the main checkout
 
-`research bin install` (also run by init, `ledger enable` and the extension) writes the launcher into the ledger and now also links it into the
+`research bin install` (also run by init and `ledger enable`) writes the launcher into the ledger and also links it into the
 repository's main checkout: `./research …` works from `main/` with no long path and no PATH change. The link is absolute (machine-specific), listed in
 `.git/info/exclude` (never committed), never replaces an existing file or directory (installing still succeeds; use `research bin link --name rs`),
 and is not created inside experiment worktrees. `research bin unlink [--name rs]` removes only its own link. To use `research` anywhere, put it on
@@ -321,7 +322,7 @@ your PATH yourself, for example `ln -s "$PWD/research" ~/.local/bin/research` (i
   (the restart button is highlighted when the running supervisor is older than the installed version).
 * Concurrency: `supervisor.max_parallel_agents` (project) is overridden by a plan's `execution.max_parallel_agents`. Control Center and `plan status --json`
   (`concurrency`) show the effective number, where it comes from, and how many agents run or wait. Tasks in the same experiment worktree never run together.
-* Editing only a plan's `execution:` block and applying it now counts as a change (it used to be reported as "no changes" and ignored).
+* Editing only a plan's `execution:` block and applying it counts as a change.
 
 ## 17. Steering a task in words (supervisor intervention)
 
@@ -353,7 +354,7 @@ keeps its `originals`, and a Decision records before/after, your instruction, th
 
 `research intervention list|show|approve|reject|cancel|plan`.
 
-## 18. Halts, the debug agent and Telegram
+## 18. Halts, the debug agent and chat
 
 **Status tells the truth.** A plan whose run state is `running` but where nothing is running, ready, repairing or promoting is reported **HALTED (needs you)**
 (`WAITING FOR YOUR APPROVAL` if only start approvals are pending), in `plan status`, `supervisor status --json` (`health`) and Control Center.
@@ -362,8 +363,100 @@ keeps its `originals`, and a Decision records before/after, your instruction, th
 and logs and returns a few sentences plus up to four options. `research supervisor debug --choose N` (or *Use this option*) turns one into an intervention (§17); or write your own.
 `notifications.auto_debug: true` runs it automatically after `notifications.halt_grace_seconds` (default 120) of the same halt. Off by default.
 
-**Telegram** (opt-in): `research telegram setup` (hidden token prompt; then message your bot once) or Control Center → Plans → *Telegram alerts*; enable with
-`notifications.telegram.enabled`. The token and chat id live in `~/.config/research-os/telegram.json` (0600), never in the project, git, prompts or events; only that chat is obeyed.
-You get one message per halt (what is blocked, the diagnosis and options) and one when the plan moves again. Commands: `/status /blocked /task T-12 /logs T-12 /debug /options /choose N
-/say [T-12] <text> /interventions /pause /resume /help`; plain text goes to the only blocked task. Chat can request and apply **unprotected** changes; protected ones are
-proposed and wait for your PIN in VS Code or the terminal.
+**Chat** (opt-in, Telegram): alerts, buttons and commands from your phone, run by one gateway process per machine; setup, pairing, roles, the threat model and the command list are in
+[CHAT.md](CHAT.md). Supervisors only write alerts to `.research/supervisor/outbox.jsonl`; the gateway delivers them. The old `research telegram` command still works as an alias of `research chat`.
+
+**Starting after a reboot or an upgrade.** The supervisor (and with it chat alerts) is a separate process: it keeps running when VS Code closes. Opening a project in VS Code
+(or any RPC client) records it in `~/.config/research-os/projects.json` and, when Telegram is enabled or a plan is running, starts the supervisor if it is down, or replaces one running older code
+(agents and HPC jobs are untouched). `research self-update` does the same restart for every known project after installing. After a reboot with VS Code closed, run `research supervisor start`.
+`.research/bin/research` is a short launcher that execs the Python recorded when it was written, so agents always run the installed version; `research bin install` refreshes it and removes any old vendored `lib/` copy.
+
+## 19. Decision requests
+
+Whenever the system needs you (a halted task, a diagnosis with alternatives, a question an agent cannot settle) it asks **one** structured question, stored in
+`.research/supervisor/requests/DR-n.json`, and shows it on every surface: `research decisions`, `research decide DR-001`, chat (buttons), VS Code, the TUI.
+
+```bash
+research decisions                    # open requests
+research decide DR-001                # show the question, the options and exactly what each does
+research decide DR-001 2              # pick option 2: its prepared action runs, no model call
+research decide DR-001 "skip T-7 and carry on"    # free text: the supervisor plans it (see below)
+```
+
+Each option is `{key, label, consequence, action, protected}`. The **action** is prepared when the request is created: an `intervention` (the actions and classes of §17),
+an `op` from a short allow-list (`plan_control` run/pause/resume, `supervisor_task` approve/continue/retry/unblock/completed/failed; `plan_promote` and `plan_control stop` are protected),
+an `instruct` (a sentence the §17 planner turns into actions: what the diagnosis options are), or nothing. `protected` is **computed**, never taken from whoever created the
+request: science, resources, frozen tests, agent roles and promotion are protected. A protected option never runs from chat: the request is flagged for your computer and you
+choose it there with the PIN. Everything else runs the moment it is chosen.
+
+* **Agents may ask, never answer.** The MCP tool `decision_request` creates a request; `decision_answer` is human only (and refuses agent shells).
+* **Answer once, anywhere.** The first answer closes the request on every surface; a second one gets the first answer back (`already`). A refused PIN reopens it.
+* **Expiry** (`expires_hours`, default 72) closes a request without choosing anything: it never picks a default and never chooses a protected option.
+* **Chat approval of protected options** uses the authenticator flow in GOVERNANCE.md, not this command.
+* `/options` and `/choose N` are aliases: the debug agent's options are stored as a request (`decisions.from_diagnosis`) and `/choose N` answers option N of the latest open one.
+
+## 20. The investigator (on demand)
+
+For situations the rules were not designed for, ask a bounded agent: `research investigate [T-12|PLAN] ["question or instruction"]` (op `supervisor_investigate`, a chat operator action,
+not an agent tool; and every **free-text answer** to a decision request, §19). It reads the task (contract, attempts, diagnostics, logs, plan), then returns one
+structured outcome that Research OS validates against the closed action vocabulary of §17 and classifies with the same classifier:
+
+* **Unprotected** actions (guide, note, add a task, unblock/retry when nothing protected is pending) run **immediately** as an intervention under your authority.
+  The reply says in one line what it understood and what it started: `Understood: … Doing now: INT-001 (…); adding tasks extra.`
+* **Protected** actions (acceptance, checks, inputs, datasets, dependencies, agent roles, resources, retry budget, frozen tests) become **one** separate intervention that waits
+  for your PIN (`research intervention approve INT-002`). A resume (retry/unblock) travels with it so it runs after an approved amendment. The reply names the part that is waiting.
+* **Ambiguous** requests become **one clarifying decision request** with options (each a prepared action), never a guess.
+* It **never approves** (nothing in the module calls an approval), never edits a scientific plan or a frozen test (those only change through the protected path), and uses the
+  planner profile of `supervisor_assistant.*`. Each run is an event (`investigator_started/outcome/skipped/failed`) and is logged with its text, plan, classes and outcome in
+  `.research/supervisor/investigator.json`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `supervisor.investigator.auto` | `false` | also run once per task failure the rules cannot classify (§22) |
+| `supervisor.investigator.max_per_plan` | `3` | most runs for one plan |
+| `supervisor.investigator.budget_usd` | `2.0` | total provider-reported cost; a run with no reported cost counts toward `max_per_plan` only |
+
+When the budget or run limit is used up (or the agent cannot start), nothing is called and the reply is a plain-text note telling you how to instruct the supervisor yourself;
+a decision request you answered in text stays open.
+
+## 21. Usage limits: wait and resume by itself (opt-in)
+
+A 5-hour or weekly limit ends on its own, so nobody needs to be there to press Retry. Off by default (`halt` is the behaviour described in §6); opt in with
+`supervisor.usage_limit.on_limit`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `supervisor.usage_limit.on_limit` | `halt` | `halt`: the task stops at *attention* (today). `wait`: only the tasks that use that provider pause until it resets, then relaunch by themselves. `fallback_then_wait`: first the next provider of `agents.handoff.fallback_order`, else wait |
+| `supervisor.usage_limit.wait_buffer_seconds` | `120` | added after the provider's stated reset time |
+| `supervisor.usage_limit.max_wait_hours` | `8` | a reset further away (a weekly limit) is not waited out unattended: a decision request asks you to wait, switch provider, or stop |
+| `supervisor.usage_limit.unknown_reset_backoff_minutes` | `[15, 30, 60]` | relaunch intervals when the reset time is unknown; the last repeats |
+| `supervisor.usage_limit.short_backoff_minutes` | `[1, 2, 5]` | the same for rate and overload errors with no reset time |
+
+**Detection.** Every finished attempt, failed or exit 0, has its stdout **and** stderr read through the provider's adapter (`providers.limit_info`: Claude, Codex, opencode,
+agy; formats and which are real or realistic in `docs/PROVIDERS.md`), then through the structured-output check `halt` always used. Claude's weekly limit can exit 1 with nothing
+on stdout; the supervisor then reads the last API-error message of the session transcript (`~/.claude/projects/...`) when there is one. A run the supervisor stopped for its own
+timeout is read too (a provider may sleep inside its own retry loop, for example Claude with `CLAUDE_CODE_RETRY_WATCHDOG=1`; the attempt timeout, 90 minutes by default, is what ends that sleep,
+and the limit text is read from what it printed so far; a provider that printed nothing before the timeout is treated as an ordinary failure, which is the known gap).
+
+**What happens.** The attempt is voided and refunded exactly as before: it does not count against `max_attempts_per_task` or `max_total_attempts`; approvals and governance are untouched.
+The limit is stored per account (profile `account`, else the provider; all profiles of one provider share one login) in `.research/supervisor/limits.json`, so it survives a daemon restart.
+Tasks routed to that account enter phase `waiting_provider` with `resume_at` and are not launched; tasks on other providers keep running. When the time comes the voided attempt is relaunched
+with its session resumed where the adapter supports it. The daemon sleeps until the earliest `resume_at` (at most a minute at a time) instead of polling. Time spent waiting does not count
+toward `max_wall_minutes`. Pausing or stopping the plan always wins: a paused plan relaunches nothing, and Resume continues the wait. A reset that is not yet known keeps relaunching
+at the backoff intervals; a refused relaunch costs nothing.
+
+`fallback_then_wait` never weakens a rule: a fallback is skipped when a strategy level routes the task, when the other profile's model is not in `orchestration.available`, or when that account is
+limited too; the task then waits. A credit-balance refusal (no reset time) is never waited out blindly: it asks you.
+
+**Visibility.** Events `supervisor_waiting_provider` and `supervisor_resumed_after_limit`. With chat on, one alert when the wait starts (`Claude limit reached; resuming about 15:05 (in 1h 42m);
+other tasks continue`) and one when it resumes. Plan health becomes `waiting_for_provider` and the plan status (`supervisor_status`, `research plan status`) carries
+`waiting_provider: {provider, until, until_ts, tasks}` (ISO UTC time, epoch seconds, number of waiting tasks; `null` when nothing waits) for a status chip, and each task row has `resume_at`.
+A wait beyond `max_wait_hours` is a decision request (options `wait`, `switch`, `stop`; none is protected).
+
+## 22. The investigator, automatically (opt-in)
+
+With `supervisor.investigator.auto: true`, the halt watcher (its own worker thread beside the debug agent, never the supervisor tick) runs the investigator **once** per blocked
+task when a plan halts because a task hit a failure the rules could not classify or used up its deterministic retries (provider limits and approval waits do not count). It is capped by
+`supervisor.investigator.max_per_plan` and `budget_usd`; beyond them nothing is called and the halt alert stays as it is. The trigger and its outcome are events (`investigator_started`,
+`investigator_outcome`, `investigator_skipped`) and a line in `.research/supervisor/investigator.json`. Everything in §20 still holds: unprotected actions run, protected ones wait for the PIN
+approval, and the investigator never approves anything.

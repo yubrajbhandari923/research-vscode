@@ -292,10 +292,6 @@ export function timeline(events: any[] | undefined, limit = 12): string {
     .join('')}</div>`;
 }
 
-export function statLink(n: number | string, label: string, cmd: string, args: any[] = []): string {
-  return `<div class="stat" data-cmd="${esc(cmd)}" data-args="${esc(JSON.stringify(args))}"><div class="n">${esc(n)}</div><div class="l">${esc(label)}</div></div>`;
-}
-
 /** Horizontal bar chart comparing one metric across runs. */
 export function metricChart(name: string, rows: { label: string; value: number | null; id: string }[], unit?: string): string {
   const vals = rows.filter((r) => typeof r.value === 'number') as { label: string; value: number; id: string }[];

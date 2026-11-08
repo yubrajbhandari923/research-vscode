@@ -174,7 +174,3 @@ def diff(p: Project, context: int = 3) -> str:
 
 def apply(p: Project) -> Dict[str, Any]:
     return apply_for_root(p.root, p.name)
-
-
-def outside_bytes(p: Project) -> List[bytes]:
-    return outside_bytes_for_root(p.root)

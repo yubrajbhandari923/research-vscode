@@ -201,29 +201,30 @@ def test_cli_dispatch_really_launches_in_the_worktree(shared, mocks, monkeypatch
 
 
 def test_rpc_providers_and_prepare_never_runs(shared, mocks):  # noqa: F811
-    from research import rpc
+    from research import api
     repo, _ = shared
     bindir, out = mocks
-    srv = rpc.Server(str(repo)) if hasattr(rpc, "Server") else rpc.RpcServer(str(repo))
+    sess = api.Session(str(repo))
+    c = lambda op_, **kw: api.call(op_, sess, kw)
     with Project(str(repo)) as p:
         t, _ws = _task(p)
         p.save_config({"agents.profiles.codex.command": str(bindir / "codex"), "agents.profiles.codex.provider": "codex"})
-    pv = srv.m_providers()
+    pv = c("providers")
     names = {x["name"]: x for x in pv["providers"]}
     assert {"claude", "codex", "agy"} <= set(names) and names["codex"]["installed"] and pv["default"] == "claude"
     out.unlink(missing_ok=True)   # the --version probe above ran the mock; only the dispatch is under test
-    d = srv.m_dispatch("implementer", t["id"], profile="codex", model="m1", effort="high")
+    d = c("dispatch", role="implementer", target=t["id"], profile="codex", model="m1", effort="high")
     assert d["state"] == "prepared" and d["allocation"]["reasoning_effort"] == "high" and not out.exists()   # prepared, not started
-    assert srv.m_executions(t["id"])[0]["state"] == "prepared"
+    assert c("executions", task=t["id"])[0]["state"] == "prepared"
     with pytest.raises(ResearchError):
-        srv.m_execution_start(d["execution_id"])   # interactive executions are started by a terminal, not the server
-    h = srv.m_dispatch("implementer", t["id"], profile="codex", headless=True)
-    srv.m_execution_start(h["execution_id"])
+        c("execution_start", id=d["execution_id"])   # interactive executions are started by a terminal, not the server
+    h = c("dispatch", role="implementer", target=t["id"], profile="codex", headless=True)
+    c("execution_start", id=h["execution_id"])
     for _ in range(80):
-        if srv.m_execution_show(h["execution_id"])["state"] in ("completed", "failed"):
+        if c("execution_show", id=h["execution_id"])["state"] in ("completed", "failed"):
             break
         time.sleep(0.1)
-    assert srv.m_execution_show(h["execution_id"])["state"] == "completed" and out.exists()
+    assert c("execution_show", id=h["execution_id"])["state"] == "completed" and out.exists()
 
 
 def test_cross_provider_strategy_routes_levels_to_different_providers(shared, mocks):  # noqa: F811
@@ -249,3 +250,29 @@ def test_models_listed_per_provider_only():
     profs = {"claude-x": {"command": "claude", "model": "sonnet-x"}, "codex-x": {"provider": "codex", "command": "codex", "model": "gpt-x"}}
     assert [m["id"] for m in providers.available_models("codex", "codex-not-installed", profs)["models"]] == ["gpt-x"]
     assert [m["id"] for m in providers.available_models("claude", "claude", profs)["models"]] == ["sonnet-x"]
+
+
+def test_headless_timeout_is_failure_and_missing_executable_is_controlled(proj):
+    from research import agents
+    dispatch = {'argv': [sys.executable, '-c', 'import time; time.sleep(5)'], 'env': {},
+                'headless': True, 'usage_parser': None, 'policy': {}, 'role': 'implementer',
+                'profile': 'test', 'model': None}
+    result = agents.run_headless(proj, dispatch, timeout=0.05)
+    assert result['timed_out'] and result['exit_code'] == 124
+    dispatch['argv'] = ['/definitely/missing/research-agent']
+    with pytest.raises(ResearchError, match='Could not start agent'):
+        agents.run_headless(proj, dispatch)
+
+
+def test_detect_reports_resume_from_the_installed_cli_not_the_static_table(monkeypatch):
+    # claude's static table says resume False, yet an installed CLI that lists --resume supports it; a static True is not trusted either
+    from research import providers
+    monkeypatch.setattr(providers.shutil, "which", lambda c: "/usr/bin/" + c)
+    monkeypatch.setattr(providers, "_RESUME_PROBE", {})
+    import dataclasses
+    for name, answer in (("claude", True), ("codex", False)):                           # adapters are frozen records: swap in modified copies
+        monkeypatch.setitem(providers.ADAPTERS, name, dataclasses.replace(providers.ADAPTERS[name], resume_probe=lambda c, a=answer: a))
+    assert providers.detect({"command": "claude"}, "claude")["capabilities"]["resume"] is True
+    assert providers.detect({"command": "codex"}, "codex")["capabilities"]["resume"] is False
+    monkeypatch.setattr(providers.shutil, "which", lambda c: None)                      # not installed: nothing to probe, the table stands
+    assert providers.detect({"command": "claude"}, "claude")["capabilities"]["resume"] is False

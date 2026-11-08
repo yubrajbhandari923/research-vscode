@@ -10,6 +10,11 @@ your packages. You set up two things once, and the **Initialize Project** wizard
 
 Everything is also plain YAML in `.research/config.yaml`; the wizard only fills it in for you.
 
+## CLI-only
+
+Nothing here needs VS Code. Run the `research env …`, `research config set …` and `research hpc …` commands shown below in your project; they write the same `.research/config.yaml` keys the wizard does.
+After setup, `research doctor` reports problems and `research agent providers list` shows your agent CLIs. The VS Code checks at the end of this page have terminal equivalents (`research plan yaml validate`, `research supervisor status`).
+
 ## 1. This computer (uses uv)
 
 [uv](https://docs.astral.sh/uv/) is the simplest way: `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`.
@@ -34,8 +39,7 @@ your PATH, which is exactly what fails when that Python lacks NumPy.
 
 ## 2. The cluster (only if you run on Slurm)
 
-Compute nodes are **not** the login node. A package that imports on the login node can be missing on the compute node (this happened in
-testing). So the wizard asks for:
+Compute nodes are **not** the login node. A package that imports on the login node can be missing on the compute node. So the wizard asks for:
 
 1. **SSH host**: an alias from `~/.ssh/config` that already works with keys or an agent (no passwords or MFA prompts).
 2. **Remote workspace directory**: where Research OS keeps code snapshots and results. Must be on storage the compute nodes see.
@@ -75,12 +79,12 @@ hpc:
   `research run exec EXP-001 -- python3 script.py` (which uses the project Python).
 * Code that will run on the cluster must write results where Research OS can collect them (see the HPC result contract in
   [SUPERVISOR.md](SUPERVISOR.md#8-hpc)); the implementer brief tells agents this automatically.
-* A Codex agent runs in a sandbox without network, so it cannot call `research hpc submit` itself; use Claude for submission tasks or submit manually.
+* The Codex adapter runs headless with `-s workspace-write`; whether that sandbox can reach your cluster over the network depends on your Codex setup, so check before relying on an agent to call `research hpc submit`, or submit manually.
 
 ## 4. Checklist before your first plan run
 
 - [ ] `research env check` is green (or you consciously rely on the system `python3`)
 - [ ] `research hpc doctor --compute` is green (HPC only)
-- [ ] `research provider list` shows your agent CLIs installed and signed in
+- [ ] `research agent providers list` shows your agent CLIs installed and signed in
 - [ ] `research plan yaml validate your-plan.yaml`
-- [ ] the VS Code Control Center → **Plans** opens without a warning banner
+- [ ] `research supervisor status` shows no warning (or the VS Code Control Center → **Plans** opens without a warning banner)

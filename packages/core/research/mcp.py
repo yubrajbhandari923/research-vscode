@@ -4,8 +4,9 @@
 `research mcp install` registers it in .mcp.json (Claude Code), .vscode/mcp.json (VS Code), .cursor/mcp.json and
 .gemini/settings.json; for Codex it prints the `codex mcp add` command.
 
-Every tool is a thin wrapper over the same core functions as the CLI, so policy (run budget, verification gates,
-task claims) applies identically. Tool errors come back as `isError` results with the hint, so agents can react.
+Every tool is an operation in `research/api/` (`mcp="<tool name>"`): the same core functions as the CLI, so policy (run budget,
+verification gates, task claims) applies identically. This file holds the hand-written descriptions and schemas, the MCP framing and
+the installer. Tool errors come back as `isError` results with the hint, so agents can react.
 """
 from __future__ import annotations
 
@@ -14,9 +15,9 @@ import json
 import os
 import sys
 import traceback
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from . import __version__
+from . import __version__, api
 
 PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
 
@@ -36,259 +37,149 @@ O = {"type": "object"}
 
 
 class Tool:
-    def __init__(self, name: str, description: str, props: Dict[str, Any], required: List[str],
-                 fn: Callable[..., Any], mutating: bool = True):
-        self.name, self.description, self.fn, self.mutating = name, description, fn, mutating
+    """A tool is its hand-written schema plus the op it calls: `fn` is the op handler (project first), `mutating` is the op's flag."""
+
+    def __init__(self, name: str, description: str, props: Dict[str, Any], required: List[str], op: "api.Op"):
+        self.name, self.description, self.op, self.fn, self.mutating = name, description, op, op.fn, op.mutates
         self.schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
 
 
+# name, description, properties, required. The order is the order of tools/list.
+TOOLS = [
+    ("research_current", "Project state for agents: goal, checkpoint, beliefs, failures, experiments, active plans and their "
+             "next tasks, attention items, skills, policy. Read this first.",
+     {}, []),
+    ("research_search", "Keyword search over questions, experiments, runs, findings, decisions, plans, tasks, syntheses, "
+             "notes and skills.",
+     {"query": S, "type": S, "limit": I}, ["query"]),
+    ("research_show", "Full detail of any id (Q-, EXP-, RUN-, F-, D-, CP-, A-, PLAN-, T-, note:…).",
+     {"id": S}, ["id"]),
+    ("task_next", "The next ready task (todo, dependencies done, unclaimed), optionally within one plan.",
+     {"plan": S}, []),
+    ("task_context", "Focused brief for one task: goal, acceptance criteria, checks, plan objective, dependency results, "
+             "related experiment state, skills to load, progress notes, rules.",
+     {"id": S}, ["id"]),
+    ("agent_report", "Report on your supervised task: kind "
+             "progress|milestone|artifact|metric|run|hpc_job|code|problem|report|finish. Only valid inside an "
+             "execution started by the Research OS supervisor; you cannot mark the task verified.",
+     {"task": S, "kind": S, "message": S, "summary": S, "path": S, "name": S, "value": N, "run": S, "job": S, "category": S, "commit": S}, ["task", "kind"]),
+    ("agent_propose", "Propose a plan change as a YAML patch (same schema as plan YAML, scope partial). Operational "
+             "additions may apply automatically; scientific changes wait for the researcher.",
+     {"task": S, "yaml": S, "rationale": S}, ["task", "yaml", "rationale"]),
+    ("decision_request", "Ask the researcher a decision with options. Each option: key, label, consequence, and an optional prepared action "
+             "(kind intervention|instruct|op); protected ones need the researcher's PIN. You can only ask: you can never answer or approve.",
+     {"question": S, "options": {"type": "array", "items": O}, "subject": S, "default": S, "expires_hours": N}, ["question", "options"]),
+    ("plan_status", "Supervised status of a plan: task phases, attempts, budgets, pending proposals.",
+     {"plan": S}, ["plan"]),
+    ("task_start", "Claim a task and mark it running. Fails if another agent holds it.",
+     {"id": S, "force": B}, ["id"]),
+    ("task_note", "Append a progress note to a task (the hand-off trail for whoever continues).",
+     {"id": S, "text": S}, ["id", "text"]),
+    ("task_done", "Complete a task. Runs its checks first; failing checks block completion.",
+     {"id": S, "result": S, "artifacts": L}, ["id"]),
+    ("task_block", "Mark a task blocked, with the reason.",
+     {"id": S, "reason": S}, ["id", "reason"]),
+    ("task_release", "Give a claimed task back (status todo) with an optional hand-off note.",
+     {"id": S, "note": S}, ["id"]),
+    ("task_verify", "Run a task's checks (commands, files, metric thresholds) and record the result.",
+     {"id": S}, ["id"]),
+    ("task_create", "Add a task to a plan. checks: 'cmd:pytest -q', 'file:out/plot.png', 'metric:EXP-001:rmse<=0.05'. "
+             "skills: project skill names.",
+     {"plan": S, "title": S, "goal": S, "type": S, "role": S, "depends_on": L, "acceptance_criteria": S, "checks": L, "skills": L, "experiment": S, "question": S, "inputs": S, "expected_outputs": S}, ["plan", "title"]),
+    ("plan_create", "Create a plan (a research objective that tasks break down).",
+     {"title": S, "objective": S, "success_criteria": S, "question": S, "skills": L}, ["title"]),
+    ("question_create", "Create a research question.",
+     {"title": S, "description": S, "parent": S}, ["title"]),
+    ("experiment_create", "Register an experiment BEFORE running it (humans only; agents use experiment_propose): hypothesis, "
+             "parameters (lists = sweep), metrics, planned runs, success criteria, stop conditions.",
+     {"title": S, "question": S, "hypothesis": S, "motivation": S, "method": S, "parameters": O, "metrics": L, "planned_runs": I, "success_criteria": S, "stop_conditions": S}, ["title"]),
+    ("experiment_propose", "You may NOT create experiments. Submit a proposal; the researcher approves it with a PIN. All fields "
+             "are required.",
+     {"title": S, "hypothesis": S, "rationale": S, "method": S, "expected_outputs": S, "related": S}, ["title", "hypothesis", "rationale", "method", "expected_outputs", "related"]),
+    ("run_start", "Start a tracked run of an experiment in the background (returns the run id; poll run_status). Use "
+             "metric_log / artifact_register or research.log_metric() inside the code.",
+     {"experiment": S, "command": S, "parameters": O, "label": S, "cwd": S}, ["experiment", "command"]),
+    ("run_status", "Status, exit code, metrics and artifacts of a run (refreshes from the backend).",
+     {"id": S}, ["id"]),
+    ("run_logs", "Tail of a run's stdout or stderr.",
+     {"id": S, "stream": {"type": "string", "enum": ["stdout", "stderr"]}, "tail": I}, ["id"]),
+    ("runs_compare", "Side by side: parameter and metric differences, code changes, artifacts of two runs.",
+     {"a": S, "b": S}, ["a", "b"]),
+    ("metric_log", "Log a metric on a run or an experiment.",
+     {"name": S, "value": {"type": ["number", "string"]}, "run": S, "experiment": S, "step": I, "unit": S}, ["name", "value"]),
+    ("artifact_register", "Register a file or folder (by reference, never copied) on a run or experiment.",
+     {"path": S, "run": S, "experiment": S, "description": S}, ["path"]),
+    ("experiment_synthesize", "Interpret an experiment's finished runs. mark: completed | failed (optional).",
+     {"id": S, "what_happened": S, "what_worked": S, "what_failed": S, "interpretation": S, "limitations": S, "unresolved": S, "next_experiment": S, "mark": S}, ["id"]),
+    ("finding_create", "Record a reusable result with evidence ids (EXP-/RUN-/A-/F-). kind: result | failure. Stays "
+             "preliminary until an independent review.",
+     {"title": S, "statement": S, "kind": S, "confidence": S, "supports": L, "contradicts": L, "questions": L, "limitations": S}, ["title"]),
+    ("finding_review", "Independent review of a finding: verdict supported | contradicted | needs_work, with reasoning. You "
+             "can't review findings you wrote.",
+     {"id": S, "verdict": S, "notes": S, "confidence": S}, ["id", "verdict"]),
+    ("checkpoint_create", "Snapshot the project's understanding (pre-filled from current state). commit=true also commits "
+             ".research/ to git.",
+     {"understanding": S, "problem": S, "next": S, "commit": B}, []),
+    ("skills_list", "Project skills (name, description, always-on, applies_to).",
+     {}, []),
+    ("skill_show", "The full SKILL.md of a project skill. Load the skills a task lists before working on it.",
+     {"name": S}, ["name"]),
+    ("dispatch_prepare", "Prepare a brief for another agent role (planner|implementer|verifier|analyst) on a target id or "
+             "objective; returns the command a human can run.",
+     {"role": S, "target": S, "objective": S, "profile": S}, []),
+    ("report_full", "Deterministic, exhaustive Markdown export of everything recorded (optionally for one Q-/EXP-/PLAN-), "
+             "with coverage verification. Use it for a complete context hand-off. It retrieves and renders records "
+             "only — it is not a synthesis and interprets nothing.",
+     {"scope": S, "check": B}, []),
+    ("report", "Write the readable project report (goal, findings with evidence plots, failed directions, decisions, "
+             "runs and syntheses per question) to .research/reports/<scope>.md and/or .html and return the paths. "
+             "scope = Q-/EXP-/PLAN- id or omitted for the whole project; fmt = md|html|both. It covers everything; "
+             "the Scientist Guide is the short curated story.",
+     {"scope": S, "fmt": {"type": "string", "enum": ["md", "html", "both"]}}, []),
+    ("guide_status", "Scientist Guide (Quarto book on main) state: important results and whether each has a draft, per-"
+             "chapter freshness (fresh|stale|invalid), citations, the last draft's limit check, review/approval "
+             "label per chapter. Read-only; a clean state is not scientific approval.",
+     {}, []),
+    ("guide_highlights", "The important results (findings) that belong in the Scientist Guide, with numbers status and whether "
+             "each is logged/drafted. Read-only.",
+     {}, []),
+    ("guide_draft_check", "After writing a guide draft: did you stay within guide.draft.* (words per section, sections, "
+             "figures) and out of human-owned chapters? Read-only; fix every problem it lists.",
+     {}, []),
+    ("guide_draft_done", "Record that the given important results (F- ids) now have a draft, then return the limit check. Call "
+             "it only after the guide files are saved.",
+     {"ids": L}, []),
+    ("guide_validate", "Validate the Scientist Guide's claim/figure provenance against the live records (missing, stale, "
+             "contradicted, superseded, inconsistent). Read-only; provenance only, not a scientific review.",
+     {}, []),
+    ("doctor", "Project health: records, shared ledger, workspaces, runs, agents, sandbox, context. Read-only; "
+             "reports errors, warnings and optional capabilities that are simply not enabled.",
+     {}, []),
+    ("workspace_list", "Experiment workspaces (git worktrees) sharing this project's one research ledger: branch, base "
+             "revision, dirty state, linked tasks, active runs. Read-only.",
+     {}, []),
+    ("hpc_doctor", "Whether remote execution is available on a configured cluster, and which modes are usable. Read-"
+             "only.",
+     {"cluster": S}, []),
+    ("hpc_sync", "Reconcile outstanding remote runs: adopt uncertain submissions, update Slurm status, import "
+             "available results, and list experiments now needing interpretation. Run this before proposing "
+             "repeated work. Submits nothing and starts no agent.",
+     {"cluster": S}, []),
+    ("hpc_bundle", "Build a portable execution bundle for an experiment, for manual execution on a cluster (no agent or "
+             "connection needed there). Returns the archive path and the run id it is tied to.",
+     {"experiment": S, "command": S}, ["experiment"]),
+]
+
+
 def _tools() -> List[Tool]:
-    from . import agents as A
-    from . import compare as CMP
-    from . import fullreport as FR
-    from . import context as C
-    from . import plans as P
-    from . import runs as R
-    from .search import search as _search_records
-    from . import services as SV
-    from . import skills as SK
-    from . import verification as V
-    from . import views as VW
-
-    def current(p):
-        C.write_current_md(p)
-        return C.render_current_md(p)
-
-    def task_ctx(p, id):
-        c = P.task_context(p, id)
-        return A.task_brief_md(c)
-
-    def guide_status(p):
-        from . import guide as G
-        from .store import Project
-        ro = Project(p.root, author=p.author, sync=False)
-        try:
-            return G.overview(ro)
-        finally:
-            ro.close()
-
-    def guide_validate(p):
-        from . import provenance as PV
-        from .store import Project
-        ro = Project(p.root, author=p.author, sync=False)
-        try:
-            return PV.validate(ro)
-        finally:
-            ro.close()
-
-    def report(p, scope=None, fmt="both"):
-        from . import report as RP
-        return RP.write_report(p, scope or None, fmt)
-
-    def guide_highlights(p):
-        from . import guide as G
-        from .store import Project
-        ro = Project(p.root, author=p.author, sync=False)
-        try:
-            return G.highlights(ro)
-        finally:
-            ro.close()
-
-    def report_full(p, scope=None, check=True):
-        """Export against a read-only snapshot of the same project, so rendering mutates nothing."""
-        from .store import Project
-        ro = Project(p.root, author=p.author, sync=False)
-        try:
-            return FR.write(ro, scope, check=check)
-        finally:
-            ro.close()
-
-    def hpc_doctor(p, cluster=None):
-        from .hpc import remote as HR
-        return HR.doctor(p, cluster)
-
-    def hpc_sync(p, cluster=None):
-        from .hpc import remote as HR
-        return HR.sync(p, cluster_name=cluster)
-
-    def hpc_bundle(p, experiment, command=None):
-        from .hpc import bundle as HB
-        return {k: v for k, v in HB.build(p, experiment, command=command).items() if k != "manifest"}
-
-    def run_status(p, id):
-        r = R.reconcile_run(p, id, force=True)
-        d = VW.run_detail(p, r["id"])
-        out = {k: d.get(k) for k in ("id", "experiment_id", "status", "exit_code", "started_at", "ended_at",
-                                     "duration_s", "label", "command", "metrics", "slurm_job_id", "run_dir")}
-        out["artifacts"] = [{"id": a["id"], "path": a["path"]} for a in d["artifacts"]]
-        return out
-
-    def run_logs(p, id, stream="stdout", tail=80):
-        r = R.get_run(p, id)
-        path = p.abspath(r["stderr_path"] if stream == "stderr" else r["stdout_path"])
-        if not path or not os.path.exists(path):
-            return "(no log yet)"
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.read().splitlines()
-        return "\n".join(lines[-int(tail):])
-
-    def checkpoint(p, understanding=None, problem=None, next=None, commit=False):
-        c = C.create_checkpoint(p, understanding=understanding, current_problem=problem, next_experiment=next,
-                                commit=commit)
-        return {"id": c["id"], "path": c.get("path"), "snapshot_commit": c.get("snapshot_commit")}
-
-    return [
-        Tool("research_current", "Project state for agents: goal, checkpoint, beliefs, failures, experiments, active plans "
-             "and their next tasks, attention items, skills, policy. Read this first.", {}, [], current, False),
-        Tool("research_search", "Keyword search over questions, experiments, runs, findings, decisions, plans, tasks, "
-             "syntheses, notes and skills.", {"query": S, "type": S, "limit": I}, ["query"],
-             lambda p, query, type=None, limit=20: _search_records(p, query, type, limit), False),
-        Tool("research_show", "Full detail of any id (Q-, EXP-, RUN-, F-, D-, CP-, A-, PLAN-, T-, note:…).", {"id": S}, ["id"],
-             lambda p, id: VW.show(p, id), False),
-        Tool("task_next", "The next ready task (todo, dependencies done, unclaimed), optionally within one plan.",
-             {"plan": S}, [], lambda p, plan=None: P.get_next_ready_task(p, plan), False),
-        Tool("task_context", "Focused brief for one task: goal, acceptance criteria, checks, plan objective, "
-             "dependency results, related experiment state, skills to load, progress notes, rules.", {"id": S}, ["id"],
-             task_ctx, False),
-        Tool("agent_report", "Report on your supervised task: kind progress|milestone|artifact|metric|run|hpc_job|code|problem|report|finish. "
-             "Only valid inside an execution started by the Research OS supervisor; you cannot mark the task verified.",
-             {"task": S, "kind": S, "message": S, "summary": S, "path": S, "name": S, "value": N, "run": S, "job": S, "category": S, "commit": S},
-             ["task", "kind"], lambda p, task, kind, **kw: __import__("research.supervisor", fromlist=["x"]).report(p, task, kind, **kw)),
-        Tool("agent_propose", "Propose a plan change as a YAML patch (same schema as plan YAML, scope partial). Operational additions may apply "
-             "automatically; scientific changes wait for the researcher.", {"task": S, "yaml": S, "rationale": S}, ["task", "yaml", "rationale"],
-             lambda p, task, yaml, rationale: (lambda sv: (sv._active_attempt(p, task), sv.propose(p, task, yaml, rationale, source="agent"))[1])(
-                 __import__("research.supervisor", fromlist=["x"]))),
-        Tool("plan_status", "Supervised status of a plan: task phases, attempts, budgets, pending proposals.", {"plan": S}, ["plan"],
-             lambda p, plan: __import__("research.supervisor", fromlist=["x"]).status(p, plan), False),
-        Tool("task_start", "Claim a task and mark it running. Fails if another agent holds it.",
-             {"id": S, "force": B}, ["id"], lambda p, id, force=False: P.start_task(p, id, force=force)),
-        Tool("task_note", "Append a progress note to a task (the hand-off trail for whoever continues).",
-             {"id": S, "text": S}, ["id", "text"], lambda p, id, text: P.add_task_note(p, id, text)),
-        Tool("task_done", "Complete a task. Runs its checks first; failing checks block completion.",
-             {"id": S, "result": S, "artifacts": L}, ["id"],
-             lambda p, id, result=None, artifacts=None: P.complete_task(p, id, result=result, artifacts=artifacts)),
-        Tool("task_block", "Mark a task blocked, with the reason.", {"id": S, "reason": S}, ["id", "reason"],
-             lambda p, id, reason: P.block_task(p, id, reason)),
-        Tool("task_release", "Give a claimed task back (status todo) with an optional hand-off note.",
-             {"id": S, "note": S}, ["id"], lambda p, id, note=None: P.release_task(p, id, note)),
-        Tool("task_verify", "Run a task's checks (commands, files, metric thresholds) and record the result.",
-             {"id": S}, ["id"], lambda p, id: {k: v for k, v in V.verify_task(p, id).items() if k != "task"}),
-        Tool("task_create", "Add a task to a plan. checks: 'cmd:pytest -q', 'file:out/plot.png', "
-             "'metric:EXP-001:rmse<=0.05'. skills: project skill names.",
-             {"plan": S, "title": S, "goal": S, "type": S, "role": S, "depends_on": L, "acceptance_criteria": S,
-              "checks": L, "skills": L, "experiment": S, "question": S, "inputs": S, "expected_outputs": S},
-             ["plan", "title"],
-             lambda p, plan, title, goal=None, type=None, role=None, depends_on=None, acceptance_criteria=None, checks=None,
-             skills=None, experiment=None, question=None, inputs=None, expected_outputs=None: P.create_task(
-                 p, plan, title, goal=goal, task_type=type, assigned_role=role, depends_on=depends_on,
-                 acceptance_criteria=acceptance_criteria, checks=checks, skills=skills, related_experiment_id=experiment,
-                 related_question_id=question, inputs=inputs, expected_outputs=expected_outputs)),
-        Tool("plan_create", "Create a plan (a research objective that tasks break down).",
-             {"title": S, "objective": S, "success_criteria": S, "question": S, "skills": L}, ["title"],
-             lambda p, title, objective=None, success_criteria=None, question=None, skills=None: P.create_plan(
-                 p, title, objective=objective, success_criteria=success_criteria, question=question, skills=skills)),
-        Tool("question_create", "Create a research question.", {"title": S, "description": S, "parent": S}, ["title"],
-             lambda p, title, description=None, parent=None: SV.create_question(p, title, description, parent)),
-        Tool("experiment_create", "Register an experiment BEFORE running it (humans only; agents use experiment_propose): hypothesis, parameters (lists = sweep), "
-             "metrics, planned runs, success criteria, stop conditions.",
-             {"title": S, "question": S, "hypothesis": S, "motivation": S, "method": S, "parameters": O, "metrics": L,
-              "planned_runs": I, "success_criteria": S, "stop_conditions": S}, ["title"],
-             lambda p, title, **kw: SV.create_experiment(p, title, **kw)),
-        Tool("experiment_propose", "You may NOT create experiments. Submit a proposal; the researcher approves it with a PIN. "
-             "All fields are required.",
-             {"title": S, "hypothesis": S, "rationale": S, "method": S, "expected_outputs": S, "related": S},
-             ["title", "hypothesis", "rationale", "method", "expected_outputs", "related"],
-             lambda p, **kw: __import__("research.supervisor", fromlist=["x"]).propose_experiment(p, kw, source=(p.author or {}).get("author_name") or "agent")),
-        Tool("run_start", "Start a tracked run of an experiment in the background (returns the run id; poll run_status). "
-             "Use metric_log / artifact_register or research.log_metric() inside the code.",
-             {"experiment": S, "command": S, "parameters": O, "label": S, "cwd": S}, ["experiment", "command"],
-             lambda p, experiment, command, parameters=None, label=None, cwd=None: R.exec_run(
-                 p, experiment, command, detach=True, parameters=parameters, label=label,
-                 working_dir=os.path.join(p.root, cwd) if cwd else p.root, tee=False)),
-        Tool("run_status", "Status, exit code, metrics and artifacts of a run (refreshes from the backend).",
-             {"id": S}, ["id"], run_status, False),
-        Tool("run_logs", "Tail of a run's stdout or stderr.", {"id": S, "stream": {"type": "string", "enum": ["stdout", "stderr"]},
-                                                               "tail": I}, ["id"], run_logs, False),
-        Tool("runs_compare", "Side by side: parameter and metric differences, code changes, artifacts of two runs.",
-             {"a": S, "b": S}, ["a", "b"], lambda p, a, b: CMP.compare_runs(p, a, b), False),
-        Tool("metric_log", "Log a metric on a run or an experiment.",
-             {"name": S, "value": {"type": ["number", "string"]}, "run": S, "experiment": S, "step": I, "unit": S},
-             ["name", "value"], lambda p, name, value, run=None, experiment=None, step=None, unit=None: R.log_metric(
-                 p, name, value, step, unit, run=run, experiment=experiment)),
-        Tool("artifact_register", "Register a file or folder (by reference, never copied) on a run or experiment.",
-             {"path": S, "run": S, "experiment": S, "description": S}, ["path"],
-             lambda p, path, run=None, experiment=None, description=None: R.register_artifact(
-                 p, path, run=run, experiment=experiment, description=description)),
-        Tool("experiment_synthesize", "Interpret an experiment's finished runs. mark: completed | failed (optional).",
-             {"id": S, "what_happened": S, "what_worked": S, "what_failed": S, "interpretation": S, "limitations": S,
-              "unresolved": S, "next_experiment": S, "mark": S}, ["id"],
-             lambda p, id, **kw: SV.synthesize(p, id, **kw)),
-        Tool("finding_create", "Record a reusable result with evidence ids (EXP-/RUN-/A-/F-). kind: result | failure. "
-             "Stays preliminary until an independent review.",
-             {"title": S, "statement": S, "kind": S, "confidence": S, "supports": L, "contradicts": L, "questions": L,
-              "limitations": S}, ["title"],
-             lambda p, title, statement=None, kind="result", confidence=None, supports=None, contradicts=None,
-             questions=None, limitations=None: SV.create_finding(
-                 p, title, statement, kind, "preliminary", confidence, supports, contradicts, None, questions, limitations)),
-        Tool("finding_review", "Independent review of a finding: verdict supported | contradicted | needs_work, with "
-             "reasoning. You can't review findings you wrote.", {"id": S, "verdict": S, "notes": S, "confidence": S},
-             ["id", "verdict"], lambda p, id, verdict, notes=None, confidence=None: V.review_finding(p, id, verdict, notes, confidence)),
-        Tool("checkpoint_create", "Snapshot the project's understanding (pre-filled from current state). "
-             "commit=true also commits .research/ to git.", {"understanding": S, "problem": S, "next": S, "commit": B},
-             [], checkpoint),
-        Tool("skills_list", "Project skills (name, description, always-on, applies_to).", {}, [],
-             lambda p: [{k: s[k] for k in ("name", "description", "always", "applies_to", "level")} for s in SK.list_skills(p)], False),
-        Tool("skill_show", "The full SKILL.md of a project skill. Load the skills a task lists before working on it.",
-             {"name": S}, ["name"], lambda p, name: SK.get_skill(p, name)["markdown"], False),
-        Tool("dispatch_prepare", "Prepare a brief for another agent role (planner|implementer|verifier|analyst) on a "
-             "target id or objective; returns the command a human can run.", {"role": S, "target": S, "objective": S, "profile": S},
-             [], lambda p, role=None, target=None, objective=None, profile=None: A.dispatch(p, role, target, objective, profile)),
-        Tool("report_full", "Deterministic, exhaustive Markdown export of everything recorded (optionally for one "
-             "Q-/EXP-/PLAN-), with coverage verification. Use it for a complete context hand-off. It retrieves and "
-             "renders records only — it is not a synthesis and interprets nothing.",
-             {"scope": S, "check": B}, [], report_full, False),
-        Tool("report", "Write the readable project report (goal, findings with evidence plots, failed directions, decisions, runs and "
-             "syntheses per question) to .research/reports/<scope>.md and/or .html and return the paths. scope = Q-/EXP-/PLAN- id or "
-             "omitted for the whole project; fmt = md|html|both. It covers everything; the Scientist Guide is the short curated story.",
-             {"scope": S, "fmt": {"type": "string", "enum": ["md", "html", "both"]}}, [], report),
-        Tool("guide_status", "Scientist Guide (Quarto book on main) state: important results and whether each has a draft, per-chapter "
-             "freshness (fresh|stale|invalid), citations, the last draft's limit check, review/approval label per chapter. Read-only; "
-             "a clean state is not scientific approval.", {}, [], guide_status, False),
-        Tool("guide_highlights", "The important results (findings) that belong in the Scientist Guide, with numbers status and whether "
-             "each is logged/drafted. Read-only.", {}, [], guide_highlights, False),
-        Tool("guide_draft_check", "After writing a guide draft: did you stay within guide.draft.* (words per section, sections, figures) "
-             "and out of human-owned chapters? Read-only; fix every problem it lists.", {}, [],
-             lambda p: __import__("research.guide", fromlist=["x"]).draft_check(p), False),
-        Tool("guide_draft_done", "Record that the given important results (F- ids) now have a draft, then return the limit check. Call it "
-             "only after the guide files are saved.", {"ids": L}, [],
-             lambda p, ids=None: __import__("research.guide", fromlist=["x"]).draft_done(p, ids)),
-        Tool("guide_validate", "Validate the Scientist Guide's claim/figure provenance against the live records (missing, "
-             "stale, contradicted, superseded, inconsistent). Read-only; provenance only, not a scientific review.",
-             {}, [], guide_validate, False),
-        Tool("doctor", "Project health: records, shared ledger, workspaces, runs, agents, sandbox, context. Read-only; reports errors, "
-             "warnings and optional capabilities that are simply not enabled.", {}, [],
-             lambda p: __import__("research.doctor", fromlist=["x"]).run(p.root), False),
-        Tool("workspace_list", "Experiment workspaces (git worktrees) sharing this project's one research ledger: branch, "
-             "base revision, dirty state, linked tasks, active runs. Read-only.", {}, [],
-             lambda p: __import__("research.workspace", fromlist=["x"]).list_workspaces(p), False),
-        Tool("hpc_doctor", "Whether remote execution is available on a configured cluster, and which modes are "
-             "usable. Read-only.", {"cluster": S}, [], hpc_doctor, False),
-        Tool("hpc_sync", "Reconcile outstanding remote runs: adopt uncertain submissions, update Slurm status, "
-             "import available results, and list experiments now needing interpretation. Run this before "
-             "proposing repeated work. Submits nothing and starts no agent.", {"cluster": S}, [], hpc_sync),
-        Tool("hpc_bundle", "Build a portable execution bundle for an experiment, for manual execution on a cluster "
-             "(no agent or connection needed there). Returns the archive path and the run id it is tied to.",
-             {"experiment": S, "command": S}, ["experiment"], hpc_bundle),
-    ]
+    by_tool = {o.mcp: o for o in api.OPS.values() if o.mcp}
+    return [Tool(n, d, props, req, by_tool[n]) for n, d, props, req in TOOLS]
 
 
 class McpServer:
     def __init__(self, root: str, author: Optional[Dict[str, Any]] = None):
-        from .rpc import Server
-        self.srv = Server(root)
+        self.session = api.Session(root, author)
         self.explicit_author = author is not None
-        if author:
-            self.srv.author = author
         self.tools = {t.name: t for t in _tools()}
 
     def handle(self, msg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -314,9 +205,9 @@ class McpServer:
             if not isinstance(info, dict):
                 raise _RpcError(-32602, "clientInfo must be an object")
             client = info.get("name")
-            if client and not self.explicit_author and self.srv.author.get("author_type") == "human":
+            if client and not self.explicit_author and self.session.author.get("author_type") == "human":
                 from .util import detect_author
-                self.srv.author = detect_author(agent=str(client).strip().lower().replace(" ", "-"))
+                self.session.author = detect_author(agent=str(client).strip().lower().replace(" ", "-"))
             return {"protocolVersion": want if want in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[1],
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {"name": "research", "title": "Research Panel", "version": __version__},
@@ -336,30 +227,22 @@ class McpServer:
         raise _RpcError(-32601, f"Method not found: {method}")
 
     def _call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        from . import context as C
         from .util import ResearchError
         tool = self.tools.get(name)
         if not tool:
             raise _RpcError(-32602, f"Unknown tool: {name}")
         try:
-            if not self.srv.initialized():
+            if not self.session.initialized():
                 raise ResearchError("No research project here", hint="Run `research init` in the project root.")
-            p = self.srv.project()
-            p.author = self.srv.author
             with contextlib.redirect_stdout(sys.stderr):  # stdout belongs to the protocol
-                out = tool.fn(p, **args)
-                if tool.mutating:
-                    try:
-                        C.write_current_md(p)
-                    except Exception:
-                        pass
+                out = api.call(tool.op.name, self.session, args, surface="mcp")
             text = out if isinstance(out, str) else json.dumps(out, indent=1, default=str, ensure_ascii=False)
             return {"content": [{"type": "text", "text": text}], "isError": False}
+        except api.BadParams as e:
+            return {"content": [{"type": "text", "text": f"Bad arguments for {name}: {e.detail}"}], "isError": True}
         except ResearchError as e:
             text = f"Error (code {e.exit_code}): {e}" + (f"\nHint: {e.hint}" if e.hint else "")
             return {"content": [{"type": "text", "text": text}], "isError": True}
-        except TypeError as e:
-            return {"content": [{"type": "text", "text": f"Bad arguments for {name}: {e}"}], "isError": True}
         except Exception as e:  # pragma: no cover
             traceback.print_exc(file=sys.stderr)
             return {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}], "isError": True}
@@ -396,60 +279,32 @@ def serve(root: str, stdin=None, stdout=None, author: Optional[Dict[str, Any]] =
 
 # =============================================================================== install
 
-def _merge_json(path: str, key: str, name: str, entry: Dict[str, Any]) -> str:
-    data: Dict[str, Any] = {}
-    if os.path.exists(path):
-        with open(path, encoding="utf-8") as f:
-            try:
-                data = json.load(f)
-            except ValueError:
-                raise ValueError(f"{path} is not valid JSON; fix or remove it first")
-    data.setdefault(key, {})[name] = entry
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    return path
+CLIENTS = ["claude", "vscode", "cursor", "gemini", "agy", "codex", "opencode"]
+# Editor clients are plain JSON files written here; agent CLIs (claude, agy, codex) are written by their provider adapters.
+_EDITORS = {"vscode": (".vscode/mcp.json", "servers", lambda argv: {"type": "stdio", "command": argv[0], "args": argv[1:]}),
+            "cursor": (".cursor/mcp.json", "mcpServers", lambda argv: {"command": argv[0], "args": argv[1:]}),
+            "gemini": (".gemini/settings.json", "mcpServers", lambda argv: {"command": argv[0], "args": argv[1:], "cwd": "."})}
 
 
-CLIENTS = ["claude", "vscode", "cursor", "gemini", "codex"]
-
-
-def install(root: str, clients: Optional[List[str]] = None, command: Optional[str] = None) -> Dict[str, Any]:
-    """Register `research mcp` with agent clients (project-level config files). Codex is configured per user:
-    the command to run is returned instead. Uses `research` when it is on PATH, otherwise the project-local
-    launcher `.research/bin/research` (created if missing)."""
-    import shutil
+def install(root: str, clients: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Register `research mcp` with agent clients (project-level config files). Codex is configured per user: the command to run is
+    returned instead. Uses `research` when it is on PATH, otherwise the project-local launcher `.research/bin/research`."""
+    from . import providers as PR
+    from .providers.base import merge_json, server_cmd
     from .util import ResearchError
-    if not command:
-        if shutil.which("research"):
-            command = "research"
-        else:
-            from . import localbin
-            command = localbin.install(root)["path"]
-    clients = clients or ["claude", "vscode"]
+    argv = server_cmd(root)
     done: Dict[str, Any] = {}
-    entry = {"command": command, "args": ["mcp"]}
-    for c in clients:
-        try:
-            if c == "claude":
-                done[c] = os.path.relpath(_merge_json(os.path.join(root, ".mcp.json"), "mcpServers", "research",
-                                                      {"type": "stdio", **entry}), root)
-            elif c == "vscode":
-                done[c] = os.path.relpath(_merge_json(os.path.join(root, ".vscode", "mcp.json"), "servers", "research",
-                                                      {"type": "stdio", **entry}), root)
-            elif c == "cursor":
-                done[c] = os.path.relpath(_merge_json(os.path.join(root, ".cursor", "mcp.json"), "mcpServers", "research", entry), root)
-            elif c == "gemini":
-                done[c] = os.path.relpath(_merge_json(os.path.join(root, ".gemini", "settings.json"), "mcpServers", "research",
-                                                      {**entry, "cwd": "."}), root)
-            elif c == "codex":
-                done[c] = f"run once: codex mcp add research -- {command} mcp"
-            else:
-                raise ResearchError(f"Unknown client {c!r} (one of {', '.join(CLIENTS)})")
-        except ValueError as e:
-            raise ResearchError(str(e))
-    return {"installed": done, "command": f"{command} mcp"}
+    for c in clients or ["claude", "vscode"]:
+        if c == "codex":
+            done[c] = f"run once: codex mcp add research -- {' '.join(argv)}"
+        elif c in _EDITORS:
+            rel, key, entry = _EDITORS[c]
+            done[c] = os.path.relpath(merge_json(os.path.join(root, rel), key, "research", entry(argv)), root)
+        elif c in PR.ADAPTERS and PR.ADAPTERS[c].mcp_install:
+            done[c] = PR.mcp_install(c, root)["where"]
+        else:
+            raise ResearchError(f"Unknown client {c!r} (one of {', '.join(CLIENTS)})")
+    return {"installed": done, "command": " ".join(argv)}
 
 
 def status(root: str) -> Dict[str, Any]:

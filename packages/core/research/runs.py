@@ -615,10 +615,41 @@ def list_artifacts(p: Project, run: Optional[str] = None, experiment: Optional[s
 
 # =============================================================================== ingestion
 
+_ROOT_FILES = ("artifacts.jsonl", "syntheses.jsonl", "metrics.jsonl", "reviews.jsonl")
+
+
+def _root_todo(p: Project) -> List[str]:
+    """Root jsonl files that grew or were replaced since the last ingest (read-only)."""
+    return [f for f in _ROOT_FILES if os.path.exists(p.path(f)) and os.path.getsize(p.path(f)) != int(p.meta(f"offset:{f}", 0) or 0)]
+
+
+def pending(p: Project) -> bool:
+    """Would `sync_runs` / `ingest_root_files` write anything? Read-only; conservative (any active run counts)."""
+    if _root_todo(p):
+        return True
+    d = p.path("runs")
+    known = {r["id"] for r in p.q("SELECT id FROM runs")}
+    for name in os.listdir(d) if os.path.isdir(d) else []:
+        if name not in known and schema.parse_id(name) and os.path.exists(os.path.join(d, name, "run.json")):
+            return True
+    for r in p.q("SELECT status, run_dir, metrics_offset, artifacts_offset FROM runs"):
+        if r["status"] not in RUN_TERMINAL:
+            return True
+        rd = p.abspath(r["run_dir"])
+        for fn, col in (("metrics.jsonl", "metrics_offset"), ("artifacts.jsonl", "artifacts_offset")):
+            fp = os.path.join(rd, fn)
+            if os.path.exists(fp) and os.path.getsize(fp) > (r[col] or 0):
+                return True
+    return False
+
+
 def ingest_root_files(p: Project) -> None:
-    """Ingest .research/{artifacts,syntheses,metrics,reviews}.jsonl beyond the last seen offset (idempotent)."""
+    """Ingest .research/{artifacts,syntheses,metrics,reviews}.jsonl beyond the last seen offset (idempotent). Takes the write
+    lock only when a file actually changed."""
+    if not _root_todo(p):
+        return
     with p.tx():
-        for fname in ("artifacts.jsonl", "syntheses.jsonl", "metrics.jsonl", "reviews.jsonl"):
+        for fname in _ROOT_FILES:
             path = p.path(fname)
             if not os.path.exists(path):
                 continue

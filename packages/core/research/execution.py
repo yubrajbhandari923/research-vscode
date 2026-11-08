@@ -24,15 +24,57 @@ def path(p, identity):
     return p.path('orchestration', 'executions', identity + '.json')
 
 
-def prepare(p, task, argv, env, cwd=None, headless=False, request=None, usage_parser=None):
+def prepare(p, task, argv, env, cwd=None, headless=False, request=None, usage_parser=None, watchdog=None):
     """`request` = the dispatch arguments, so a retry (or a continuation with another provider) can rebuild the dispatch."""
     identity = uuid.uuid4().hex
     record = {'id': identity, 'task': task, 'state': 'prepared', 'prepared_at': now_iso(),
               'argv': argv, 'env': env, 'cwd': cwd, 'mode': 'headless' if headless else 'interactive',
-              'request': request or {}, 'usage_parser': usage_parser}
+              'request': request or {}, 'usage_parser': usage_parser, 'watch': watchdog}
     with p.tx():
         _atomic_write(path(p, identity), json.dumps(record, sort_keys=True) + '\n')
     return identity, [sys.executable, os.path.abspath(__file__), p.root, identity]
+
+
+def _watch(child, out_path, wd):
+    """Wait for `child` like wait(), but for providers that can hang or go silent (design D.6). Polls the captured stdout:
+    - after the provider's final event (adapter.final_event) it gets `exit_grace_seconds`, then its process group is stopped and the
+      run counts as exit 0 (it finished; it just did not exit);
+    - no new output for `idle_timeout_seconds` stops it with exit 124;
+    - exit 0 with no final event is kept as completed with a `provider_warning` (verification still decides the task).
+    Returns (exit_code, extra record fields)."""
+    import time
+    from research import providers
+    from research.processes import stop_process
+    final_event = providers.ADAPTERS[wd['provider']].final_event
+    grace, idle = float(wd.get('exit_grace_seconds') or 30), float(wd.get('idle_timeout_seconds') or 0)
+    pos, buf, final_at, last = 0, b'', None, time.monotonic()
+    while True:
+        code = child.poll()   # before reading: after an exit, the read below sees everything the provider wrote
+        try:
+            with open(out_path, 'rb') as f:
+                f.seek(pos)
+                chunk = f.read()
+        except OSError:
+            chunk = b''
+        if chunk:
+            pos += len(chunk)
+            last = time.monotonic()
+            buf += chunk
+        *lines, buf = buf.split(b'\n')
+        if code is not None and buf.strip():
+            lines, buf = lines + [buf], b''
+        if final_at is None and any(final_event(l.decode('utf8', 'replace')) for l in lines):
+            final_at = time.monotonic()
+        if code is not None:
+            return code, ({} if final_at or code else {'provider_warning': 'no final event; usage may be partial'})
+        now = time.monotonic()
+        if final_at is not None and now - final_at >= grace:
+            stop_process(child)
+            return 0, {'watchdog': 'stopped after final event (provider did not exit)'}
+        if idle and final_at is None and now - last >= idle:
+            stop_process(child)
+            return 124, {'watchdog': f'no output for {int(idle)} s'}
+        time.sleep(0.2)
 
 
 def launch(root, identity):
@@ -80,7 +122,8 @@ def launch(root, identity):
             with Project(root) as p:
                 record.update(state='running', pid=child.pid)
                 _atomic_write(filename, json.dumps(record) + '\n')
-            code = child.wait()
+            wd = record.get('watch')
+            code, note = _watch(child, filename[:-5] + '.out', wd) if headless and wd else (child.wait(), {})
             if headless:
                 out.close(); err.close()
         except BaseException:
@@ -93,7 +136,7 @@ def launch(root, identity):
             with open(filename, encoding='utf8') as f:
                 cancelled = json.load(f).get('cancel_requested')
             state = 'cancelled' if cancelled else 'completed' if code == 0 else 'failed'
-            record.update(state=state, exit_code=code, ended_at=now_iso())
+            record.update(state=state, exit_code=code, ended_at=now_iso(), **note)
             if record.get('mode') == 'headless':
                 from research import usage as U
                 parse = U.PARSERS.get(record.get('usage_parser') or '')
@@ -110,6 +153,8 @@ def launch(root, identity):
             with p.tx():
                 _atomic_write(filename, json.dumps(record) + '\n')
                 p.event('task', task, 'execution_' + record['state'], identity + ': exit ' + str(code))
+                if note.get('watchdog'):
+                    p.event('task', task, 'execution_watchdog', identity + ': ' + note['watchdog'])
         return code
 
 

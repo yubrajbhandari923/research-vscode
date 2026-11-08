@@ -1,8 +1,9 @@
-"""`research setup agents`: idempotent, optional Claude Code orchestration setup. Plans first; --apply writes.
+"""`research agent setup PROVIDER`: idempotent orchestration setup for any provider in `providers.KNOWN`. Plans first; --apply writes.
 
-Automatic: first-party skills, managed `.claude/agents/research-*.md` (only files carrying our marker), the
-`orchestration` config block. Approval needed (`approve=[…]`): third-party skills (ponytail). Never installs MCP servers,
-plugins or hooks; never touches permissions. Never launches a model unless `probe=True`.
+Every provider: the AGENTS.md block, the Research MCP registration (the adapter's own writer), first-party skills and their links,
+the `orchestration` config block, an offline routing check. Claude additionally gets managed `.claude/agents/research-*.md` (only
+files carrying our marker). Approval needed (`approve=[…]`): third-party skills (ponytail). No provider hooks are installed (governance
+is the core's agent detection + PIN, design D.7); never touches permissions. Never launches a model unless `probe=True` (claude only).
 """
 from __future__ import annotations
 
@@ -22,15 +23,10 @@ FIRST_PARTY = ["engineering-loop", "parameter-tuning", "scientific-briefing", "s
 OPTIONAL_MCP = {"literature": "Crossref / OpenAlex / Semantic Scholar MCP (network; not installed automatically)"}
 
 
-def _claude() -> Dict[str, Any]:
-    exe = shutil.which("claude")
-    if not exe:
-        return {"available": False, "version": None}
-    try:
-        v = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20).stdout.strip()
-    except Exception:
-        v = None
-    return {"available": True, "version": v}
+def _cli(p: Project, provider: str) -> Dict[str, Any]:
+    from . import providers as PR
+    cmd = ((p.config.get("agents") or {}).get("profiles") or {}).get(provider, {}).get("command") or provider
+    return {"provider": provider, "command": cmd, "available": bool(shutil.which(cmd)), "version": PR.version(cmd)}
 
 
 def _probe(model: str) -> bool:
@@ -95,36 +91,42 @@ def plan_agent_files(p: Project) -> List[Dict[str, Any]]:
 
 
 def setup(p: Project, provider: str = "claude", preset: str = "scientific", apply: bool = False,
-          approve: List[str] = (), probe: bool = False, strategy: str = None) -> Dict[str, Any]:
+          approve: List[str] = (), probe: bool = False, strategy: str = None, model: str = None) -> Dict[str, Any]:
     prev = O.cfg(p).get("active_strategy")
     try:
         if strategy:   # plan against the strategy being requested; saved only on --apply (below)
             p.config.setdefault("orchestration", {})["active_strategy"] = strategy
-        return _setup(p, provider, preset, apply, approve, probe, strategy, prev)
+        return _setup(p, provider, preset, apply, approve, probe, strategy, prev, model)
     finally:
         if not (apply and strategy):
             p.config.setdefault("orchestration", {})["active_strategy"] = prev
 
 
-def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) -> Dict[str, Any]:
-    if provider != "claude" or preset != "scientific":
-        raise ResearchError("Only --provider claude --preset scientific is implemented",
-                            hint="Other providers keep using explicit `research dispatch --profile …`.")
-    cli = _claude()
+def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev, model=None) -> Dict[str, Any]:
+    from . import providers as PR
+    if provider not in PR.KNOWN:
+        raise ResearchError(f"Unknown provider {provider!r}", hint=f"One of: {', '.join(PR.KNOWN)}.")
+    if preset != "scientific":
+        raise ResearchError("Only --preset scientific is implemented")
+    if model and provider == "opencode" and "/" not in model:
+        raise ResearchError(f"opencode needs provider/model, e.g. anthropic/claude-sonnet-5-5 (got {model!r})")
+    cli = _cli(p, provider)
     if strategy:
         from . import strategy as S
         v = S.validate(p, strategy)
         if not v["ok"]:
             raise ResearchError(f"Strategy {strategy} is invalid: {v['errors'][0]}", hint="`research strategy validate`.")
-    files = plan_agent_files(p)
+    files = plan_agent_files(p) if provider == "claude" else []   # `.claude/agents` is Claude Code's format
     from .skills import list_skills
     have = {s["name"] for s in list_skills(p)}
-    r: Dict[str, Any] = {"applied": apply, "claude": cli, "agent_files": [{k: v for k, v in f.items() if k != "_text"} for f in files],
+    r: Dict[str, Any] = {"applied": apply, "provider": provider, "cli": cli, "claude": cli if provider == "claude" else None, "agent_files": [{k: v for k, v in f.items() if k != "_text"} for f in files],
                          "first_party_skills": {s: ("installed" if s in have else "will install") for s in FIRST_PARTY},
                          "config": "orchestration.enabled=true" if not O.cfg(p).get("enabled") else "already enabled",
                          "installed": [], "skipped": [], "unavailable": [], "recommended": _recommend(p)}
     if not cli["available"]:
-        r["unavailable"].append("claude CLI not on PATH (files are still prepared; routing cannot be verified)")
+        r["unavailable"].append(f"{provider} CLI not on PATH (files are still prepared; routing cannot be verified)")
+    if provider != "claude" and (cli["version"] or "").strip() == "":
+        r["unavailable"].append(f"`{cli['command']} --version` printed nothing")
     for nm in ("ponytail", "ponytail-review"):
         if nm in have:
             r["skipped"].append(f"{nm}: already installed")
@@ -132,11 +134,10 @@ def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) 
             r["installed"].append(f"{nm}: pending import from {PONYTAIL}")
         else:
             r["skipped"].append(f"{nm}: third-party, not approved (offer: --approve ponytail imports {PONYTAIL})")
-    mcp = os.path.join(p.root, ".mcp.json")
-    try:
-        r["mcp_has_research"] = "research" in (json.load(open(mcp)).get("mcpServers") or {}) if os.path.exists(mcp) else False
-    except ValueError:
-        r["mcp_has_research"] = None
+    r["mcp_has_research"] = PR.mcp_registered(provider, p.root)
+    from . import agentsmd
+    r["instructions"] = {"file": PR.ADAPTERS[provider].caps.get("instructions"), "agents_md": "current" if agentsmd.state(p).get("up_to_date") else "will write"}
+    r["governance"] = "no provider hooks: agent attribution (RESEARCH_AGENT) in the core and the approval PIN gate protected actions"
     for f in files:
         if f["state"] == "skip-user-owned":
             r["skipped"].append(f"{f['path']}: user-owned, left untouched")
@@ -150,11 +151,13 @@ def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) 
             from . import agents
             m = model_of(t)
             d = agents.dispatch(p, "analyst", None, "routing check", None, m, None) if apply else None
-            disp[t] = bool(d and m in d["provider_argv"]) if d else "dry-run"
+            disp[t] = bool(d and (not m or m in d["provider_argv"])) if d else "dry-run"
         except ResearchError as e:
             disp[t] = f"failed: {e}"
     r["routing_verified"] = disp
-    if probe and cli["available"]:
+    if probe and provider != "claude":
+        r["unavailable"].append("--probe is only implemented for claude")
+    if probe and cli["available"] and provider == "claude":
         r["live_probe"] = {t: _probe(model_of(t)) for t in names}
     if not apply:
         return r
@@ -177,10 +180,23 @@ def _setup(p: Project, provider, preset, apply, approve, probe, strategy, prev) 
     if "ponytail" in approve and "ponytail" not in have:
         add_skills(p, PONYTAIL, only=["ponytail", "ponytail-review"], link=True)
     link_skills(p)
+    if not agentsmd.state(p).get("up_to_date"):
+        agentsmd.apply(p)
+        r["installed"].append("AGENTS.md (managed block)")
+    try:
+        done = PR.mcp_install(provider, p.root)
+        r["installed"].append(f"MCP server registered: {done['where']}" + (" (add this snippet by hand: " + done["manual"] + ")" if done.get("manual") else ""))
+    except ResearchError as e:
+        r["unavailable"].append(f"MCP not registered: {e}")
+    if model:
+        p.save_config({f"agents.profiles.{provider}.model": model})
+        r["installed"].append(f"agents.profiles.{provider}.model = {model}")
     if not O.cfg(p).get("enabled"):
         p.config.setdefault("orchestration", {})["enabled"] = True
         p.save_config()
     if strategy and prev != strategy:  # only on request; never changes an existing choice silently
         p.save_config({"orchestration.active_strategy": strategy})
+    r["next_steps"] = [f"`research agent providers mcp {provider}` verifies the MCP server from a worktree",
+                       "`research doctor` should be green; `research strategy show` lists the model each level resolves to"]
     p.event("project", None, "agents_setup", f"agent setup applied ({provider}/{preset})")
     return r

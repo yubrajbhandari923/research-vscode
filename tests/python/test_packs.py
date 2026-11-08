@@ -84,7 +84,8 @@ def test_packs_reference_real_skills_and_cover_the_requested_fields():
 
 
 def test_first_party_skills_use_real_commands_and_do_not_duplicate_each_other():
-    cli = open(os.path.join(os.path.dirname(__file__), "..", "..", "packages", "cli", "research_cli", "main.py"), encoding="utf-8").read()
+    root = os.path.join(os.path.dirname(__file__), "..", "..", "packages", "cli", "research_cli")
+    cli = "".join(open(os.path.join(dp, f), encoding="utf-8").read() for dp, _, fs in os.walk(root) for f in fs if f.endswith(".py"))
     for d in (TEMPLATES / "skills").iterdir():
         t = (d / "SKILL.md").read_text()
         for m in re.finditer(r"`research ([a-z-]+)(?: ([a-z-]+))?", t):

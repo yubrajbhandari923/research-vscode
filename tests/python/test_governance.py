@@ -7,6 +7,12 @@ import pytest
 from research import approval as AP, governance as G, plans as P, services, supervisor as SV
 from research.store import Project
 from research.util import PolicyBlocked, ResearchError
+import sys
+from conftest import as_agent, as_human
+from research import context as C
+from research import runs as R
+from research import services as S
+from research import verification as V
 
 
 @pytest.fixture
@@ -134,3 +140,100 @@ def test_policy_settings_and_promotion_need_the_pin(proj):
     with pytest.raises(PolicyBlocked):
         registry.apply(proj, {"governance.tasks.max_auto_per_experiment": 9})
     assert registry.apply(proj, {"governance.tasks.max_auto_per_experiment": 9}, pin="1234")["changed"]
+
+
+# ---- WP2: fail-closed approval, agent mirror imports, Telegram poll ----------------------------------------------------
+def test_no_pin_no_tty_human_is_refused_and_opt_out_is_explicit(proj):
+    proj.author = {"author_type": "human"}
+    assert not AP.is_set()
+    with pytest.raises(PolicyBlocked, match="No approval PIN"):
+        AP.confirm(proj, "x", "why")
+    proj.config["governance"] = {"approval": {"require_pin": False}}
+    assert AP.confirm(proj, "x", "why")["approved"]
+
+
+def test_agent_written_experiment_mirror_becomes_a_proposal(proj, repo, monkeypatch):
+    monkeypatch.setenv("CLAUDECODE", "1")
+    (repo / ".research" / "experiments" / "sneaky.md").write_text(
+        "---\ntitle: Sneaky\nstatus: running\n---\n\n## Hypothesis\n\nh\n\n## Motivation\n\nr\n\n## Method\n\nm\n\n## Expected outcome\n\no\n")
+    proj.sync()
+    rows = proj.q("SELECT id, status FROM experiments")
+    assert [r["status"] for r in rows] == ["proposed"]
+    assert proj.q1("SELECT id FROM events WHERE action='import_rejected'")
+    assert [pr["source"] for pr in SV.list_proposals(proj)] == ["mirror"]
+
+
+def test_agent_cannot_set_a_finding_supported_by_editing_its_file(proj, repo, monkeypatch):
+    f = services.create_finding(proj, "F", "stmt")
+    path = repo / ".research" / "findings" / f"{f['id']}.md"
+    prev = proj.get("finding", f["id"])["status"]
+    monkeypatch.setenv("CLAUDECODE", "1")
+    path.write_text(path.read_text().replace(f"status: {prev}", "status: supported"))
+    os.utime(path, (1, 1))
+    proj.sync()
+    assert proj.get("finding", f["id"])["status"] == prev
+    assert proj.q1("SELECT id FROM events WHERE action='import_rejected' AND entity_id=?", (f["id"],))
+
+
+# the Telegram offset/0600 test moved to test_chat_telegram.py (offset saved before handling, per-gateway cursors, 0600 files)
+
+def test_grants_do_not_leak_across_threads():
+    # a human grant held by one thread (e.g. the investigator's worker) must never authorise another thread of the same process
+    import threading
+    from research import governance as G, supervisor as SV
+    seen = {}
+    with G.approved("t"), SV.human_grant("t"):
+        assert G._GRANTS.get() and SV._HUMAN_GRANTS.get()
+
+        def other():
+            seen["governance"] = bool(G._GRANTS.get())
+            seen["supervisor"] = bool(SV._HUMAN_GRANTS.get())
+        t = threading.Thread(target=other)
+        t.start()
+        t.join()
+    assert seen == {"governance": False, "supervisor": False}
+    assert not G._GRANTS.get() and not SV._HUMAN_GRANTS.get()
+
+
+def _exp_with_runs(p, repo, n=2):
+    q = S.create_question(p, "Does alpha matter?")
+    e = S.create_experiment(p, "alpha sweep", question=q["id"], parameters={"alpha": [0.1, 0.5]}, planned_runs=6)
+    (repo / "sim.py").write_text(
+        "import research,sys\na=float(sys.argv[1])\nresearch.log_metric('err', abs(a-0.5))\n"
+        "open(f'out_{a}.png','wb').write(b'\\x89PNG\\r\\n')\nresearch.register_artifact(f'out_{a}.png', description='plot')\n")
+    runs = [R.exec_run(p, e["id"], f"{sys.executable} sim.py {a}", parameters={"alpha": a}, tee=False)
+            for a in (0.1, 0.5)[:n]]
+    return q, e, runs
+
+
+def test_agents_cannot_self_promote_findings(proj, repo, monkeypatch):
+    q, e, runs = _exp_with_runs(proj, repo)
+    as_agent(proj, "claude", "implementer", monkeypatch)
+    with pytest.raises(PolicyBlocked):
+        S.create_finding(proj, "alpha 0.5 best", supports=[runs[1]["id"]], status="supported")
+    f = S.create_finding(proj, "alpha 0.5 best", supports=[runs[1]["id"]])
+    for attempt in (lambda: S.set_status(proj, f["id"], "supported"),
+                    lambda: S.update_finding(proj, f["id"], status="supported"),
+                    lambda: V.review_finding(proj, f["id"], "supported")):
+        with pytest.raises(PolicyBlocked):
+            attempt()
+    assert proj.get("finding", f["id"])["status"] == "preliminary"
+    assert any(a["kind"] == "awaiting_review" for a in V.attention_items(proj))
+
+    as_agent(proj, "claude", "verifier", monkeypatch)  # same CLI, different role = independent
+    r = V.review_finding(proj, f["id"], "needs_work", "single seed")
+    assert r["finding"]["status"] == "preliminary" and r["review"]["author_name"] == "claude/verifier"
+    assert any(a["kind"] == "reviewer_disagrees" for a in C.research_home(proj)["attention_items"])
+    r = V.review_finding(proj, f["id"], "supported", "plots check out", confidence="medium")
+    assert r["finding"]["status"] == "supported" and r["finding"]["confidence"] == "medium"
+    assert not any(a["kind"] == "reviewer_disagrees" for a in V.attention_items(proj))
+
+    bare = S.create_finding(proj, "no evidence")
+    as_agent(proj, "codex", None, monkeypatch)
+    with pytest.raises(PolicyBlocked, match="no supporting evidence"):
+        V.review_finding(proj, bare["id"], "supported")
+    contra = V.review_finding(proj, bare["id"], "contradicted", "plot shows the opposite")
+    assert contra["finding"]["status"] == "contradicted" and "plot shows the opposite" in contra["finding"]["contradicting_evidence"]
+
+    as_human(proj)  # humans may set supported directly
+    assert S.set_status(proj, bare["id"], "supported")["status"] == "supported"

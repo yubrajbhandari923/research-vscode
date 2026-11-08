@@ -8,7 +8,7 @@ from research import services as S
 from research import verification as V
 from research import runs as R
 from research.util import NotFound, ResearchError
-from test_research_os import as_agent, as_human
+from conftest import as_agent, as_human
 import guide_story as GS
 
 

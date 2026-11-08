@@ -17,9 +17,9 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from . import gitinfo, mirrors, schema, yamlio, durability
 from .util import deep_merge as _deep_merge
-from .strategy import BUILTIN as _BUILTIN_STRATEGIES
+from . import registry as _registry
 from .schema import ENTITIES, format_id, parse_id
-from .util import IncompatibleProject, NotFound, NotInitialized, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
+from .util import IncompatibleProject, NotFound, NotInitialized, PolicyBlocked, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
 
 PROJECT_FORMAT = 2   # the on-disk project layout; independent of schema.SCHEMA_VERSION (the SQLite index layout)
 RESEARCH_DIR = ".research"
@@ -28,127 +28,7 @@ SUBDIRS = ["questions", "experiments", "findings", "decisions", "checkpoints", "
            "skills", "context", "prompts", "templates", "cache"]
 TEMPLATES = Path(__file__).parent / "templates"
 
-DEFAULT_CONFIG: Dict[str, Any] = {
-    "project": {
-        "name": "", "description": "", "goal": "", "status": "active",
-        "created_at": None, "git_repo": None, "default_backend": "local",
-    },
-    # Where things live for projects made by `Initialize Project`; relative paths are under the container folder (the parent of
-    # the main checkout). null = legacy placement (<name>-ledger / <name>-experiments beside the checkout).
-    "layout": {"main_dir": None, "ledger_dir": None, "experiments_dir": None, "workspace_file": None},
-    "agent_policy": {
-        "max_runs_without_synthesis": 5,
-        "max_failed_runs_without_review": 3,
-        "require_experiment_registration": True,
-        "require_synthesis_before_new_experiment": True,
-        "enforce_for_humans": False,
-    },
-    "backends": {
-        "slurm": {
-            "partition": None, "account": None, "time": "01:00:00", "cpus": None, "mem": None,
-            "gpus": None, "extra_args": [],
-            "setup": [],
-        },
-    },
-    "artifacts": {"hash_max_bytes": 64 * 1024 * 1024},
-    # Remote HPC execution. Opt-in: with no clusters configured, every `research hpc` command says so and
-    # nothing else changes. Never put passwords, keys or tokens here — OpenSSH (~/.ssh/config) owns auth.
-    "hpc": {
-        "default_cluster": None,
-        "clusters": {},                      # name -> see hpc.CLUSTER_DEFAULTS
-        "bundle": {
-            # Dirty/untracked sources are packaged (a commit alone is not a snapshot), minus these.
-            "exclude": [".git", ".research", "__pycache__", "*.pyc", ".venv", "venv", "node_modules",
-                        ".mypy_cache", ".pytest_cache", ".DS_Store", "*.egg-info", ".ipynb_checkpoints"],
-            "max_file_bytes": 8 * 1024 * 1024,     # a bigger source file must be named in `include` explicitly
-            "max_total_bytes": 256 * 1024 * 1024,
-            "include": [],                          # extra paths to package (datasets stay on the cluster)
-        },
-        "collect": {
-            "max_artifact_bytes": 32 * 1024 * 1024,  # bigger outputs stay remote and are referenced
-        },
-    },
-    "resume": {"stale_checkpoint_days": 14},
-    # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
-    "agents": {
-        "default_profile": "claude",
-        # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
-        "handoff": {"enabled": False, "fallback_order": ["claude", "codex", "agy"], "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
-        "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
-        "profiles": {
-            "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
-            "codex": {"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
-            "agy": {"provider": "agy", "command": "agy", "args": [], "model": None, "effort": None},
-            "gemini": {"command": "gemini", "args": [], "model": None, "model_flag": "-m", "prompt_flag": "-i"},
-            # Model profiles the built-in strategies point at (levels fast/balanced/deep). Swap a model here, not in routing.
-            "claude-fast": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-haiku-5-5", "model_flag": "--model", "prompt_flag": None},
-            "claude-balanced": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-sonnet-5-5", "model_flag": "--model", "prompt_flag": None},
-            "claude-deep": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-opus-5-5", "model_flag": "--model", "prompt_flag": None},
-        },
-    },
-    "verification": {
-        "require_review_for_supported": True,   # agents can't mark findings supported; a review must
-        "independent_reviewer": True,           # the reviewer must not be the finding's author
-        "require_evidence_for_supported": True,
-        "checks_gate_task_completion": True,    # `task done` runs the task's checks; failures block agents
-        "check_timeout_seconds": 600,
-    },
-    "coordination": {"stale_task_hours": 4},
-    "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
-    "skills": {"link": ["claude", "agents"], "packs": ["core-research"], "disabled": []},    # expose .research/skills to .claude/skills and .agents/skills
-    # The Scientist Guide is a Quarto book on the main branch (docs/scientist-guide). `highlights` decides which findings count as
-    # important results; `draft.*` bounds what an agent may write into it (see guide.py).
-    "guide": {"enabled": True, "dir": "docs/scientist-guide", "profile": None, "model": "claude-opus-5-5",
-              "auto_log": True, "highlights": "supported",
-              "draft": {"trigger": "result", "max_words": 150, "max_sections": 3, "max_figures": 1},
-              "publish": {"workflow": True}},
-    # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
-    "orchestration": {
-        "enabled": False,
-        "tiers": {
-            "opus": {"model": "claude-opus-5-5", "fallback": ["opus"]},
-            "sonnet": {"model": "claude-sonnet-5-5", "fallback": ["sonnet"]},
-            "haiku": {"model": "claude-haiku-5-5", "fallback": ["haiku"]},
-        },
-        "available": [],
-        "active_strategy": None,    # null → legacy tier routing above; else a name from `strategies` (research strategy use)
-        "strategies": _BUILTIN_STRATEGIES,
-        "limits": {"haiku_attempts": 3, "sonnet_attempts": 2, "escalations": 2, "max_turns": None,
-                   "tuning_evaluations": 50},
-    },
-    # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
-    "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
-                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300, "require_seed": False},   # hooks: see hooks.py (human approval required)
-    "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
-    # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
-    # profile other than `native` applies, and a restrictive profile never silently falls back to native.
-    # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
-    "environment": {"python": None, "packages": []},
-    "supervisor": {"poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
-                   "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True,
-                   "auto_apply_operational": True, "max_auto_tasks": 5, "require_approval_for_scientific_changes": True,
-                   "session_resume": "auto", "context_max_chars": 24000, "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"], "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1},
-    "governance": copy.deepcopy(__import__("research.governance", fromlist=["x"]).DEFAULTS),   # who may create experiments/tasks; PIN approvals (governance.py)
-    "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
-    # Opt-in unattended promotion (autopromote.py), supervisor interventions (intervene.py) and halt notifications (notify.py). Secrets (Telegram) are NOT here.
-    "auto_promotion": {"numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True},
-    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900},
-    "intervention": {"require_approval": False},
-    "notifications": {"halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False}},
-    "sandbox": {
-        "enabled": False,                         # true → `default_profile` applies to jobs that name no profile
-        "default_profile": "native",
-        "approved_roots": [],                     # when set, datasets and extra mounts must live under one of these
-        "agent": {"mode": "none"},                # none | advisory (written boundaries in briefs; NOT enforced)
-        "assign": {"experiments": {}, "tasks": {}},
-        "profiles": {
-            "native": {"runtime": "native"},
-            "restricted": {"runtime": "auto", "network": {"mode": "disabled"}},
-            "gpu-research": {"runtime": "auto", "gpu": True, "network": {"mode": "disabled"}},
-            "custom": {"runtime": "auto"},
-        },
-    },
-}
+DEFAULT_CONFIG: Dict[str, Any] = _registry.defaults()   # every default lives in registry.py
 
 GITIGNORE = """# research: the SQLite index is rebuilt automatically from the text files
 research.db
@@ -187,7 +67,7 @@ def check_format(rdir: str) -> None:
         raise IncompatibleProject(
             f"{os.path.dirname(rdir)} is a Research OS " + ("v1" if fmt is None else f"format-{fmt}") + f" project; this is Research OS 2 (project format {PROJECT_FORMAT}).",
             hint="Research OS 2 does not read or upgrade v1 projects. Keep the old records: rename `.research` to `.research-v1-archive` "
-                 "(it is only moved by you, never deleted), then run `research init` for a fresh v2 project. See docs/GUIDE_V2_START_FRESH.md.")
+                 "(it is only moved by you, never deleted), then run `research init` for a fresh v2 project. See README.md and QUICKSTART.md.")
 
 
 def write_format(rdir: str) -> None:
@@ -280,22 +160,30 @@ class Project:
         self._suppress_export = False
         self._suppress_events = False
         self._raw_config: Optional[Dict[str, Any]] = None   # this project's own file, pre-merge
-        with durability.lock(self.path(".write.lock")):
-            self._open(sync)
+        self.dirty = False   # set when a transaction commits (so the outermost caller knows to refresh current.md)
+        self._open(sync)
 
     def _open(self, sync):
-        recovery_needed = durability.recover(self.rdir)
         self.config = self.load_config()
         for d in SUBDIRS:
             os.makedirs(os.path.join(self.rdir, d), exist_ok=True)
         self.db_path = os.path.join(self.rdir, "research.db")
         fresh = not os.path.exists(self.db_path)
+        journal = any(os.path.exists(self.path(f)) for f in (".transaction.json", ".recovery-needed"))
         self.conn = schema.connect(self.db_path)
-        schema.migrate(self.conn)
-        if fresh or self.meta("built_at") is None or recovery_needed:
-            self.rebuild_index(backup=False)
-        elif sync:
-            self.sync()
+        # A read-only open (nothing to recover, migrate, rebuild or ingest) never takes the write lock, so concurrent readers
+        # (status, the extension, the TUI) neither queue behind a writer nor each other.
+        if not (fresh or journal) and schema.current_version(self.conn) == schema.SCHEMA_VERSION and self.meta("built_at") is not None \
+                and not (sync and self._sync_pending()):
+            return
+        with durability.lock(self.path(".write.lock")):
+            recovery_needed = durability.recover(self.rdir)
+            self.config = self.load_config()
+            schema.migrate(self.conn)
+            if fresh or self.meta("built_at") is None or recovery_needed:
+                self.rebuild_index(backup=False)
+            elif sync:
+                self.sync()
 
     # ------------------------------------------------------------------ lifecycle
     @classmethod
@@ -521,6 +409,7 @@ class Project:
                 yield
                 self.conn.execute("COMMIT")
                 committed = True
+                self.dirty = True
                 journal.commit()
                 resolved = True
             except BaseException:
@@ -824,7 +713,7 @@ class Project:
                 changes = {k: v for k, v in values.items() if cur.get(k) != v and k not in ("created_at",)}
                 if etype == "task" and changes.get("status") == "done" and cur.get("status") != "done":
                     try:    # a hand-edited file must not complete a task around its gates or around the supervisor
-                        from . import supervisor as _sv, plans as _pl, orchestrate as _or, verification as _vf
+                        from . import supervisor as _sv, orchestrate as _or, verification as _vf
                         _sv.guard_completion(self, id_)
                         _or.assert_frozen_intact(self, id_)
                         _vf.gate_task_completion(self, id_)
@@ -832,6 +721,12 @@ class Project:
                         changes.pop("status")
                         changes.pop("completed_at", None)
                         self.event("task", id_, "import_rejected", f"status: done from {self.rel(path)} refused: {str(ex)[:200]}",
+                                   {"author_type": "system"})
+                if etype == "finding" and changes.get("status") == "supported" and cur.get("status") != "supported":
+                    from . import governance as _g
+                    if _g.is_agent(self) and not _g._GRANTS.get():    # supported needs a human review
+                        changes.pop("status")
+                        self.event("finding", id_, "import_rejected", f"status: supported from {self.rel(path)} refused: agents cannot mark findings supported",
                                    {"author_type": "system"})
                 old_links = cur.get("links", {})
                 lchanged = {k: v for k, v in links.items() if list(old_links.get(k, [])) != v}
@@ -848,55 +743,92 @@ class Project:
                 if etype == "finding":
                     values.setdefault("kind", "result")
                 auth = {k: values.get(k) or hand.get(k) for k in ("author_type", "author_name", "author_model")}
+                refused = None
+                if etype == "experiment":
+                    from . import governance as _g
+                    try:
+                        _g.check_experiment_create(self)
+                    except PolicyBlocked as ex:
+                        refused = ex
+                        values["status"] = "proposed"
                 self.insert_entity(etype, values, links, id_=id_, author=auth,
                                    summary=f"{id_} imported from {self.rel(path)}")
+                if refused:
+                    from . import supervisor as _sv
+                    self.event("experiment", id_, "import_rejected", f"new experiment {self.rel(path)} from an agent imported as proposed: {str(refused)[:150]}",
+                               {"author_type": "system"})
+                    try:
+                        _sv.propose_experiment(self, {"title": values.get("title"), "hypothesis": values.get("hypothesis"), "rationale": values.get("motivation"),
+                                                  "method": values.get("method"), "expected_outputs": values.get("expected_outcome"),
+                                                  "related": f"imported from {self.rel(path)}"}, source="mirror")
+                    except ResearchError:
+                        pass    # incomplete fields: the proposed experiment stays visible to the researcher
         finally:
             self._suppress_export = prev_suppress
         self._record_mirror(etype, id_, path, data)
         return id_
 
     # ------------------------------------------------------------------ sync
-    def sync(self, reconcile_runs: bool = True) -> Dict[str, int]:
-        """Pick up hand edits / new files, ingest job-written files, reconcile run status."""
-        stats = {"imported": 0, "restored": 0}
+    def _scan_mirrors(self):
+        """Read-only. (files whose mirror record is missing or stale, records whose mirror file is gone). One `mirrors` load."""
+        recs = {r["path"]: r for r in self.q("SELECT path, mtime, size, hash FROM mirrors")}
+        changed: List[Any] = []
+        missing: List[Any] = []
         for etype, spec in ENTITIES.items():
             d = self.path(spec["dir"])
-            seen = set()
             for fn in sorted(os.listdir(d)) if os.path.isdir(d) else []:
                 if not fn.endswith(".md") or fn.startswith("."):
                     continue
                 path = os.path.join(d, fn)
                 rel = self.rel(path)
-                seen.add(rel)
                 st = os.stat(path)
-                rec = self.q1("SELECT * FROM mirrors WHERE path=?", (rel,))
-                if rec and rec["mtime"] == st.st_mtime and rec["size"] == st.st_size:
-                    continue
-                with open(path, "rb") as f:
-                    h = sha256_bytes(f.read())
-                if rec and rec["hash"] == h:
-                    self.conn.execute("UPDATE mirrors SET mtime=?, size=? WHERE path=?", (st.st_mtime, st.st_size, rel))
-                    continue
-                if self.import_file(path, etype):
-                    stats["imported"] += 1
-                    # refresh generated tail/normalized form
-                    eid = self.q1("SELECT entity_id FROM mirrors WHERE path=?", (rel,))
-                    if eid and eid["entity_id"] != "?":
-                        self.export(etype, eid["entity_id"])
-            # mirror deleted? recreate it (never silently lose records)
-            for row in self.q(f"SELECT id FROM {spec['table']}"):
-                mp = self.mirror_path(etype, row["id"])
-                if not os.path.exists(mp):
-                    self.conn.execute("DELETE FROM mirrors WHERE entity_id=? AND entity_type=?", (row["id"], etype))
-                    self.export(etype, row["id"])
-                    self.event(etype, row["id"], "restored", f"{row['id']} mirror file was missing; regenerated",
-                               {"author_type": "system", "author_name": None})
-                    stats["restored"] += 1
+                rec = recs.get(rel)
+                if not (rec and rec["mtime"] == st.st_mtime and rec["size"] == st.st_size):
+                    changed.append((etype, path, rel, rec, st))
+            missing += [(etype, row["id"]) for row in self.q(f"SELECT id FROM {spec['table']}") if not os.path.exists(self.mirror_path(etype, row["id"]))]
+        return changed, missing
+
+    def _sync_pending(self) -> bool:
+        """Would `sync()` write anything? Cheap and read-only."""
+        from . import runs as _runs
+        changed, missing = self._scan_mirrors()
+        return bool(changed or missing) or _runs.pending(self)
+
+    def sync(self, reconcile_runs: bool = True) -> Dict[str, int]:
+        """Pick up hand edits / new files, ingest job-written files, reconcile run status."""
+        stats = {"imported": 0, "restored": 0}
+        changed, missing = self._scan_mirrors()
+        for etype, path, rel, rec, st in changed:
+            with open(path, "rb") as f:
+                h = sha256_bytes(f.read())
+            if rec and rec["hash"] == h:
+                self.conn.execute("UPDATE mirrors SET mtime=?, size=? WHERE path=?", (st.st_mtime, st.st_size, rel))
+                continue
+            if self.import_file(path, etype):
+                stats["imported"] += 1
+                # refresh generated tail/normalized form
+                eid = self.q1("SELECT entity_id FROM mirrors WHERE path=?", (rel,))
+                if eid and eid["entity_id"] != "?":
+                    self.export(etype, eid["entity_id"])
+        # mirror deleted? recreate it (never silently lose records)
+        for etype, id_ in missing:
+            self.conn.execute("DELETE FROM mirrors WHERE entity_id=? AND entity_type=?", (id_, etype))
+            self.export(etype, id_)
+            self.event(etype, id_, "restored", f"{id_} mirror file was missing; regenerated",
+                       {"author_type": "system", "author_name": None})
+            stats["restored"] += 1
         from . import runs as _runs
         _runs.ingest_root_files(self)
         if reconcile_runs:
             _runs.sync_runs(self)
         return stats
+
+    def refresh_context(self) -> str:
+        """Regenerate context/current.md (and the policy summary) and clear `dirty`. The outermost caller does this once."""
+        from . import context
+        path = context.write_current_md(self)
+        self.dirty = False
+        return path
 
     # ------------------------------------------------------------------ rebuild
     def rebuild_index(self, backup: bool = True) -> Dict[str, int]:

@@ -1,3 +1,4 @@
+import * as path from 'path';
 export function esc(s: any): string {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -54,4 +55,34 @@ export function nonce(): string {
   const c = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   for (let i = 0; i < 32; i++) t += c.charAt(Math.floor(Math.random() * c.length));
   return t;
+}
+
+/** Same rule as research.selfupdate.core_satisfies: same major, core minor >= required minor. */
+export function coreCompat(core: string, required: string): 'ok' | 'older' | 'newer' | 'invalid' {
+  const p = (v: string) => (String(v).match(/^(\d+)\.(\d+)/) || []).slice(1).map(Number);
+  const [cM, cm] = p(core), [rM, rm] = p(required);
+  if (cM === undefined || rM === undefined) return 'invalid';
+  if (cM !== rM) return cM > rM ? 'newer' : 'older';
+  return cm >= rm ? 'ok' : 'older';
+}
+
+/** Walk up from `start` looking for `.research/config.yaml`; returns the directory or undefined. */
+export function findProjectRoot(start: string, exists: (p: string) => boolean): string | undefined {
+  let d = path.resolve(start);
+  for (;;) {
+    if (exists(path.join(d, '.research', 'config.yaml'))) return d;
+    const up = path.dirname(d);
+    if (up === d) return undefined;
+    d = up;
+  }
+}
+
+export function sh(s: string): string {
+  if (/^[\w@%+=:,./-]+$/.test(s)) return s;
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/** `research self-update` exists from core 3.0 on; older CLIs must be reinstalled from the release wheel. */
+export function canSelfUpdate(found?: string): boolean {
+  return parseInt((found || '0').split('.')[0], 10) >= 3;
 }

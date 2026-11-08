@@ -10,23 +10,19 @@ plans.create_task, which the CLI, MCP, RPC, plan YAML and supervisor all call, s
 from __future__ import annotations
 
 import contextlib
+import contextvars
 from typing import Any, Dict, Iterator, Optional
 
-from .util import PolicyBlocked, ResearchError, deep_merge
+from . import registry
+from .util import PolicyBlocked, ResearchError
 
-DEFAULTS: Dict[str, Any] = {
-    "experiments": {"agent_creation": "propose_only"},
-    "tasks": {"agent_creation": "bounded_auto", "allowed_auto_types": ["bugfix", "diagnostic", "verification"], "max_auto_per_experiment": 3},
-    "scientific_changes": {"require_human_approval": True},
-    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False},
-    "experiment_overrides": {},
-}
 _STRICT = {"bounded_auto": 0, "propose_only": 1, "human_only": 2}
-_GRANTS: list = []   # in-process: set only while a human-approved proposal is being applied
+# Per-thread (context) so a grant held by one thread never authorises another thread of the same process.
+_GRANTS: "contextvars.ContextVar[tuple]" = contextvars.ContextVar("research_governance_grants", default=())
 
 
 def cfg(p) -> Dict[str, Any]:
-    c = deep_merge(DEFAULTS, p.config.get("governance") or {})
+    c = registry.section(p, "governance")
     for sect, vals in (("experiments", ("human_only", "propose_only")), ("tasks", tuple(_STRICT))):
         v = c[sect]["agent_creation"]
         if v not in vals:
@@ -36,11 +32,11 @@ def cfg(p) -> Dict[str, Any]:
 
 @contextlib.contextmanager
 def approved(reason: str) -> Iterator[None]:
-    _GRANTS.append(reason)
+    tok = _GRANTS.set(_GRANTS.get() + (reason,))
     try:
         yield
     finally:
-        _GRANTS.pop()
+        _GRANTS.reset(tok)
 
 
 def is_agent(p) -> bool:
@@ -57,7 +53,7 @@ def task_policy(p, exp_id: Optional[str] = None) -> str:
 
 
 def check_experiment_create(p) -> None:
-    if _GRANTS or not is_agent(p):
+    if _GRANTS.get() or not is_agent(p):
         return
     pol = cfg(p)["experiments"]["agent_creation"]
     raise PolicyBlocked(f"Agents may not create experiments (policy: {pol})",
@@ -65,7 +61,7 @@ def check_experiment_create(p) -> None:
 
 
 def check_task_create(p, task_type: Optional[str], exp_id: Optional[str]) -> None:
-    if _GRANTS or not is_agent(p):
+    if _GRANTS.get() or not is_agent(p):
         return
     pol = task_policy(p, exp_id)
     c = cfg(p)["tasks"]

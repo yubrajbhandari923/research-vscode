@@ -3,13 +3,14 @@
 A *profile* (agents.profiles) is an executable + model. A *strategy* (orchestration.strategies.<name>) refers to
 profiles only through logical levels (fast / balanced / deep — names are the strategy's own), so a future model
 replaces a profile, not the routing. A *harness* (see harness.py) is how a project prepares and verifies work; it is
-independent of the strategy. Nothing here launches a model, classifies with an LLM, or knows a vendor name.
+independent of the strategy. Nothing here launches a model, classifies with an LLM, or knows a vendor name: the levels map to
+`<provider>-fast|balanced|deep` profiles, generated from each provider's level pack (providers/), and a project may mix providers.
 
 config.yaml:
     orchestration:
-      active_strategy: sonnet_first        # null/absent → legacy tier routing, byte-for-byte as before
+      active_strategy: balanced_first      # null/absent → legacy tier routing, byte-for-byte as before
       strategies:
-        mine: {extends: sonnet_first, attempts: {fast: 2}}     # dicts merge key by key; lists/scalars replace
+        mine: {extends: balanced_first, attempts: {fast: 2}}   # dicts merge key by key; lists/scalars replace
 
 Layers (existing config machinery): built-in default < machine file < project file; a name defined in several layers
 is merged, the highest layer winning per key. A one-dispatch override (`--strategy`, `--level`, `--profile`,
@@ -17,11 +18,13 @@ is merged, the highest layer winning per key. A one-dispatch override (`--strate
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
 from typing import Any, Dict, List, Optional
 
+from .providers import LEVELS, levels_for
 from .util import ResearchError, as_list, deep_merge as _merge
 
 CLASSES = ["planning", "scientific", "verification", "checked", "unchecked", "mechanical"]
@@ -29,7 +32,8 @@ _ROLE_FOR_CLASS = {"planning": "planner", "scientific": "analyst", "verification
 _SCIENTIFIC_TYPES = {"synthesis", "research"}
 _MECHANICAL_TYPES = {"mechanical", "chore"}
 HUMAN = "human"
-_LEVELS = {"fast": "claude-fast", "balanced": "claude-balanced", "deep": "claude-deep"}
+DEFAULT_PROVIDER = "claude"                 # the provider whose level pack the built-in strategies point at until init writes another
+_LEVELS = levels_for(DEFAULT_PROVIDER)
 
 
 def _s(desc: str, route: Dict[str, str], attempts: Dict[str, int], escalate: Dict[str, str], sci: str) -> Dict[str, Any]:
@@ -41,20 +45,25 @@ def _s(desc: str, route: Dict[str, str], attempts: Dict[str, int], escalate: Dic
 
 # Built-ins are plain config defaults (merged into DEFAULT_CONFIG), so every one can be overridden per key.
 BUILTIN: Dict[str, Dict[str, Any]] = {
-    "sonnet_first": _s("Balanced model coordinates; fast model implements checkable work; deep model only for scientific "
+    "balanced_first": _s("Balanced model coordinates; fast model implements checkable work; deep model only for scientific "
                        "synthesis. Preferred for new projects.", {}, {"fast": 3, "balanced": 2},
                        {"fast": "balanced", "balanced": HUMAN, "deep": HUMAN}, "deep"),
-    "opus_first": _s("Deep model plans and interprets; balanced translates to contracts and tests; fast implements.",
+    "deep_first": _s("Deep model plans and interprets; balanced translates to contracts and tests; fast implements.",
                      {"planning": "deep"}, {"fast": 3, "balanced": 2},
                      {"fast": "balanced", "balanced": "deep", "deep": HUMAN}, "deep"),
-    "haiku_max": _s("Maximise verified fast-model execution; balanced model is orchestrator and escalation target; deep "
+    "fast_max": _s("Maximise verified fast-model execution; balanced model is orchestrator and escalation target; deep "
                     "model only on explicit request.", {"scientific": "balanced"}, {"fast": 4, "balanced": 2},
                     {"fast": "balanced", "balanced": HUMAN, "deep": HUMAN}, HUMAN),
-    "sonnet_heavy": _s("Balanced model coordinates and implements; fast model only for mechanical work; deep model for "
+    "balanced_heavy": _s("Balanced model coordinates and implements; fast model only for mechanical work; deep model for "
                        "milestone synthesis. Fallback when tasks lack mature contracts or verifiers.",
                        {"checked": "balanced"}, {"fast": 2, "balanced": 2},
                        {"fast": "balanced", "balanced": HUMAN, "deep": HUMAN}, "deep"),
 }
+# Pre-2.7 names. Exact copies (not `extends`), so a config that names one, extends it or overrides keys of it behaves, and fingerprints,
+# exactly as before.
+ALIASES: Dict[str, str] = {"sonnet_first": "balanced_first", "opus_first": "deep_first", "haiku_max": "fast_max", "sonnet_heavy": "balanced_heavy"}
+BUILTIN.update({old: copy.deepcopy(BUILTIN[new]) for old, new in ALIASES.items()})
+NAMES = tuple(n for n in BUILTIN if n not in ALIASES)       # what a wizard offers; aliases are still accepted everywhere
 
 
 # ----------------------------------------------------------------------------- resolution
@@ -157,7 +166,7 @@ def validate(p, name: str) -> Dict[str, Any]:
 
 def listing(p) -> List[Dict[str, Any]]:
     act = active_name(p)
-    return [{"name": n, "origin": origin(p, n), "active": n == act,
+    return [{"name": n, "origin": origin(p, n), "active": n == act, "alias_of": ALIASES.get(n),
              "description": ((_orch(p).get("strategies") or {}).get(n) or {}).get("description")}
             for n in sorted(_orch(p).get("strategies") or {})]
 
@@ -175,6 +184,19 @@ def profile_for_level(p, sd: Dict[str, Any], level: str) -> Dict[str, Any]:
         raise ResearchError(f"Level {level}: model {prof['model']} (profile {pn}) is not in orchestration.available",
                             hint="Fix the profile's model or orchestration.available; no other model is substituted.")
     return {"profile": pn, "command": prof.get("command") or pn, "model": prof.get("model")}
+
+
+def use(p, name: str, dry_run: bool = False) -> Dict[str, Any]:
+    """Make `name` the project's active strategy (future dispatches only). Invalid strategies are never activated."""
+    v, prev = validate(p, name), active_name(p)
+    if not v["ok"]:
+        raise ResearchError(f"Strategy {name} is invalid: {v['errors'][0]}", hint="`research strategy validate` lists every problem; fix it in .research/config.yaml.")
+    changed = not dry_run and prev != name
+    if changed:
+        p.save_config({"orchestration.active_strategy": name})
+        p.config.setdefault("orchestration", {})["active_strategy"] = name
+        p.event("project", None, "strategy_changed", f"allocation strategy {prev or 'legacy'} → {name}@{fingerprint(p, name)} (applies to future dispatches only)")
+    return {"applied": changed, "dry_run": dry_run, "previous": prev, "active": prev if dry_run else name, "would_activate": name, "warnings": v["warnings"]}
 
 
 # ----------------------------------------------------------------------------- routing
@@ -289,7 +311,9 @@ def show(p, name: Optional[str] = None) -> Dict[str, Any]:
     if not name:
         return {"active": None, "legacy": "no active strategy: tier routing (orchestration.tiers) applies unchanged"}
     sd = definition(p, name)
-    res = {lv: profile_for_level(p, sd, lv) if validate(p, name)["ok"] else {"profile": pn} for lv, pn in sd["levels"].items()}
+    ok = validate(p, name)["ok"]
+    res = {lv: ({**r, "installed": bool(shutil.which(r["command"]))} if ok else {"profile": pn})   # a level whose CLI is missing is shown, not hidden
+           for lv, pn in sd["levels"].items() for r in [profile_for_level(p, sd, lv) if ok else {}]}
     return {"name": name, "origin": origin(p, name), "active": name == active_name(p), "fingerprint": fingerprint(p, name),
             "extends": ((_orch(p).get("strategies") or {}).get(name) or {}).get("extends"), "definition": sd,
             "resolved_levels": res, "validation": validate(p, name)}
@@ -320,7 +344,7 @@ def agent_doc(p, name: str, level: str, marker: str) -> str:
         "coordinator": ("You are the COORDINATOR. Turn approved objectives into tasks. For each delegated task write the contract "
                         "(`research orchestrate contract T-… --objective … --allowed-file … --constraint …`) and independent tests, run them to see "
                         "them fail, then `research orchestrate freeze T-… <tests>`. Delegate with `research orchestrate delegate` or "
-                        "`dispatch`; the active strategy picks the worker, so never repeat a model id. Review integration yourself."),
+                        "`research agent dispatch`; the active strategy picks the worker, so never repeat a model id. Review integration yourself."),
         "worker": ("You are a bounded WORKER. Satisfy the task contract and frozen tests, touching only the files it allows. After each "
                    "attempt run `research orchestrate verify T-… --tier " + level + " --record`; it returns the deterministic diagnostics and "
                    "the bounded next step. Never edit, delete or weaken frozen tests. If the spec or a test looks wrong, report it."),
@@ -334,7 +358,7 @@ description: Research OS {level}-level agent ({role}) under the {name} strategy.
 model: {prof['model'] or 'inherit'}
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
-<!-- {marker} — written by `research setup agents` for strategy {name}@{fingerprint(p, name)}; delete this line to take ownership -->
+<!-- {marker} — written by `research agent setup` for strategy {name}@{fingerprint(p, name)}; delete this line to take ownership -->
 {me}
 
 ## Strategy {name}
@@ -343,7 +367,7 @@ Levels in this project:
 
 - Attempts before escalation: {(sd.get('attempts') or {}).get(level, 'n/a')}; next after that: {'a human (block the task and explain)' if to == HUMAN else to}. At most {sd.get('max_escalations', 2)} escalations per task.
 - Scientific-assumption problems go to: {'a human' if sd.get('on_scientific_assumption') == HUMAN else sd.get('on_scientific_assumption')}.
-- Delegation uses `research orchestrate delegate` / `dispatch` (add `--tier LEVEL` only to override); a task may be pinned to a model with `research orchestrate pin`.
+- Delegation uses `research orchestrate delegate` / `research agent dispatch` (add `--tier LEVEL` only to override); a task may be pinned to a model with `research orchestrate pin`.
 - Verifiers must differ from the implementer's profile and model; a review that cannot is marked not independent.
 
 ## Project guidance (read live, not copied here)

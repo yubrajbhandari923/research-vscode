@@ -92,7 +92,7 @@ The checks are ordinary programs (`python -m research.checks NAME`): no network,
 
 ## MCP
 
-Registered per agent by the wizard (`main/.mcp.json`, `.agents/mcp_config.json`, or `codex mcp add`). Agents → each provider card shows *MCP registered*; **Register** and **Test** repair or prove it (the server is started from the directory the agent runs in and its tools are listed). Everything in MCP is also in the CLI; it spares the agent from guessing syntax. It covers the core loop; orchestration, hooks and HPC need the CLI.
+Registered per agent by the wizard (`.mcp.json`, `.agents/mcp_config.json`, `opencode.json`, or `codex mcp add`). Agents → each provider card shows *MCP registered*; **Register** and **Test** repair or prove it (the server is started from the directory the agent runs in and its tools are listed). Everything in MCP is also in the CLI; it spares the agent from guessing syntax. It covers the core loop (records, tasks, runs, findings and reviews, reports, the Scientist Guide, `hpc_doctor`, `hpc_sync` and `hpc_bundle`, and the supervised-agent reporting tools); strategies, orchestration, hooks, usage and HPC submission need the CLI. The full tool list, generated from the code, is in [the interfaces chapter](spec/09-interfaces.md#mcp-server).
 
 ## Limits
 

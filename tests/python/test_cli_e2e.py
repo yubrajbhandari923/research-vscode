@@ -1,71 +1,27 @@
 """The supervisor features driven ONLY through the real `research` launcher in subprocesses (and a real pty for prompts): instruct, intervention
 approve with the PIN, debug, status honesty, reload/restart, bin link and Telegram (setup/test/poll and the daemon's alerts and chat commands).
-Stand-ins: the planning/debug agent is a real subprocess that prints a scripted JSON reply, and Telegram is a local HTTP server."""
+Stand-ins: the planning/debug agent is a real subprocess that prints a scripted JSON reply, and Telegram is the shared fake Bot API (tests/python/fakes/fake_telegram.py); the chat gateway is a real subprocess."""
 import json
 import os
 import pty
 import select
 import subprocess
 import sys
-import threading
 import time
-import urllib.parse
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
 from conftest import git
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fakes"))
+from fake_telegram import FakeTelegram, TOKEN  # noqa: E402
 from research import localbin, planspec as PS, workspace as W
 from research.store import Project
 from test_supervisor import MOCK
-from test_supervisor_fixes import plan, t
+from test_supervisor import plan, t
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="pty and POSIX launchers")
-TOKEN = "123456789:AAH-fake_token_for_tests_0123456789abc"
 ASSISTANT = "import os\nprint(open(os.environ['FAKE_REPLY_FILE']).read())\n"
 WRONG = [("e1", [t("w", "implementer", "echo wrong > out.txt", checks=["file:out.txt", "cmd:grep -q right out.txt"], attempts=1)])]
-
-
-class FakeTelegram:
-    def __init__(self):
-        self.sent, self.updates, outer = [], [], self
-
-        class H(BaseHTTPRequestHandler):
-            def log_message(self, *a):
-                pass
-
-            def do_POST(self):
-                body = urllib.parse.parse_qs(self.rfile.read(int(self.headers.get("Content-Length", 0))).decode())
-                method = self.path.rsplit("/", 1)[-1]
-                assert TOKEN in self.path
-                if method == "sendMessage":
-                    outer.sent.append(body["text"][0])
-                    out = {"ok": True, "result": {}}
-                elif method == "getUpdates":
-                    off = int(body.get("offset", ["0"])[0])
-                    out = {"ok": True, "result": [u for u in outer.updates if u["update_id"] >= off]}
-                else:
-                    out = {"ok": True}
-                data = json.dumps(out).encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-        self.srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
-        self.url = f"http://127.0.0.1:{self.srv.server_address[1]}"
-        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
-
-    def say(self, text, chat=777):
-        self.updates.append({"update_id": len(self.updates) + 1, "message": {"chat": {"id": chat}, "text": text}})
-
-    def wait_for(self, needle, timeout=60):
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            hit = [m for m in self.sent if needle in m]
-            if hit:
-                return hit[-1]
-            time.sleep(0.3)
-        raise AssertionError(f"no Telegram message containing {needle!r}; got {self.sent}")
 
 
 @pytest.fixture
@@ -95,7 +51,8 @@ def world(repo, tmp_path):
              "RESEARCH_TELEGRAM_API": tg.url, "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"}
     yield w
     subprocess.run([w.bin, "supervisor", "stop"], cwd=w.repo, env=w.env, capture_output=True)
-    tg.srv.shutdown()
+    subprocess.run([w.bin, "chat", "gateway", "stop"], cwd=w.repo, env=w.env, capture_output=True)
+    tg.stop()
 
 
 def cli(w, *args, stdin=None, timeout=120):
@@ -298,11 +255,15 @@ def test_daemon_alerts_on_halt_answers_chat_and_never_approves_protected_changes
     reply = world.tg.wait_for("needs your approval with the PIN", 60)
     assert "research intervention approve INT-001" in reply
     assert jcli(world, "intervention", "show", "INT-001")["state"] == "proposed", "chat cannot approve a protected change"
-    world.tg.say("/status", chat=999)                                     # a stranger gets nothing
-    time.sleep(4)
+    world.tg.say("/status", chat=999)                                     # a stranger gets a pairing code, never the plan
+    code = world.tg.wait_for("pairing code", 30)
+    assert "HALTED" not in code and not [m for m in world.tg.messages if m["chat"] == "999" and "fx" in m["text"]]
+    card = world.tg.wait_for("needs your approval: ", 30)             # the daemon's own approval_needed alert for the proposed intervention
+    assert "INT-001" in card and any(b.get("text") == "Approve on my computer" for row in world.tg.messages[-1]["markup"]["inline_keyboard"] for b in row) if world.tg.messages[-1]["markup"] else True
+    time.sleep(3)
     n = len(world.tg.sent)
     time.sleep(3)
-    assert len(world.tg.sent) == n
+    assert len(world.tg.sent) == n, "no repeats"
     # approving at the terminal (PIN) finishes the job and Telegram says the plan moves again
     assert pty_cli(world, ["approval", "set-pin"], ["4321", "4321"])[0] == 0
     assert pty_cli(world, ["intervention", "approve", "INT-001", "--note", "agreed"], ["4321"])[0] == 0
