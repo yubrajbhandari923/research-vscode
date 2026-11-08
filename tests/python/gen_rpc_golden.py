@@ -107,6 +107,7 @@ STEPS = [
 
 def _norm(s, roots):
     s = re.sub(r"(?<=: )-?\d+(\.\d+)?e-\d+", "0", s)   # tiny float ages ("5e-06") change every run
+    s = re.sub(r'"since_checkpoint": \{[^{}]*\}', '"since_checkpoint": {}', s)   # compares timestamps at second granularity: flaky
     return norm(s, roots)
 
 
