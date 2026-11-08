@@ -30,7 +30,7 @@ research version
 
 With pipx instead: `pipx install "research-panel[tui]"`. If `research` is not found afterwards, add the tool directory to
 your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new terminal. The same wheel is also attached to every GitHub release
-(with `SHA256SUMS`) if you prefer to install from a file: `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl`.
+(with `SHA256SUMS`) if you prefer to install from a file; see [other ways to install](#other-ways-to-install) below.
 
 **Optional extras.** The example above already includes the terminal UI:
 
@@ -40,6 +40,30 @@ your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new termina
 | `[discord]` | the Discord bot (Python 3.10 or newer; Telegram needs no extra) |
 
 Combine them as `research-panel[tui,discord]`. Add one later by installing again with `--force`, for example `uv tool install --force "research-panel[tui,discord]"`, or `pipx inject research-panel discord.py`.
+
+### Other ways to install
+
+**From the release wheel**, to pin an exact file, install without PyPI, or check what you install. Every GitHub release carries the same wheel that is on
+PyPI, plus `SHA256SUMS`:
+
+```bash
+# download research_panel-X.Y.Z-py3-none-any.whl and SHA256SUMS from the release page, then
+grep '\.whl$' SHA256SUMS | shasum -a 256 -c -           # Linux: sha256sum -c -
+uv tool install "research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
+# or straight from the release URL:
+uv tool install "research-panel[tui] @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
+```
+
+Without extras: `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl`, `pipx install ./research_panel-X.Y.Z-py3-none-any.whl`, or `pip install` the file inside a
+virtual environment. `research self-update --from-file WHEEL` installs a downloaded wheel (and checks it against a `SHA256SUMS` file if one is next to it).
+
+**Building the wheel yourself** (needs no Node; the extension and tests are described in the repository README under *Development*):
+
+```bash
+git clone https://github.com/yubrajbhandari923/research-vscode.git && cd research-vscode
+uv build                                        # or: python -m pip install build && python -m build
+uv tool install "research-panel[tui] @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
+```
 
 **The VS Code extension** (needs the CLI above):
 
