@@ -143,6 +143,7 @@ def run_all():
         for d in (proj, empty, home):
             os.makedirs(d)
         env = {k: v for k, v in os.environ.items() if not k.startswith(("RESEARCH", "CLAUDE", "CODEX"))}
+        env["PATH"] = os.path.join(HERE, "fakes") + os.pathsep + env.get("PATH", "")   # the same agent CLIs everywhere: the fakes, never the machine's own
         env.update(HOME=home, NO_COLOR="1", XDG_CONFIG_HOME=os.path.join(home, ".config"), RESEARCH_HOME=os.path.join(home, "rh"),
                    GIT_CONFIG_GLOBAL=os.devnull, PYTHONDONTWRITEBYTECODE="1", COLUMNS="100", RESEARCH_AUTHOR="golden")
         subprocess.run(["git", "init", "-q"], cwd=proj, env=env)

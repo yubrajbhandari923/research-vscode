@@ -117,6 +117,7 @@ def run_all():
         proj, home = os.path.join(td, "proj"), os.path.join(td, "home")
         os.makedirs(proj), os.makedirs(home)
         env = {k: v for k, v in os.environ.items() if not k.startswith(("RESEARCH", "CLAUDE", "CODEX"))}
+        env["PATH"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fakes") + os.pathsep + env.get("PATH", "")   # the same agent CLIs everywhere: the fakes, never the machine's own
         env.update(HOME=home, NO_COLOR="1", XDG_CONFIG_HOME=os.path.join(home, ".config"), RESEARCH_HOME=os.path.join(home, "rh"),
                    GIT_CONFIG_GLOBAL=os.devnull, PYTHONDONTWRITEBYTECODE="1", RESEARCH_AUTHOR="golden",
                    GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")

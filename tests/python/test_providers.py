@@ -262,3 +262,17 @@ def test_headless_timeout_is_failure_and_missing_executable_is_controlled(proj):
     dispatch['argv'] = ['/definitely/missing/research-agent']
     with pytest.raises(ResearchError, match='Could not start agent'):
         agents.run_headless(proj, dispatch)
+
+
+def test_detect_reports_resume_from_the_installed_cli_not_the_static_table(monkeypatch):
+    # claude's static table says resume False, yet an installed CLI that lists --resume supports it; a static True is not trusted either
+    from research import providers
+    monkeypatch.setattr(providers.shutil, "which", lambda c: "/usr/bin/" + c)
+    monkeypatch.setattr(providers, "_RESUME_PROBE", {})
+    import dataclasses
+    for name, answer in (("claude", True), ("codex", False)):                           # adapters are frozen records: swap in modified copies
+        monkeypatch.setitem(providers.ADAPTERS, name, dataclasses.replace(providers.ADAPTERS[name], resume_probe=lambda c, a=answer: a))
+    assert providers.detect({"command": "claude"}, "claude")["capabilities"]["resume"] is True
+    assert providers.detect({"command": "codex"}, "codex")["capabilities"]["resume"] is False
+    monkeypatch.setattr(providers.shutil, "which", lambda c: None)                      # not installed: nothing to probe, the table stands
+    assert providers.detect({"command": "claude"}, "claude")["capabilities"]["resume"] is False

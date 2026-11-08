@@ -83,7 +83,11 @@ def detect(prof: Dict[str, Any], name: str) -> Dict[str, Any]:
     """Installed? Capabilities. Authentication and MCP are not probed here (no credentials are read)."""
     kind = provider_of(prof, name)
     cmd = prof.get("command") or name
-    return {"provider": kind, "command": cmd, "installed": bool(shutil.which(cmd)), "capabilities": ADAPTERS[kind].caps}
+    installed = bool(shutil.which(cmd))
+    caps = dict(ADAPTERS[kind].caps)
+    if installed and ADAPTERS[kind].resume_probe:   # what this installed CLI proves, not what its name suggests (same cached probe the supervisor uses)
+        caps["resume"] = native_resume_supported(kind, cmd)
+    return {"provider": kind, "command": cmd, "installed": installed, "capabilities": caps}
 
 
 # ------------------------------------------------------------------------------------------------ readiness
