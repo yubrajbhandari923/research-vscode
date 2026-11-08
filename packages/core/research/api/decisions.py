@@ -35,3 +35,11 @@ def decision_answer(p, id: str, key: Optional[str] = None, text: Optional[str] =
 def decision_expire(p, id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Close a request without choosing (no id: all past their deadline). Never picks a default."""
     return D.expire(p, id)
+
+
+@op(mutates=True, chat="decide")
+def supervisor_investigate(p, task: Optional[str] = None, plan: Optional[str] = None, question: Optional[str] = None) -> Dict[str, Any]:
+    """Run the bounded investigator agent once on a task (or the first blocked task of a plan). Human only; budget-capped; it never approves anything.
+    Unprotected actions run now, protected ones become one intervention waiting for the PIN, ambiguity becomes one clarifying decision request."""
+    from .. import investigator
+    return investigator.investigate(p, task=task, plan=plan, question=question)

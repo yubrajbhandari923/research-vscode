@@ -94,12 +94,8 @@ def test_expiry_closes_without_choosing(halted):
     assert D.expire(p, d2["id"])[0]["status"] == "expired" and not I.list_all(p)
 
 
-def test_free_text_goes_to_the_planner_and_reports_what_it_did(halted):
-    p, tid, stub = halted
-    stub.reply = {"summary": "Retry with a hint.", "actions": [{"type": "guide", "text": "write the word right"}, {"type": "retry"}]}
-    d = D.request(p, "w blocked", opts(tid), subject=tid)
-    r = D.answer(p, d["id"], text="just tell it to write the word right and retry")
-    assert r["answer"]["text"].startswith("just tell") and "Retry with a hint." in r["outcome"] and r["answer"]["refs"]["intervention"] == "INT-001"
+def test_text_and_key_are_mutually_exclusive(halted):
+    p, tid, _ = halted
     with pytest.raises(ResearchError, match="OR free text"):
         D.answer(p, D.request(p, "q2", opts(tid), subject=tid)["id"], key="a", text="both")
 

@@ -394,6 +394,30 @@ choose it there with the PIN. Everything else runs the moment it is chosen.
 
 * **Agents may ask, never answer.** The MCP tool `decision_request` creates a request; `decision_answer` is human only (and refuses agent shells).
 * **Answer once, anywhere.** The first answer closes the request on every surface; a second one gets the first answer back (`already`). A refused PIN reopens it.
+
+## 20. The investigator (on demand)
+
+For situations the rules were not designed for, ask a bounded agent: `research investigate [T-12|PLAN] ["question or instruction"]` (op `supervisor_investigate`, a chat operator action,
+not an agent tool; and every **free-text answer** to a decision request, §19). It reads the task (contract, attempts, diagnostics, logs, plan), then returns one
+structured outcome that Research OS validates against the closed action vocabulary of §17 and classifies with the same classifier:
+
+* **Unprotected** actions (guide, note, add a task, unblock/retry when nothing protected is pending) run **immediately** as an intervention under your authority.
+  The reply says in one line what it understood and what it started: `Understood: … Doing now: INT-001 (…); adding tasks extra.`
+* **Protected** actions (acceptance, checks, inputs, datasets, dependencies, agent roles, resources, retry budget, frozen tests) become **one** separate intervention that waits
+  for your PIN (`research intervention approve INT-002`). A resume (retry/unblock) travels with it so it runs after an approved amendment. The reply names the part that is waiting.
+* **Ambiguous** requests become **one clarifying decision request** with options (each a prepared action), never a guess.
+* It **never approves** (nothing in the module calls an approval), never edits a scientific plan or a frozen test (those only change through the protected path), and uses the
+  planner profile of `supervisor_assistant.*`. Each run is an event (`investigator_started/outcome/skipped/failed`) and is logged with its text, plan, classes and outcome in
+  `.research/supervisor/investigator.json`.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `supervisor.investigator.auto` | `false` | also run once per task failure the rules cannot classify. **Not wired yet**: `investigator.maybe_auto(p, task, fingerprint)` is the entry point for the halt watcher's worker thread (a model call must not run under the supervisor lock). Nothing runs automatically today. |
+| `supervisor.investigator.max_per_plan` | `3` | most runs for one plan |
+| `supervisor.investigator.budget_usd` | `2.0` | total provider-reported cost; a run with no reported cost counts toward `max_per_plan` only |
+
+When the budget or run limit is used up (or the agent cannot start), nothing is called and the reply is a plain-text note telling you how to instruct the supervisor yourself;
+a decision request you answered in text stays open.
 * **Expiry** (`expires_hours`, default 72) closes a request without choosing anything: it never picks a default and never chooses a protected option.
 * **Chat approval of protected options** uses the authenticator flow in GOVERNANCE.md, not this command.
 * `/options` and `/choose N` are aliases: the debug agent's options are stored as a request (`decisions.from_diagnosis`) and `/choose N` answers option N of the latest open one.

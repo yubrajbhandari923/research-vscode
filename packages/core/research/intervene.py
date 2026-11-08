@@ -226,6 +226,11 @@ def assistant_cfg(p) -> Dict[str, Any]:
 def run_assistant(p, objective: str, prompt: str) -> str:
     """One headless, read-only agent turn for planning/debugging. Default model is the strongest Claude when the profile is Claude; any
     other provider uses its own configured model. Tests replace this function."""
+    return run_assistant_full(p, objective, prompt)["result"]
+
+
+def run_assistant_full(p, objective: str, prompt: str) -> Dict[str, Any]:
+    """`run_assistant` with the session's result dict (`result`, `usage`: the provider-reported usage record or a string saying it was unavailable)."""
     from . import agents, providers as PV
     c = assistant_cfg(p)
     profile = c["profile"] or "claude"
@@ -237,7 +242,7 @@ def run_assistant(p, objective: str, prompt: str) -> str:
     r = agents.run_headless(p, d, timeout=float(c["timeout_seconds"]))
     if r["timed_out"] or r["exit_code"] not in (0, None):
         raise ResearchError(f"the assistant agent failed (exit {r['exit_code']}{', timed out' if r['timed_out'] else ''}): {(r.get('stderr') or '')[-200:]}")
-    return r["result"]
+    return r
 
 
 def preview(p, it: Dict[str, Any]) -> List[str]:
@@ -256,13 +261,13 @@ def preview(p, it: Dict[str, Any]) -> List[str]:
 
 
 # ----------------------------------------------------------------------------------------------- lifecycle
-def _create(p, tid: str, message: str, interrupt: bool, source: str) -> Dict[str, Any]:
+def _create(p, tid: str, message: str, interrupt: bool, source: str, allow_open: bool = False) -> Dict[str, Any]:
     from . import supervisor as SV
     SV.require_human(p, "Instructing the supervisor")
     if not (message or "").strip():
         raise ResearchError("An instruction needs text")
     ctx = gather(p, tid)
-    if any(i["state"] in OPEN for i in list_all(p, tid)):
+    if not allow_open and any(i["state"] in OPEN for i in list_all(p, tid)):
         raise ResearchError(f"{tid} already has an open intervention; finish, reject or cancel it first", hint="`research intervention list`")
     n = max([int(i["id"][4:]) for i in list_all(p)] + [0]) + 1
     who = (p.author or {}).get("author_name") or os.environ.get("RESEARCH_AUTHOR") or "human"
@@ -280,12 +285,12 @@ def request(p, tid: str, message: str, interrupt: bool = False, source: str = "h
     return plan_it(p, it["id"]) if plan_now else it
 
 
-def create_planned(p, tid: str, instruction: str, raw_actions: Any, summary: str = "", rationale: str = "", source: str = "decision") -> Dict[str, Any]:
+def create_planned(p, tid: str, instruction: str, raw_actions: Any, summary: str = "", rationale: str = "", source: str = "decision", allow_open: bool = False) -> Dict[str, Any]:
     """An intervention whose actions are already known (a decision option's prepared action, the investigator's plan): no planning-agent call.
     Same validation, classification and approval rules as a planned one: unprotected actions are approved under the researcher's own authority,
     protected ones wait in `proposed` for ONE approval with the PIN (`research intervention approve`)."""
     prop = validate_proposal({"summary": summary, "rationale": rationale, "actions": raw_actions})   # raises before anything is stored
-    return _propose(p, _create(p, tid, instruction, False, source), prop)
+    return _propose(p, _create(p, tid, instruction, False, source, allow_open), prop)
 
 
 def plan_it(p, iid: str) -> Dict[str, Any]:

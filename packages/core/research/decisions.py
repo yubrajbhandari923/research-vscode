@@ -11,8 +11,8 @@
 * Protected options (science, resources/budget, frozen tests, roles, promotion) never run from chat: the request is flagged
   `requested_from_chat` and waits for the PIN flow at the computer. Locally they need the PIN like any protected action.
 * Answering twice, from two surfaces, is safe: the first closes the request, the second gets that answer back (`already: true`).
-* Free text goes to the investigator (`investigator.py`) which turns it into an action plan; with no investigator budget it falls back
-  to the intervention planner on the subject task.
+* Free text goes to the investigator (`investigator.py`) which turns it into an action plan (unprotected parts run, protected parts wait for the PIN,
+  ambiguity becomes one clarifying request); with no budget or no agent the request stays open and the reply is a plain-text note.
 
 Storage follows proposals: `.research/supervisor/requests/DR-NNN.json` (no schema entry: plain JSON beside proposals and interventions).
 """
@@ -225,7 +225,7 @@ def answer(p, did: str, key: Optional[str] = None, text: Optional[str] = None, v
         if d["status"] == "open" and _expired(d):
             d = _close_expired(p, d)
         if d["status"] == "expired":
-            raise ResearchError(f"{did} expired; nothing was chosen", hint="Instruct the supervisor directly (`research supervisor instruct T-1 \"...\"`).")
+            raise ResearchError(f"{did} expired; nothing was chosen", hint="Instruct the supervisor directly (`research supervisor instruct T-1 --message \"...\"`).")
         if d["status"] == "answered" or (d["status"] == "answering" and not _stale(d)):
             return {**d, "already": True, "outcome": (d.get("answer") or {}).get("outcome") or "being answered from another surface"}
         opt = None
@@ -243,6 +243,11 @@ def answer(p, did: str, key: Optional[str] = None, text: Optional[str] = None, v
         save(p, d)
     try:
         outcome = _run_option(p, d, opt, via, note, pin) if opt else _run_text(p, d, text.strip(), via, who)
+        if outcome.get("reopen"):          # nothing was done (no budget, no agent, unusable answer): the plain-text note is the reply, the request stays open
+            with _lock(p):
+                d.update(status="open", answering=None)
+                save(p, d)
+            return {**d, "needs_text": True, "outcome": outcome["summary"]}
     except BaseException:
         with _lock(p):
             d.update(status="open", answering=None)
@@ -291,11 +296,9 @@ def _intervention_line(it: Dict[str, Any]) -> str:
 
 
 def _run_text(p, d, text, via, who) -> Dict[str, Any]:
-    """Free text: the intervention planner on the subject task (investigator routing is added in investigator.py)."""
-    from . import intervene as I
-    task = _task_of(p, d)
-    it = I.request(p, task, text, source=f"decision {d['id']}")
-    return {"summary": _intervention_line(it), "refs": {"intervention": it["id"]}}
+    """Free text goes to the investigator, which classifies what it proposes with the intervention classifier (investigator.py)."""
+    from . import investigator
+    return investigator.handle_text(p, d, text, via)
 
 
 def _task_of(p, d) -> str:
@@ -308,7 +311,7 @@ def _task_of(p, d) -> str:
         b = SV.plan_health(p, st, SV.load_run(p, st["plan_id"]) or {}).get("blocking") or []
         if b:
             return b[0]["task"]
-    raise ResearchError("A text answer needs a task to act on", hint="Pick an option, or name the task: `research supervisor instruct T-1 \"...\"`.")
+    raise ResearchError("A text answer needs a task to act on", hint="Pick an option, or name the task: `research supervisor instruct T-1 --message \"...\"`.")
 
 
 # ----------------------------------------------------------------------------------------------- the diagnosis options (/options, /choose)

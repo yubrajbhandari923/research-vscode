@@ -50,9 +50,26 @@ def cmd_decide(a, p) -> int:
 cmd_decide = mut(cmd_decide)
 
 
+def cmd_investigate(a, p) -> int:
+    from research import investigator, planspec as PS, supervisor as SV
+    t = a.target or next((x["plan_key"] for x in PS.all_states(p) if SV.plan_health(p, x, SV.load_run(p, x["plan_id"]) or {})["blocking"]), None)
+    r = investigator.investigate(p, task=t if t and t.startswith("T-") else None, plan=t if t and not t.startswith("T-") else None, question=a.question)
+    if a.json:
+        out_json(r)
+    else:
+        print((green("✓ ") if r["status"] == "done" else yellow("! ")) + r["summary"])
+    return 0
+
+
+cmd_investigate = mut(cmd_investigate)
+
+
 def attach(sub, add, group) -> None:
     x = add(sub, "decisions", cmd_decisions, "open decision requests (what the supervisor or an agent is waiting for you to decide)")
     x.add_argument("--all", action="store_true", help="include answered and expired ones")
+    x = add(sub, "investigate", cmd_investigate, "run the bounded investigator agent on a task or a halted plan (budget-capped; it never approves; protected changes wait for your PIN)")
+    x.add_argument("target", nargs="?", help="T-12, or a plan key (its first blocked task); default: the first halted plan")
+    x.add_argument("question", nargs="?", help="what to find out, or an instruction")
     x = add(sub, "decide", cmd_decide, "answer a decision request: decide DR-001 [KEY | \"free text\"] (no answer: show it)")
     x.add_argument("id")
     x.add_argument("answer", nargs="?", help="an option key, or free text for the supervisor")
