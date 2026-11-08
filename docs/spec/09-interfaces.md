@@ -111,7 +111,7 @@ runs, artifacts, findings, decisions, checkpoints, notes, plans and tasks), life
 `submit_run`, `cancel_run`, `sweep_run`, `attach_run`), reporting (`write_report`, `compare_runs`, `task_context`) and agents (`dispatch`, skills
 functions). `research.log_metric(...)` and `research.register_artifact(...)` are safe to call inside a job: with `RESEARCH_RUN_DIR` set they write
 only run-directory files ([execution](06-execution.md#metrics-and-artifacts-from-inside-a-run)). Errors are `ResearchError` subclasses
-(`NotFound`, `NotInitialized`, `BudgetExceeded`, `PolicyBlocked`, `BadParams`), each with `exit_code`, an optional `hint` and `data`.
+(`NotFound`, `NotInitialized`, `IncompatibleProject`, `BudgetExceeded`, `PolicyBlocked`), each with `exit_code`, an optional `hint` and `data`.
 
 ## The operation layer and JSON-RPC
 

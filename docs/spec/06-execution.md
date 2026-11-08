@@ -16,16 +16,16 @@
 
 ## The runner (`python -m research.runner --run-dir D [--cwd W] [--tee] -- "<cmd>"`)
 
-- Has no SQLite and no project imports beyond the standard library, so it is safe on compute nodes.
+- Has no SQLite and imports only the standard library, except that a sandboxed run imports `research.isolation` (below). Safe on compute nodes.
 - Runs `bash -c "<cmd>"` (or `/bin/sh` if bash is missing) in a **new session** (process group). The environment adds
   `RESEARCH_RUN_ID`, `RESEARCH_RUN_DIR` and `RESEARCH_IN_JOB=1`.
 - **Before start**, writes `status.json`: `state=running`, `runner_pid`, child `pid`, `hostname`, `started_at`, and the SLURM
   env vars if present.
 - stdout and stderr are appended to `stdout.log` and `stderr.log`. With `--tee` they are also streamed to the terminal by
   pump threads.
-- SIGTERM, SIGINT and SIGUSR1 are forwarded to the child's process group, and the final state becomes `cancelled`.
-- **On exit**, writes `state` (`completed` if the exit code is 0, `failed` otherwise, `cancelled` if signalled), `exit_code`
-  and `ended_at`. If the command cannot be started, `exit_code=127` and `state=failed`.
+- SIGTERM, SIGINT and SIGUSR1 received by the runner are forwarded to the child's process group, and the final state becomes `cancelled`.
+- **On exit**, writes `state` (`completed` if the exit code is 0, `failed` otherwise, `cancelled` if the runner forwarded a signal), `exit_code`
+  and `ended_at`. If the command cannot be started, `exit_code=127` and `state=failed`; a sandbox that refuses to start gives `exit_code=126`.
 - All JSON writes are atomic (temp file + `os.replace`).
 
 ## Local backend
@@ -221,7 +221,7 @@ queue. Every submission path therefore discloses the reservation before anything
   submission all state the same thing. A successful submission records what it reserved.
 - The managed `AGENTS.md` block and the `hpc-setup` skill instruct agents to show the user these numbers
   and wait for an explicit yes, never to raise `cpus`/`gpus`/`mem`/`time` on their own initiative, and not
-  to treat `execution.auto_submit` as blanket permission for a new experiment's resources.
+  to treat the cluster's `execution.auto_submit` as blanket permission for a new experiment's resources.
 - The cluster's `limits` remain a hard backstop that refuses an over-large request before submission —
   that is a safety net, not the approval.
 
@@ -231,7 +231,7 @@ Dry-run preview on `submit` and `init`; resource requests bounded by the cluster
 explicitly (or a single configured default); every remote path validated as absolute, metacharacter-free and
 traversal-free, and checked to lie **inside** the configured roots; `rsync --delete` refused; `BatchMode=yes`
 with explicit timeouts and argument lists (never string interpolation of user data); read probes retried
-once on a transient error, `sbatch` never; submission requires `--yes` or `execution.auto_submit`; every
+once on a transient error, `sbatch` never; submission requires `--yes` or the cluster profile's `execution.auto_submit: true`; every
 submission and retrieval logged as an event; and the original experiment/run relationship preserved exactly.
 
 ### Long-running work and continuation
@@ -322,9 +322,5 @@ CLI: `research sandbox list|show|doctor|verify|preview`; `research run exec|subm
 **Agents are not sandboxed.** Job isolation does not restrict an agent's shell or SSH session. `sandbox.agent.mode: advisory` only writes
 boundaries into the brief; `enforced` is unsupported and not accepted.
 
-**Verified here:** `userns` on WSL2 (kernel 6.18, util-linux 2.39) with disposable fixtures: read-only source, read-only dataset, writes
-only to outputs, protected files and fake credentials invisible, ledger invisible, clean environment, no network interfaces, isolated pid
-namespace. **Not verified:** Apptainer or any site SLURM container plugin (not installed here; its argv construction and refusal
-paths are tested with a fake executable only), GPU passthrough, behaviour on other kernels, and root/administrator-configured mounts.
-**Not implemented:** sandboxing of remote bundle execution. `hpc submit` refuses (exit 3) when a profile applies to the cluster, rather
+**Tests.** `tests/python/test_sandbox.py` exercises real `userns` enforcement (read-only source and dataset, writes only to outputs, protected files and fake credentials invisible, ledger invisible, clean environment, no network, isolated pid namespace) on a disposable fixture, and is skipped where unprivileged user namespaces are unavailable. Apptainer argv construction and refusal paths are tested with a fake executable only. **Unverified:** Apptainer or any site SLURM container plugin, GPU passthrough, behaviour on particular kernels or platforms (including WSL2 and Windows), and root/administrator-configured mounts. **Not implemented:** sandboxing of remote bundle execution. `hpc submit` refuses (exit 3) when a profile applies to the cluster, rather
 than run unrestricted.

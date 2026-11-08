@@ -142,8 +142,8 @@ What the system deliberately does not do, and where its guarantees stop.
   to the index (fresh clone or rebuild).
 - **Plans and tasks are scheduled only by the supervisor:** updates reject dependency cycles; outside a supervised plan there is no automatic completion or move to `verify`, and starting a non-ready task only warns.
   Plans and tasks are not part of checkpoints.
-- **Windows:** the core and CLI work; the SLURM backend and the sandbox runtimes are POSIX-only.
+- **Windows and WSL2 are unverified.** Nothing in the test suite runs on them. The SLURM backend, the runner's process-group handling and the sandbox runtimes assume POSIX.
 - **SLURM** behaviour is tested against mocked `sbatch`, `squeue` and `sacct`. Site quirks (for example `sacct` disabled) degrade to the `unknown` state, never to a crash.
 - **Preview formats:** NIfTI, HDF5, NetCDF and NPZ show metadata only.
-- **Sandbox:** the `userns` runtime is kernel dependent and not a defence against a hostile program that also exploits the kernel; Apptainer and GPU passthrough are tested only with fake executables; Docker and Podman are
+- **Sandbox:** the `userns` runtime is kernel dependent and not a defence against a hostile program that also exploits the kernel; Apptainer is tested only with a fake executable and GPU passthrough is not tested; Docker and Podman are
   not implemented.

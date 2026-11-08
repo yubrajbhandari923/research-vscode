@@ -144,10 +144,10 @@ You can void attempts that were not the agent's fault (UI: Details → *Void thi
   per attempt (`.research/supervisor/prompts/`) and shown in the UI. Credentials are redacted.
 * **Native resumption**: a repair continues the provider's own session only if the installed CLI proves it (`claude --help` lists
   `--resume`; the session id is read from the agent's JSON output) and the role and profile match. **Codex** works the same way: the
-  `thread_id` from `codex exec --json` is stored and a repair runs `codex exec resume --json … <id> <prompt>` (verified against
-  codex-cli 0.163; resume takes no `-s/-C/--add-dir`, so the sandbox and writable roots are passed with `-c`). **Context hand-off**
+  `thread_id` from `codex exec --json` is stored and a repair runs `codex exec resume --json … <id> <prompt>` (the adapter
+  passes the sandbox and writable roots with `-c`, because `codex exec resume` takes no `-s/-C/--add-dir`). **Context hand-off**
   (a fresh agent with the persisted history) is used when native resume is unavailable, and always works. Verifier tasks never resume an
-  implementer's session. Codex's workspace-write sandbox has no network, so a Codex task cannot itself run `research hpc submit`.
+  implementer's session. The Codex adapter runs with `-s workspace-write`; whether a Codex task can reach the cluster for `research hpc submit` depends on your Codex sandbox settings.
 * `session_group` marks tasks meant to share a session; the supervisor only continues a session for repairs of the same task.
 
 ## 8. HPC

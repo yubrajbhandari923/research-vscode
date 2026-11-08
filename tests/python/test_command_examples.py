@@ -9,7 +9,7 @@ import pytest
 from research_cli.main import build_parser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-FILES = [os.path.join(ROOT, 'README.md')] + [f for f in glob.glob(os.path.join(ROOT, 'docs/*.md')) if not re.search(r'PHASE_|_SUMMARY|REVIEW|AUDIT|UPGRADING', f)] + glob.glob(os.path.join(ROOT, 'packages/core/research/**/*.md'), recursive=True) \
+FILES = [os.path.join(ROOT, 'README.md')] + [f for f in glob.glob(os.path.join(ROOT, 'docs/*.md')) + glob.glob(os.path.join(ROOT, 'docs/spec/*.md')) if not re.search(r'PHASE_|_SUMMARY|REVIEW|AUDIT|UPGRADING', f)] + glob.glob(os.path.join(ROOT, 'packages/core/research/**/*.md'), recursive=True) \
     + glob.glob(os.path.join(ROOT, 'packages/core/research/*.py'))
 EXAMPLE = re.compile(r'`(research (?:[a-z][a-z-]*)(?: [^`\n]*)?)`')
 FENCE = re.compile(r'^```[^\n]*\n(.*?)^```', re.S | re.M)

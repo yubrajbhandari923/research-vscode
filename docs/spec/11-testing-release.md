@@ -2,14 +2,13 @@
 
 ## Tests
 
-All Python tests run offline: no SSH, no real Slurm, no model, no network. Providers and clusters are replaced by fake binaries and a fake cluster
-under `tests/python/fakes/`, and Telegram by a local fake server.
+All Python tests run offline: no SSH, no real Slurm, no model, no network. Providers are replaced by fake binaries under `tests/python/fakes/` and clusters by `tests/python/fakecluster.py`, and Telegram by a local fake server.
 
 | Suite | Command | What it covers |
 |---|---|---|
 | Python, fast | `python -m pytest -q` | the default run: parallel (`-n auto`), skips tests marked `slow` or `daemon` |
 | Python, full | `python -m pytest -q -m "not daemon"` then `python -m pytest -q -n 0 -m daemon` | what CI runs; daemon tests start a supervisor process and run serially |
-| Reference docs | `python -m pytest -q tests/python/test_docs_reference.py tests/python/test_command_examples.py` | generated tables match the code, every relative link in `README.md` and `docs/**/*.md` resolves, every `research ...` example in `README.md`, the `docs/*.md` guides and the packaged templates parses with the real CLI parser |
+| Reference docs | `python -m pytest -q tests/python/test_docs_reference.py tests/python/test_command_examples.py` | generated tables match the code, every relative link in `README.md` and `docs/**/*.md` resolves, every `research ...` example in `README.md`, `docs/*.md`, `docs/spec/*.md` and the packaged templates parses with the real CLI parser |
 | Contract tests | `test_ops_contract.py`, `test_config_parity.py`, `test_rpc_golden.py`, `test_cli_golden.py`, `test_py38_syntax.py` | op layer shape, frozen default configuration, RPC and CLI golden output, Python 3.8 syntax compatibility |
 | TypeScript | `npm run typecheck` | the extension compiles under `strict` |
 | Extension client and webview | `npm run test:client`, `npm run test:webview` | the RPC client and the React Control Center pages (jsdom interaction tests) |
@@ -61,5 +60,5 @@ research-vscode/
 │   └── vscode-extension/      package.json, src/ (client, model, trees, panels, commands, render/, webview/), media/, scripts/, test/
 ├── examples/                  alpha-sweep, auto-promotion-demo, custom-provider
 ├── tests/python/              pytest suites, fakes/, fixtures/
-└── scripts/                   package.sh, clean_install_test.sh
+└── scripts/                   package.sh, clean_install_test.sh, make_preview_fixture.py
 ```

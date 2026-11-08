@@ -19,7 +19,7 @@ spawn, heartbeat and version-stale check (`ensure_current`) that long-running pe
 | `interventions/INT-n.json`, `promotions/AP-n.json`, `prompts/`, `daemon.json`, `daemon.log`, `state.lock` | intervention records, automatic-promotion items, the exact prompt of each attempt, process state |
 
 **Plan run state** is `running`, `paused`, `stopped` or `completed`. **Health** is derived from it and is what status commands and the Plans page show:
-`progressing`, `waiting_for_approval`, `halted` (running, nothing moving, something waits for a human), `completed`, `paused`, `not_run`. Health never claims
+`progressing`, `idle` (running, waiting on dependencies), `waiting_for_approval`, `halted` (running, nothing moving, something waits for a human), `completed`, `paused`, `not_run`. Health never claims
 "running" for a plan that cannot continue; it names the blocking tasks and why. A plan completes when all its tasks are verified (the plan's own `status`
 field is not derived, [lifecycles](04-lifecycles.md#plan)).
 

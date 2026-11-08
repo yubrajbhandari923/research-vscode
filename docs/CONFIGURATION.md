@@ -64,7 +64,7 @@ layout:                      # written by Initialize Project; paths are relative
   ledger_dir: ledger
   experiments_dir: experiments   # new experiment worktrees are created here (null = <name>-experiments beside the checkout)
 agents:
-  default_profile: claude        # claude | codex | agy | any profile you define
+  default_profile: claude        # a provider (claude, codex, agy, opencode) or any profile you define
   profiles:                      # yours are merged over the ones generated for each installed provider
     codex-checked: {provider: codex, command: codex, model: gpt-5, effort: medium}
 orchestration:

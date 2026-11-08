@@ -18,7 +18,6 @@
     ├── skills.yaml                   # where imported skills came from + project settings (always, applies_to)
     ├── evidence.jsonl  integrity.jsonl  sources.jsonl   # append-only: number bindings, artifact pins, literature records
     ├── usage.jsonl                   # append-only model usage (only what a provider/caller reported)
-    ├── guide.json                    # syntheses already reflected in the Scientist Guide
     ├── hooks/results.jsonl           # every harness hook execution (append-only)
     ├── orchestration/                # T-001.json per-task ledger (frozen tests, attempts, contract, override, dispatches); tuning-EXP-001.json
     ├── hpc/                          # bundles/ (ignored), incoming/, cluster state; see [HPC execution](06-execution.md#hpc-execution)
@@ -55,7 +54,7 @@ Machine-level files (never in the project, git or the audit log): `~/.config/res
 
 Outside `.research/`, the tool writes only when asked: `AGENTS.md` (managed block), per-skill symlinks in
 `.claude/skills/` and `.agents/skills/` (config `skills.link`), and MCP registrations from `research mcp install`
-(`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`), and, from `research agent setup --apply`, managed `.claude/agents/research-*.md`. Supervised work happens in the experiment worktrees, and `./research` is linked in the main checkout (git-excluded).
+(`.mcp.json`, `.vscode/mcp.json`, `.cursor/mcp.json`, `.gemini/settings.json`, `.agents/mcp_config.json`, `opencode.json`), and, from `research agent setup --apply`, managed `.claude/agents/research-*.md`. Supervised work happens in the experiment worktrees, and `./research` is linked in the main checkout (git-excluded).
 
 ## What is canonical
 

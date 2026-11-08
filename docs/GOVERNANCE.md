@@ -1,6 +1,6 @@
 # Governance, approvals, provider handoff and YAML setup
 
-Research OS is the supervisor. Claude Code, Codex and Antigravity are workers: they propose, you decide.
+Research OS is the supervisor. The agent CLIs (Claude Code, Codex, Antigravity, OpenCode) are workers: they propose, you decide.
 
 ## 1. Who may create what
 
@@ -56,17 +56,29 @@ In VS Code a dialog asks for the PIN when a protected action needs it (Settings 
 
 **Limits, plainly.** This is not authentication. An agent running under your OS user can read your files, edit `approval.json` or the Research OS code. Use job isolation and worktrees to limit what agents can touch, and review what they do.
 
-## 3. Claude, Codex and Antigravity
+### Approving from chat (authenticator code, opt-in)
 
-Checked against the installed CLIs (claude 2.1.318, codex-cli 0.163.0, agy 1.5.0):
+The PIN never goes through chat. A second, separate credential does: an authenticator app (TOTP, RFC 6238, 6 digits, 30 s).
 
-| | headless | native resume | structured output |
-|---|---|---|---|
-| Claude Code | `-p` | `--resume ID` | JSON (`session_id`) |
-| Codex | `exec --json` | `exec resume ID` | JSONL (`thread_id`) |
-| Antigravity | `-p --output-format json --mode accept-edits` | `--conversation ID` | JSON (`conversation_id`) |
+```bash
+research approval chat-enroll   # PIN + interactive terminal; shows an otpauth:// URI and the base32 secret once (--qr if `qrcode` is installed), asks for one valid code
+research approval chat-status   # enrolled? disabled?
+research approval chat-revoke   # PIN required; lost the phone? do this at the computer
+```
 
-Antigravity edits are accepted automatically in print mode (the same stance as Claude's `acceptEdits`); `--dangerously-skip-permissions` is never used.
+Chat approval is **off** until `governance.approval.chat.enabled: true` **and** an authenticator is enrolled. Then a chat user with the `approver` role (above `operator`) can approve a pending proposal by sending the current code. Rules, all in code (`approval.confirm_chat`):
+
+* The approval is bound to one proposal id and the content hash on the card; any change (a new revision) invalidates the card.
+* Codes from the previous, current and next 30 s step are accepted; each accepted step is stored, so a code works **once** (replay is refused).
+* Wrong codes use the same failure counter and 60 s lock as the PIN; the 5th wrong code disables chat approval until you log in with your PIN at the computer (`research approval verify`).
+* Chat may approve new experiment proposals and proposals that only add tasks (and, through the decision flow, options flagged protected). It can **never** approve edits to frozen tests, a scientific plan or hypothesis, governance or approval settings, the PIN/authenticator, or the chat allow-list. That list (`approval.CHAT_FORBIDDEN`) is a constant in code, not config. `governance.approval.chat_allow` can only narrow what chat may approve.
+* The secret sits beside the PIN hash (machine config dir, mode 0600), never in a project, event, log or message, and is refused in agent environments. The ledger records the approval as method `totp-chat` with platform, user id and role.
+
+**Threat model, plainly: chat approval is as strong as your chat account AND your authenticator device.** Someone with only your chat account cannot approve; someone with your phone and the chat account can, for the actions above. If you lose the phone, revoke at the computer.
+
+## 3. Agent providers
+
+Provider adapters, their capabilities (headless, resume, structured output, usage) and the exact command lines are in [PROVIDERS.md](PROVIDERS.md). In headless mode no one can answer a permission prompt, so the adapters accept edits (`acceptEdits` for Claude Code, `--mode accept-edits` for Antigravity); `--dangerously-skip-permissions` is never used.
 
 ### Continuing a task with another agent
 
@@ -78,7 +90,7 @@ Automatic fallback is opt-in:
 agents:
   handoff:
     enabled: false
-    fallback_order: [claude, codex, agy]
+    fallback_order: [claude, codex, agy]     # the default lists every known provider
     on_provider_unavailable: pause     # try_next to continue with the next provider
     on_unknown_execution_state: pause  # always
 ```

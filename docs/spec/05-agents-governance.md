@@ -40,7 +40,7 @@ environment, so an agent running in a VS Code terminal is detected as an agent.
 
 `research init` (and `research agent instructions`) creates `AGENTS.md`, or updates **only** the text between
 `<!-- research:begin` and `<!-- research:end -->`. User content outside the markers is preserved byte for byte.
-The block's source is `packages/core/research/templates/AGENTS.block.md`. The current ("Research OS") version covers (sections `Running the CLI`, `Quick start`, `Core rules`, `Scientific practice`, `Remote execution`, `Context hand-off`, `Tiered agents`, `Recording work`, `Task workflow`):
+The block's source is `packages/core/research/templates/AGENTS.block.md`. It covers (sections `Running the CLI`, `Quick start`, `Core rules`, `Scientific practice`, `Remote execution`, `Context hand-off`, `Tiered agents`, `Recording work`, `Task workflow`):
 
 - **Quick start (the context tiers):** `research current` → `research task next` / `research task context T-…` →
   `research search` / `research show` → `research --help`. Notes that every tool is also an MCP tool.

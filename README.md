@@ -29,7 +29,7 @@ restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries
 From a terminal, `research init my-project --layout ledger --apply` (preview without `--apply`), or open an empty folder in VS Code and run **Research: Initialize Project**.
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for both paths; agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 The wizard creates `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each), links the shipped
-skills for your agents, registers the MCP server, approves two starter hooks and creates the Scientist Guide: nothing is pushed.
+skills for your agents, registers the MCP server, approves nine starter hooks and creates the Scientist Guide: nothing is pushed.
 
 ## Control Center
 
@@ -118,8 +118,7 @@ bundles no Python. It needs a core with the same major version and a minor at le
 **Agents.** Each initialized project gets `.research/bin/research`, a generated machine-local launcher agents can run without `PATH`; refresh it with
 `research bin install --force` after an upgrade, a new machine or moving the project.
 
-**Upgrading from 2.x.** Install the CLI as above first, then the new extension; project files are untouched. Opening a project in VS Code no longer starts the
-supervisor: after a reboot run `research supervisor start`, and after an upgrade `research supervisor restart`.
+**Supervisor after a reboot or upgrade.** Opening a project in VS Code starts the supervisor only when a plan is running or Telegram is enabled; otherwise run `research supervisor start`, and after an upgrade `research supervisor restart` (`research self-update` also restarts known supervisors).
 
 To build from a clone:
 
@@ -270,7 +269,7 @@ merely by selecting a strategy.
 
 ```bash
 research strategy list
-research strategy use sonnet_first
+research strategy use balanced_first
 research strategy validate
 research orchestrate --help
 ```
@@ -279,10 +278,12 @@ Built-in strategies map task classes to configured model profiles:
 
 | Strategy | Allocation intent |
 |---|---|
-| `sonnet_first` | Balanced coordinator, fast checked implementation, deep scientific reasoning |
-| `opus_first` | Deep planning, balanced coordination, fast checked implementation |
-| `haiku_max` | More fast implementation; balanced scientific routing is an explicit strategy choice |
-| `sonnet_heavy` | Balanced implementation, fast mechanical work, deep synthesis |
+| `balanced_first` | Balanced model coordinates, fast model implements checkable work, deep model only for scientific synthesis (preferred for new projects) |
+| `deep_first` | Deep model plans and interprets, balanced translates to contracts and tests, fast implements |
+| `fast_max` | Maximise verified fast-model execution; balanced orchestrates and is the escalation target; deep only on request |
+| `balanced_heavy` | Balanced model coordinates and implements, fast only for mechanical work, deep for milestone synthesis |
+
+The older names `sonnet_first`, `opus_first`, `haiku_max` and `sonnet_heavy` are accepted as aliases of these.
 
 Custom strategies can extend a built-in. Profile model identifiers are configuration, not evidence
 of provider availability. Per-dispatch overrides take precedence over task pins, then strategy
@@ -385,7 +386,7 @@ SQLite journal files blindly.
 
 | Symptom | Next action |
 |---|---|
-| "Not a Research OS 2 project" | It is a v1 project and was not touched; see "Starting a v2 project in a v1 folder" below |
+| "… is a Research OS v1 project" | It is a v1 project and was not touched; see "Starting a v2 project in a v1 folder" below |
 | CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install` |
 | Python fails to start in VS Code | Check Output → Research and `research.cliPath` (run `research version --json`) |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
@@ -424,5 +425,5 @@ offline in a fresh environment and verifies relocation/rebuild.
 Authoritative source lives under `packages/core`, `packages/cli` and `packages/vscode-extension/src`
 (webview assets in `media`). Extension `dist`, codicons and root `dist/` are generated.
 
-Not verified in this release: the extension inside every VS Code configuration (Remote SSH, high-contrast themes, screen readers),
+Unverified (nothing in the test suite covers them): the extension inside every VS Code configuration (Remote SSH, high-contrast themes, screen readers),
 Windows, and real Apptainer/GPU isolation.
