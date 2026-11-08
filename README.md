@@ -28,7 +28,7 @@ restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries
 
 ```bash
 # 1. Install the CLI from PyPI, in its own isolated environment ([tui] adds the terminal UI)
-uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"
+uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"   (from a wheel or from source: see Install)
 research version
 
 # 2. Create a project (a preview; add --apply to create it)
@@ -127,28 +127,74 @@ Agents → **Skills, hooks and MCP** has a searchable catalog with one-click ins
 
 ## Install
 
-Research OS is a command-line tool first. The CLI and terminal UI are on [PyPI](https://pypi.org/project/research-panel/) as
-`research-panel`; the optional VS Code extension (`research-panel-X.Y.Z.vsix`) is on the
-[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest), next to the same wheel, an sdist and `SHA256SUMS`.
-The core needs Python 3.8 or newer; Node is only needed to build from source.
+Research OS is a command-line tool first. The core needs Python 3.8 or newer (Node is only needed to build the VS Code extension from source).
+There are three ways to install the CLI and terminal UI; the VS Code extension is a separate, optional download.
+
+### Option 1: from PyPI (recommended)
+
+The CLI and terminal UI are on [PyPI](https://pypi.org/project/research-panel/) as `research-panel`.
 
 ```bash
-# 1. the CLI, in its own isolated environment (uv or pipx); add the terminal UI with the tui extra
-uv tool install "research-panel[tui]"
-#    or: pipx install "research-panel[tui]"
+uv tool install "research-panel[tui]"       # an isolated environment, `research` on your PATH ([tui] = the terminal UI)
 research version
-research tui
+research tui                                 # the terminal UI; `research --help` lists everything
+```
 
-# 2. optional VS Code extension (the CLI from step 1 must be installed)
+With pipx, or with pip in a virtual environment you manage:
+
+```bash
+pipx install "research-panel[tui]"
+# or
+python3 -m venv .venv && . .venv/bin/activate && pip install "research-panel[tui]"
+```
+
+If `research` is not found afterwards, run `uv tool update-shell` (or `pipx ensurepath`) and open a new terminal. Extras: `tui` is the terminal UI,
+`discord` the Discord bot (Python 3.10 or newer); combine them as `research-panel[tui,discord]`. Then follow the [Quick start](#quick-start-5-minutes).
+
+### Option 2: from the release wheel
+
+Every [GitHub release](https://github.com/yubrajbhandari923/research-vscode/releases/latest) carries the same wheel that is on PyPI, an sdist, the
+extension (`.vsix`) and `SHA256SUMS`. Use it to pin an exact file, install without PyPI, or check what you install.
+
+```bash
+# download the wheel and SHA256SUMS from the release page, then verify and install
+grep '\.whl$' SHA256SUMS | shasum -a 256 -c -          # Linux: sha256sum -c -
+uv tool install "research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
+
+# or straight from the release URL (replace X.Y.Z)
+uv tool install "research-panel[tui] @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
+```
+
+Without extras it is just `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl` (or `pipx install ./research_panel-X.Y.Z-py3-none-any.whl`, or
+`pip install` the same file inside a virtual environment).
+
+### Option 3: build the wheel yourself
+
+```bash
+git clone https://github.com/yubrajbhandari923/research-vscode.git && cd research-vscode
+uv build                                       # or: python -m pip install build && python -m build   -> dist/*.whl and dist/*.tar.gz
+uv tool install "research-panel[tui] @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
+```
+
+This builds only the Python package and needs no Node. The VS Code extension and the full test suite are in [Development](#development) below.
+
+### The VS Code extension (optional)
+
+Download `research-panel-X.Y.Z.vsix` from the release page. The CLI from one of the options above must be installed first.
+
+```bash
 code --install-extension research-panel-X.Y.Z.vsix
-
-# update later
-uv tool upgrade research-panel          # or: pipx upgrade research-panel, or: research self-update
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH, and the CLI there too.
 
-**Update.** `research self-update` downloads the newest release wheel, checks it against `SHA256SUMS`, and reinstalls with the tool that installed it
+### Updating
+
+```bash
+uv tool upgrade research-panel          # or: pipx upgrade research-panel, or: research self-update
+```
+
+`research self-update` downloads the newest release wheel, checks it against `SHA256SUMS`, and reinstalls with the tool that installed it
 (`uv tool`, pipx or pip). `--check` only reports, `--version X.Y.Z` pins, `--from-file WHEEL` installs offline, and a major (breaking) upgrade needs `--major`.
 On any failure the existing install is untouched.
 
