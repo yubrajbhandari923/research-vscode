@@ -6,7 +6,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { canSelfUpdate, coreCompat, sh } from './util';
 
-export const INSTALL_CMD = 'pip install --upgrade <wheel from the GitHub release>   # or: uv tool install <wheel>';
+export const INSTALL_CMD = 'uv tool install "research-panel[tui]"   # or: pipx install "research-panel[tui]"';
 const RELEASES = 'https://github.com/yubrajbhandari923/research-vscode/releases';
 
 export interface CliState {
@@ -55,9 +55,9 @@ export function checkCli(ctx: vscode.ExtensionContext, out: vscode.OutputChannel
 
 export function showVersionInfo(ctx: vscode.ExtensionContext) {
   const s = cli.state;
-  const fix = { missing: 'The research CLI was not found. Install it from the GitHub release (pip install the wheel), or set "research.cliPath" if it lives elsewhere, then reload the window.',
+  const fix = { missing: 'The research CLI was not found. Install it from PyPI (`uv tool install "research-panel[tui]"` or `pipx install "research-panel[tui]"`), or set "research.cliPath" if it lives elsewhere, then reload the window.',
     older: canSelfUpdate(s?.found) ? 'The CLI is too old for this extension. Run `research self-update`, then reload the window.'
-      : 'The CLI is too old for this extension and predates `research self-update`. Install the new wheel from the GitHub release (pip install --upgrade <wheel>, or uv tool install <wheel>), then reload the window.',
+      : 'The CLI is too old for this extension and predates `research self-update`. Install the current version from PyPI (`uv tool install --force "research-panel[tui]"`, or `pipx install --force "research-panel[tui]"`), then reload the window.',
     newer: 'This extension is older than your CLI. Install a newer VSIX from the GitHub releases page, then reload the window.', ok: 'Everything matches.' }[s?.status || 'missing'];
   vscode.window.showInformationMessage(
     `Research Panel ${ctx.extension.packageJSON.version} requires core ${ctx.extension.packageJSON.researchCore} or newer (same major version). ` +
@@ -68,12 +68,12 @@ export function showVersionInfo(ctx: vscode.ExtensionContext) {
 export function warnCli(s: CliState) {
   const w = vscode.window;
   if (s.status === 'missing') {
-    w.showWarningMessage('Research Panel needs the `research` CLI, which was not found. Install it from the GitHub release (pip install the wheel), then `research self-update` keeps it current.', 'Copy install command', 'Open releases page', 'Set CLI path')
+    w.showWarningMessage('Research Panel needs the `research` CLI, which was not found. Install it from PyPI (`uv tool install "research-panel[tui]"`), then `research self-update` or `uv tool upgrade research-panel` keeps it current.', 'Copy install command', 'Open releases page', 'Set CLI path')
       .then((c) => c === 'Copy install command' ? vscode.env.clipboard.writeText(INSTALL_CMD)
         : c === 'Open releases page' ? vscode.env.openExternal(vscode.Uri.parse(RELEASES))
         : c === 'Set CLI path' ? vscode.commands.executeCommand('workbench.action.openSettings', 'research.cliPath') : undefined);
   } else if (s.status === 'older' && !canSelfUpdate(s.found)) {
-    w.showWarningMessage(`The research CLI (core ${s.found}) is too old for this extension and predates \`research self-update\`. Install the new wheel from the GitHub release, then reload the window.`, 'Copy install command', 'Open releases page')
+    w.showWarningMessage(`The research CLI (core ${s.found}) is too old for this extension and predates \`research self-update\`. Install the current version from PyPI, then reload the window.`, 'Copy install command', 'Open releases page')
       .then((c) => { if (c === 'Copy install command') void vscode.env.clipboard.writeText(INSTALL_CMD); else if (c === 'Open releases page') void vscode.env.openExternal(vscode.Uri.parse(RELEASES)); });
   } else if (s.status === 'older') {
     w.showWarningMessage(`The research CLI (core ${s.found}) is too old for this extension. Update the CLI: run \`research self-update\`.`, 'Run research self-update')

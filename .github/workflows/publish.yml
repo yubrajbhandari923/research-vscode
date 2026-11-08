@@ -1,0 +1,68 @@
+name: Publish to PyPI
+
+# Runs when a GitHub release is published (or by hand for a tag). It does NOT rebuild: it takes the wheel and sdist
+# attached to the release, re-checks them against the release's SHA256SUMS, and uploads those exact files to PyPI
+# through Trusted Publishing (no token is stored anywhere).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose wheel and sdist to publish (for example v3.1.1)"
+        required: true
+
+permissions: {}
+
+jobs:
+  fetch:
+    # a draft/pre-release is never published to PyPI automatically
+    if: github.event_name == 'workflow_dispatch' || !github.event.release.prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download the release's wheel and sdist, verify them
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir dist && cd dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.whl' --pattern '*.tar.gz' --pattern SHA256SUMS
+          # SHA256SUMS also lists the .vsix, which is not downloaded here: check only the files that are PyPI's
+          grep -E '\.(whl|tar\.gz)$' SHA256SUMS | sha256sum -c -
+          rm SHA256SUMS
+          test "$(ls *.whl | wc -l)" = 1 && test "$(ls *.tar.gz | wc -l)" = 1
+          # the wheel's version must be the tag's version
+          want="${TAG#v}"
+          have="$(ls *.whl | sed -E 's/^[^-]+-([^-]+)-.*/\1/')"
+          test "$want" = "$have" || { echo "tag $TAG does not match wheel version $have"; exit 1; }
+          ls -l
+
+      - name: Check the package metadata and README render (twine)
+        run: pipx run twine check --strict dist/*
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: fetch
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/research-panel/
+    permissions:
+      id-token: write   # Trusted Publishing: PyPI exchanges this short-lived OIDC token, no API token exists
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          packages-dir: dist/

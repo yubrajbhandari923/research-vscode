@@ -5,9 +5,9 @@ a Python API and an MCP server are interfaces to the same `.research/` directory
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 3.1.0.** Project format 2. v1 projects are not upgraded or migrated (see [Recovery](#recovery)).
+**Version 3.1.1.** Project format 2. v1 projects are not upgraded or migrated (see [Recovery](#recovery)).
 
-![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
+![Research Control Center: Home](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/home-dark.png)
 
 Two related lifecycles keep scientific conclusions separate from completed work:
 
@@ -21,14 +21,14 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> [Getting started](docs/QUICKSTART.md) · [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) · [Governance](docs/GOVERNANCE.md) ·
-> [Supervisor](docs/SUPERVISOR.md) · [Chat](docs/CHAT.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md).
+> [Getting started](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md) · [Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) · [Skills, hooks and MCP](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md) · [Governance](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GOVERNANCE.md) ·
+> [Supervisor](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md) · [Chat](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CHAT.md) · [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) · [Changelog](https://github.com/yubrajbhandari923/research-vscode/blob/main/CHANGELOG.md).
 
 ## Quick start (5 minutes)
 
 ```bash
-# 1. Install the CLI from the latest GitHub release (wheel), in its own environment
-uv tool install ./research_panel-X.Y.Z-py3-none-any.whl      # or: pipx install ./research_panel-X.Y.Z-py3-none-any.whl
+# 1. Install the CLI from PyPI, in its own isolated environment ([tui] adds the terminal UI)
+uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"
 research version
 
 # 2. Create a project (a preview; add --apply to create it)
@@ -52,22 +52,22 @@ research plan status PLAN-001
 ```
 
 Prefer VS Code? Install the `.vsix` from the same release, open an empty folder and run **Research: Initialize Project**.
-The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](docs/QUICKSTART.md).
+The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md).
 
 ## Feature tour
 
 | You want to | Look at |
 |---|---|
-| Install, update, match the extension and CLI versions | [Install](#install), [Getting started](docs/QUICKSTART.md#1-install) |
-| Let agents run a plan while you sleep, with checks and retries | [Supervisor](docs/SUPERVISOR.md), [Plans, tasks and agents](#plans-tasks-and-agents) |
-| Choose which model does which work (fast, balanced, deep) | [Providers and strategies](docs/PROVIDERS.md), [Model allocation](#model-allocation-and-contracts) |
-| Watch from a terminal or a panel | [`research tui`](docs/QUICKSTART.md#5-watching-and-steering), [Control Center](#control-center) |
-| Answer questions and steer from Telegram or Discord | [Chat](docs/CHAT.md) |
-| Keep scientific decisions in human hands | [Governance and the approval PIN](docs/GOVERNANCE.md) |
-| Survive provider usage limits unattended | [Usage limits](docs/QUICKSTART.md#8-usage-limits) |
-| Tell the story of your results | [Scientist Guide](docs/GUIDE.md) |
-| Give agents skills, hooks and MCP tools | [Skills, hooks and MCP](docs/AGENT_TOOLS.md) |
-| Fix a problem | [Troubleshooting](docs/TROUBLESHOOTING.md) |
+| Install, update, match the extension and CLI versions | [Install](#install), [Getting started](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#1-install) |
+| Let agents run a plan while you sleep, with checks and retries | [Supervisor](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md), [Plans, tasks and agents](#plans-tasks-and-agents) |
+| Choose which model does which work (fast, balanced, deep) | [Providers and strategies](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/PROVIDERS.md), [Model allocation](#model-allocation-and-contracts) |
+| Watch from a terminal or a panel | [`research tui`](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#5-watching-and-steering), [Control Center](#control-center) |
+| Answer questions and steer from Telegram or Discord | [Chat](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CHAT.md) |
+| Keep scientific decisions in human hands | [Governance and the approval PIN](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GOVERNANCE.md) |
+| Survive provider usage limits unattended | [Usage limits](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#8-usage-limits) |
+| Tell the story of your results | [Scientist Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) |
+| Give agents skills, hooks and MCP tools | [Skills, hooks and MCP](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md) |
+| Fix a problem | [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) |
 
 The project layout is `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each). Initialization links the shipped
 skills for your agents, registers the MCP server, approves nine starter hooks and creates the Scientist Guide. Nothing is pushed.
@@ -88,17 +88,17 @@ skills for your agents, registers the MCP server, approves nine starter hooks an
 
 | Guide | Research and reports |
 |---|---|
-| ![Guide](docs/screens/control-center-v2/guide-dark.png) | ![Research](docs/screens/control-center-v2/research-dark.png) |
+| ![Guide](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/guide-dark.png) | ![Research](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/research-dark.png) |
 
 | Skills, hooks and MCP | Plans |
 |---|---|
-| ![Agents: skills, hooks and MCP](docs/screens/control-center-v2/agents-tools-dark.png) | ![Plans](docs/screens/control-center-v2/plans-dark.png) |
+| ![Agents: skills, hooks and MCP](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/agents-tools-dark.png) | ![Plans](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/plans-dark.png) |
 
 | Home | Work | Settings |
 |---|---|---|
-| ![Home](docs/screens/control-center-v2/home-dark.png) | ![Work](docs/screens/control-center-v2/work-dark.png) | ![Settings](docs/screens/control-center-v2/settings-dark.png) |
+| ![Home](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/home-dark.png) | ![Work](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/work-dark.png) | ![Settings](https://raw.githubusercontent.com/yubrajbhandari923/research-vscode/main/docs/screens/control-center-v2/settings-dark.png) |
 
-Light-theme versions of every screen are in [`docs/screens/control-center-v2/`](docs/screens/control-center-v2/) (`*-light.png`), and the Guide page after a build is `guide-built-*.png`.
+Light-theme versions of every screen are in [`docs/screens/control-center-v2/`](https://github.com/yubrajbhandari923/research-vscode/tree/main/docs/screens/control-center-v2/) (`*-light.png`), and the Guide page after a build is `guide-built-*.png`.
 First run in an empty folder opens a short setup wizard; **New experiment** is a guided form that never runs anything.
 
 ## The Scientist Guide
@@ -112,38 +112,38 @@ First run in an empty folder opens a short setup wizard; **New experiment** is a
 - **Publish on every push:** `.github/workflows/publish-guide.yml` deploys the scientific edition with GitHub Pages (one-time: Settings → Pages → Source: GitHub Actions).
 - **Two editions, one text:** the website is clean prose; the researcher edition adds an evidence panel per chapter. Claims and figures carry provenance; review and approval are separate steps.
 
-Quarto is needed only to build ([install or update it](docs/GUIDE.md#updating-quarto)). Full guide: [docs/GUIDE.md](docs/GUIDE.md).
+Quarto is needed only to build ([install or update it](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md#updating-quarto)). Full guide: [docs/GUIDE.md](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md).
 
 ## Skills, hooks and MCP
 
 Skills tell an agent *how* to work, hooks are programs *you approve* that check its work, and the MCP server lets it read and write the
 records instead of guessing. Every new project is equipped out of the box:
 
-- **Skills:** the *Core Research* pack (hypothesis design, validation oracles, failure triage, reproducibility audit, uncertainty analysis, literature evidence, scientific visualization, independent review, promotion of validated work, plus curated debugging, review and experimental-design skills), and any of eight field packs you pick in the wizard: Scientific Python, Machine Learning, Physics/Numerical, Medical Imaging, Quantum Computing, HPC, Frontend, Scientific Writing. Third-party skills (Ponytail, Superpowers, K-Dense, Anthropic, Kalaris) are curated, attributed copies with pinned commits and licenses ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)); Trail of Bits and Vercel skills, whose licenses do not allow bundling, are install-from-source. A skill reaches an agent's brief only when the task type or role matches.
+- **Skills:** the *Core Research* pack (hypothesis design, validation oracles, failure triage, reproducibility audit, uncertainty analysis, literature evidence, scientific visualization, independent review, promotion of validated work, plus curated debugging, review and experimental-design skills), and any of eight field packs you pick in the wizard: Scientific Python, Machine Learning, Physics/Numerical, Medical Imaging, Quantum Computing, HPC, Frontend, Scientific Writing. Third-party skills (Ponytail, Superpowers, K-Dense, Anthropic, Kalaris) are curated, attributed copies with pinned commits and licenses ([THIRD_PARTY_NOTICES.md](https://github.com/yubrajbhandari923/research-vscode/blob/main/THIRD_PARTY_NOTICES.md)); Trail of Bits and Vercel skills, whose licenses do not allow bundling, are install-from-source. A skill reaches an agent's brief only when the task type or role matches.
 - **Hooks:** nine cheap starter checks (syntax, whitespace, git integrity, secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity), approved by you; project-aware extras (lint, format, pytest, tsc) are detected and offered, never automatic.
 - **MCP:** registered for each enabled agent.
 
-Agents → **Skills, hooks and MCP** has a searchable catalog with one-click install, packs, per-skill activation, enable/disable, hook approval and test results, and updates; `research skills …` and `research hook …` do the same, and `skills.packs` in the machine config sets the default for every new project. [docs/AGENT_TOOLS.md](docs/AGENT_TOOLS.md).
+Agents → **Skills, hooks and MCP** has a searchable catalog with one-click install, packs, per-skill activation, enable/disable, hook approval and test results, and updates; `research skills …` and `research hook …` do the same, and `skills.packs` in the machine config sets the default for every new project. [docs/AGENT_TOOLS.md](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md).
 
 ## Install
 
-Research OS is a command-line tool first. Install it, then (optionally) the VS Code extension. Releases are on the
-[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest): a wheel
-(`research_panel-X.Y.Z-py3-none-any.whl`), the extension (`research-panel-X.Y.Z.vsix`), an sdist and `SHA256SUMS`.
+Research OS is a command-line tool first. The CLI and terminal UI are on [PyPI](https://pypi.org/project/research-panel/) as
+`research-panel`; the optional VS Code extension (`research-panel-X.Y.Z.vsix`) is on the
+[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest), next to the same wheel, an sdist and `SHA256SUMS`.
 The core needs Python 3.8 or newer; Node is only needed to build from source.
 
 ```bash
-# 1. the CLI, in its own isolated environment (uv or pipx)
-uv tool install ./research_panel-X.Y.Z-py3-none-any.whl
-#    or: pipx install ./research_panel-X.Y.Z-py3-none-any.whl
+# 1. the CLI, in its own isolated environment (uv or pipx); add the terminal UI with the tui extra
+uv tool install "research-panel[tui]"
+#    or: pipx install "research-panel[tui]"
 research version
-
-# 2. optional terminal UI: install with the tui extra instead
-uv tool install 'research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl'
 research tui
 
-# 3. optional VS Code extension (the CLI from step 1 must be installed)
+# 2. optional VS Code extension (the CLI from step 1 must be installed)
 code --install-extension research-panel-X.Y.Z.vsix
+
+# update later
+uv tool upgrade research-panel          # or: pipx upgrade research-panel, or: research self-update
 ```
 
 Or in VS Code: Extensions → `…` → **Install from VSIX…**. Install the extension on the workspace host when using Remote SSH, and the CLI there too.
@@ -381,7 +381,7 @@ research mcp serve
 The stdio MCP server exposes registered tools with schemas and structured errors. It does not expose
 every feature: strategy, orchestration, hooks, evidence, tuning and guide workflows use CLI/RPC.
 Re-run installation after moving a project if a client registration contains its old absolute path.
-See [MCP details](docs/spec/09-interfaces.md#mcp-server) and `research mcp --help`.
+See [MCP details](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/spec/09-interfaces.md#mcp-server) and `research mcp --help`.
 
 For SLURM on the workspace host, use `research run submit --help`. Remote HPC profiles specify SSH
 aliases, approved storage roots and resources:
@@ -396,7 +396,7 @@ Configure and inspect a profile before submission. SSH credentials stay in OpenS
 Compute-node jobs write per-run files, never the project SQLite index. Portable bundles support
 separate execution and result import; remote sync reconciles outcomes. Offline tests simulate
 clusters and execute portable bundles locally; they do not establish compatibility with every
-site's SLURM accounting, filesystem or scheduler policy. [HPC specification](docs/spec/06-execution.md#hpc-execution).
+site's SLURM accounting, filesystem or scheduler policy. [HPC specification](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/spec/06-execution.md#hpc-execution).
 
 ## Recovery
 
@@ -428,7 +428,7 @@ SQLite journal files blindly.
 | Symptom | Next action |
 |---|---|
 | "… is a Research OS v1 project" | It is a v1 project and was not touched; see "Starting a v2 project in a v1 folder" below |
-| CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install`; more in [Troubleshooting](docs/TROUBLESHOOTING.md) |
+| CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install`; more in [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) |
 | Python fails to start in VS Code | Check Output → Research and `research.cliPath` (run `research version --json`) |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
 | Required hook blocks work | Inspect its exact command, then have a human approve or deliberately disable it |
@@ -451,10 +451,10 @@ Re-register what still matters with `research question create`, `research findin
 
 ## Documentation
 
-[Getting started](docs/QUICKSTART.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Chat](docs/CHAT.md) · [Configuration](docs/CONFIGURATION.md) ·
-[Technical specification](docs/SPEC.md) · [Scientist Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
-[Providers](docs/PROVIDERS.md) · [Supervisor](docs/SUPERVISOR.md) · [Setup](docs/SETUP.md) ·
-[Changelog](CHANGELOG.md).
+[Getting started](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md) · [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) · [Chat](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CHAT.md) · [Configuration](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CONFIGURATION.md) ·
+[Technical specification](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SPEC.md) · [Scientist Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) · [Skills, hooks and MCP](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md) ·
+[Providers](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/PROVIDERS.md) · [Supervisor](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md) · [Setup](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SETUP.md) ·
+[Changelog](https://github.com/yubrajbhandari923/research-vscode/blob/main/CHANGELOG.md).
 
 ## Development
 

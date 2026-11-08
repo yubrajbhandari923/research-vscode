@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.1.1
+
+- **On PyPI.** The CLI and terminal UI are published as `research-panel`: `uv tool install "research-panel[tui]"` (or `pipx install "research-panel[tui]"`), and update with `uv tool upgrade research-panel`, `pipx upgrade research-panel` or `research self-update`. Each GitHub release still carries the same wheel, sdist and `SHA256SUMS`; publishing a release uploads those exact files to PyPI through Trusted Publishing (no stored token). The VS Code extension is still distributed as a `.vsix` on the GitHub release.
+- The PyPI page has a proper description, keywords, classifiers and project links, and the README's links and images are absolute so they render there.
+- Fix: the TUI's "needs the extra" hint and an internal docstring named the package `research-os`, which is an unrelated project on PyPI. It is `research-panel`.
+- The extension's "CLI not found / too old" messages now point at PyPI.
+
 ## 3.1.0
 
 This is the first release since 2.6.0; it includes everything in 3.0.0 below (3.0.0 was never published on its own).

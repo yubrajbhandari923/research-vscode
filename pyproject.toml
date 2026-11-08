@@ -4,17 +4,37 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-panel"
-version = "3.1.0"
-description = "Project-local research memory: questions → experiments → runs → findings → decisions → checkpoints. Core + CLI for the Research Panel VS Code extension."
+version = "3.1.1"
+description = "ResearchOS: a CLI, terminal UI and supervisor for autonomous research with coding agents (Claude Code, Codex, Antigravity, opencode): plans, experiments, approvals, results."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 dependencies = []  # stdlib only; PyYAML is vendored (used only if not installed)
+keywords = ["research", "experiments", "reproducibility", "agents", "claude-code", "codex", "opencode", "supervisor", "tui", "cli", "slurm", "hpc"]
+authors = [{ name = "yubrajbhandari923" }]   # public metadata: no email on purpose
 classifiers = [
-  "Programming Language :: Python :: 3",
+  "Development Status :: 4 - Beta",
   "Environment :: Console",
   "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Scientific/Engineering",
 ]
+
+[project.urls]
+Homepage = "https://github.com/yubrajbhandari923/research-vscode"
+Documentation = "https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md"
+Repository = "https://github.com/yubrajbhandari923/research-vscode"
+Issues = "https://github.com/yubrajbhandari923/research-vscode/issues"
+Changelog = "https://github.com/yubrajbhandari923/research-vscode/blob/main/CHANGELOG.md"
+
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-xdist>=3"]
