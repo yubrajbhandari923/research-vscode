@@ -121,6 +121,8 @@ reports, per provider: version, MCP registration, credential file presence (exis
 | Antigravity | `agy --version` | `.agents/mcp_config.json` | Headless `--mode accept-edits --output-format json -p`. |
 | OpenCode | `opencode --version` | `opencode.json` `mcp` block | See below. |
 
+**Where the MCP registration goes.** Claude Code, Antigravity and opencode keep it in a file inside your project (`.mcp.json`, `.agents/mcp_config.json`, `opencode.json`). Codex keeps it **per user**: `research agent setup codex` runs `codex mcp add`, which writes one `research` entry to `~/.codex/config.toml` that all your projects share (it points at `research mcp`, not at a project path). Remove it with `codex mcp remove research`.
+
 None of them gets provider hooks: governance is the core's agent detection (`RESEARCH_AGENT`) plus the approval PIN, identical for all.
 
 ### OpenCode

@@ -5,7 +5,7 @@ a Python API and an MCP server are interfaces to the same `.research/` directory
 It preserves what you intended, what was implemented, what experiments showed, what you learned,
 and what should happen next.
 
-**Version 3.0.0.** Project format 2. v1 projects are not upgraded or migrated (see [Recovery](#recovery)).
+**Version 3.1.0.** Project format 2. v1 projects are not upgraded or migrated (see [Recovery](#recovery)).
 
 ![Research Control Center: Home](docs/screens/control-center-v2/home-dark.png)
 

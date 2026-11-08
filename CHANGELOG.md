@@ -1,6 +1,46 @@
 # Changelog
 
-## 3.0.0
+## 3.1.0
+
+This is the first release since 2.6.0; it includes everything in 3.0.0 below (3.0.0 was never published on its own).
+
+**Upgrading**
+- **From 2.x**: install the CLI first (`uv tool install` or `pipx install` the wheel from this release, with `[tui]` and/or `[discord]` extras if you want them), then install the new VSIX. A 2.x CLI has no `research self-update`. From 3.0.x, `research self-update` does it for you. The extension needs CLI 3.1 or newer: it tells you which of the two to update if they do not match.
+- **Approvals now fail closed.** If no approval PIN is set on the machine, protected actions are refused until you run `research approval set-pin` (or set `governance.approval.require_pin: false` in the machine config to opt out). Earlier versions let a non-interactive process approve without a PIN.
+- Your project files and config are untouched. Every old command name still works as a hidden alias (the visible top level went from 61 to 47 commands); aliases stay until 4.0.
+
+**New**
+- **Chat from your phone, on one gateway for Telegram and Discord** (opt-in): pairing with a code you approve at your own terminal, viewer / operator / approver roles per user id, single-use buttons, a thread per task on Discord, alert dedupe and escalation, a morning digest, and a "supervisor down" alert. `research chat setup|status|pair|test|remove|gateway`; the old `research telegram ...` commands still work. See [docs/CHAT.md](docs/CHAT.md).
+- **Decisions with options.** When the supervisor or an agent needs you, it asks once, with numbered options: tap a button in Telegram/Discord, press a number in the TUI, or answer in your own words (`research decide <id> "text"`). Each option carries its prepared action; a free-text answer is turned into a classified action plan by a bounded investigator agent. Protected parts still need the PIN.
+- **Approve from chat with an authenticator code** (opt-in, `research approval chat-enroll`): the PIN never goes through chat. Single-use codes, shared lockout with the PIN, bound to one proposal, and a fixed list of things that can never be approved from chat (frozen tests, scientific plans, relaxing governance, changing the PIN or authenticator).
+- **Usage-limit wait** (opt-in, `supervisor.usage_limit.on_limit: wait`): when a provider says its limit is reached, the supervisor reads when it resets, pauses that provider's tasks (others keep running), and resumes by itself. Reset times are parsed for Claude, Codex, opencode and agy; a long wait (default over 8 hours) becomes a decision for you. Default stays `halt`.
+- **On-demand investigator** (`research investigate`, and an opt-in automatic trigger `supervisor.investigator.auto`) for failures the rules did not anticipate; it proposes, and cannot approve.
+- **opencode** is a supported agent next to Claude Code, Codex and Antigravity (`research agent setup opencode`). Strategies are now provider-neutral (`balanced_first`, `deep_first`, `fast_max`, `balanced_heavy`; the old names are aliases) with fast / balanced / deep model levels for every provider.
+- **TUI** (`research tui`): a Decisions tab, a status bar (agents, spend, gateway, usage-limit wait), coloured status badges everywhere, readable detail panes, light and dark themes, `NO_COLOR` support.
+- **Docs**: a getting-started guide ([docs/QUICKSTART.md](docs/QUICKSTART.md)), troubleshooting, a restructured specification in `docs/spec/`, and reference tables generated from the code so they cannot go stale.
+
+**Security and governance fixes**
+- An agent could create an experiment by writing an `EXP-*.md` file, and sync imported it as a human-authored, ready experiment. It is now held as `proposed` with a proposal. An agent editing a finding to `supported` is reverted.
+- Approval grants are now per thread, so a grant held by one thread (for example the investigator) can never authorise another.
+- The intervention classifier treats nested `resources` and `execution` amendments as protected; the "run `env -u ...`" hint in refusal messages is gone.
+- Telegram: offsets are per bot and saved before updates are handled (no replayed commands), token and state files are mode 0600, and in a group chat the sender must be a paired user, not just a member of the allowed chat. A stranger who messages the bot privately gets a pairing code reply instead of silence.
+
+**Fixes**
+- Opening a subfolder of an initialized project no longer offers to re-initialize it (both the CLI and the extension find the project root by walking up).
+- Python 3.8 works again (five `dict | dict` uses); the core and CLI still support 3.8.
+- Agents keep working after a self-update: the project launcher follows the installed interpreter, `self-update` keeps your optional extras and restarts stale supervisors.
+- The extension reports a CLI older than 3.0 as found-but-too-old (it used to say "not found" and suggest `self-update`, which 2.x does not have). `self-update --check` says whether an update is available.
+- The Agents page showed Claude Code as `resume: no`; capabilities now come from what the installed CLI proves.
+- Several TUI crashes and unreadable spots found by driving it in both themes at 80x24 to 200x50.
+
+**Changed internally** (no action needed): the 4,000-line `main.py` is split into command modules; one operation layer (`research/api`) serves the CLI, RPC, MCP and TUI; providers are one package with one registry; the extension no longer bundles Python or writes a terminal shim (settings `pythonPath`, `terminalCommand`, `projectCli` are gone); the classic setup wizard and about 1,200 lines of dead code are removed; the test suite is organised by module, with a fast default run (`pytest`) and the full run in CI.
+
+**Known limits**
+- The Discord bot has been tested against a fake transport and against the real `discord.py` API surface, but not yet against a live server: follow the smoke checklist in docs/CHAT.md and report what breaks. Authenticator approvals from chat are likewise tested with fakes.
+- opencode 1.x was checked against a real install; opencode 2.x and a few flags are unverified (marked in docs/PROVIDERS.md). Some usage-limit message formats (Codex, agy) are partly unverified; unknown reset times fall back to a growing retry interval.
+- Windows is not tested.
+
+## 3.0.0 (never published on its own; included in 3.1.0)
 
 **Upgrading from 2.x**: this release changes how the pieces fit together. Install the CLI first, then the extension: `uv tool install` (or `pipx install`) the wheel from the GitHub release, then install the new VSIX. Once you are on 3.x, `research self-update` does the CLI part. Project files are untouched. The extension no longer bundles Python, so a VSIX alone is not enough: it shows a warning with the exact command if the CLI is missing or out of date.
 - **Supervisor start.** Opening a project in VS Code no longer starts or restarts the supervisor. After a reboot run `research supervisor start` (Telegram alerts depend on it); after an upgrade run `research supervisor restart`.
