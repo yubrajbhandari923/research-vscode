@@ -412,7 +412,7 @@ structured outcome that Research OS validates against the closed action vocabula
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `supervisor.investigator.auto` | `false` | also run once per task failure the rules cannot classify. **Not wired yet**: `investigator.maybe_auto(p, task, fingerprint)` is the entry point for the halt watcher's worker thread (a model call must not run under the supervisor lock). Nothing runs automatically today. |
+| `supervisor.investigator.auto` | `false` | also run once per task failure the rules cannot classify (§22) |
 | `supervisor.investigator.max_per_plan` | `3` | most runs for one plan |
 | `supervisor.investigator.budget_usd` | `2.0` | total provider-reported cost; a run with no reported cost counts toward `max_per_plan` only |
 
@@ -452,3 +452,11 @@ limited too; the task then waits. A credit-balance refusal (no reset time) is ne
 other tasks continue`) and one when it resumes. Plan health becomes `waiting_for_provider` and the plan status (`supervisor_status`, `research plan status`) carries
 `waiting_provider: {provider, until, until_ts, tasks}` (ISO UTC time, epoch seconds, number of waiting tasks; `null` when nothing waits) for a status chip, and each task row has `resume_at`.
 A wait beyond `max_wait_hours` is a decision request (options `wait`, `switch`, `stop`; none is protected).
+
+## 22. The investigator, automatically (opt-in)
+
+With `supervisor.investigator.auto: true`, the halt watcher (its own worker thread beside the debug agent, never the supervisor tick) runs the investigator **once** per blocked
+task when a plan halts because a task hit a failure the rules could not classify or used up its deterministic retries (provider limits and approval waits do not count). It is capped by
+`supervisor.investigator.max_per_plan` and `budget_usd`; beyond them nothing is called and the halt alert stays as it is. The trigger and its outcome are events (`investigator_started`,
+`investigator_outcome`, `investigator_skipped`) and a line in `.research/supervisor/investigator.json`. Everything in §20 still holds: unprotected actions run, protected ones wait for the PIN
+approval, and the investigator never approves anything.

@@ -13,8 +13,8 @@ Bounds: it never approves anything (this module never calls an approve function)
 frozen tests can only change through the protected path, and spend is capped by `supervisor.investigator.{max_per_plan, budget_usd}`. Everything is an event
 and is logged with its classification and outcome in `.research/supervisor/investigator.json`.
 
-Automatic trigger (`supervisor.investigator.auto`): `maybe_auto` is the opt-in entry point for the halt watcher; it is NOT wired into the supervisor tick
-(a model call must never run under the supervisor lock). Calling it from the watcher thread is the one missing line.
+Automatic trigger (`supervisor.investigator.auto`): `maybe_auto` is the opt-in entry point; `notify.step` calls it from the halt watcher's worker thread
+(`_auto_investigate`), never from the supervisor tick (a model call must never run under the supervisor lock).
 """
 from __future__ import annotations
 
@@ -196,4 +196,8 @@ def maybe_auto(p, task: str, fingerprint: str) -> Optional[Dict[str, Any]]:
         return None
     if any(r.get("task") == task and r.get("fingerprint") == fingerprint for r in _load(p)["runs"]):
         return None
-    return investigate(p, task=task, question="This task failed in a way the rules could not classify. Diagnose it and propose the fewest actions.", fingerprint=fingerprint)
+    from . import supervisor as SV
+    p.event("task", task, "investigator_auto", "supervisor.investigator.auto: investigating a failure the rules could not settle")
+    # `auto: true` is the researcher's standing opt-in for this one read-mostly run; protected parts of the outcome still wait for the PIN and nothing here approves.
+    with SV.human_grant("supervisor.investigator.auto"):
+        return investigate(p, task=task, question="This task failed in a way the rules could not classify. Diagnose it and propose the fewest actions.", fingerprint=fingerprint)

@@ -252,6 +252,10 @@ def step(p) -> None:
             if not m or m.get("fingerprint") != h["fingerprint"]:
                 m = {"fingerprint": h["fingerprint"], "since": time.time(), "notified": False, "debugged": False}
                 _write(marker, m)
+            if _auto_investigator(p) and not m.get("investigated") and time.time() - m["since"] >= float(c["halt_grace_seconds"]):
+                m["investigated"] = True
+                _write(marker, m)
+                threading.Thread(target=_auto_investigate, args=(p.root, h), daemon=True).start()       # H.5: once per halt, off the supervisor's tick
             if time.time() - m["since"] < float(c["halt_grace_seconds"]) or m.get("notified"):
                 continue
             key = st["plan_key"] + h["fingerprint"]
@@ -278,6 +282,25 @@ def step(p) -> None:
                 lf.write(f"{now_iso()} notify error: {type(ex).__name__}: {str(ex)[:200]}\n")
         except OSError:
             pass
+
+
+def _auto_investigator(p) -> bool:
+    from . import investigator
+    return bool(investigator.cfg(p)["auto"])
+
+
+def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:
+    """Worker thread: the investigator once per blocked task of a halted plan (failures the rules could not settle or whose retries ran out; limits and
+    approval waits are not blocked tasks). `maybe_auto` applies max_per_plan, budget_usd and once-per-(task, fingerprint)."""
+    from .store import Project
+    from . import investigator
+    try:
+        with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
+            for b in halt["blocking"]:
+                if b["phase"] == "blocked":
+                    investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
+    except Exception:    # noqa: BLE001 - a diagnosis must never break the watcher
+        pass
 
 
 def _debug_and_alert(root: str, plan_key: str, halt: Dict[str, Any]) -> None:
