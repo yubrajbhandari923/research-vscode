@@ -19,15 +19,14 @@ import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..util import ResearchError
-from . import agy, claude, codex, custom
-from .base import LEVELS, Adapter, run as _run, server_cmd as _server_cmd
+from . import agy, claude, codex, custom, opencode
+from .base import LEVELS, Adapter, LimitInfo, run as _run, server_cmd as _server_cmd
 
-_MODULES = (claude, codex, agy, custom)           # `custom` last: it is the fallback, never a "known" provider
+_MODULES = (claude, codex, agy, opencode, custom)           # `custom` last: it is the fallback, never a "known" provider
 ADAPTERS: Dict[str, Adapter] = {m.ADAPTER.name: m.ADAPTER for m in _MODULES}
 KNOWN: Tuple[str, ...] = tuple(n for n in ADAPTERS if n != "custom")   # providers with a real CLI; the order is the default fallback order
 LABELS: Dict[str, str] = {n: a.label for n, a in ADAPTERS.items()}
 CAPABILITIES: Dict[str, Dict[str, Any]] = {n: a.caps for n, a in ADAPTERS.items()}   # read-only view of the capability table
-# opencode slot (WP13): add `opencode` to _MODULES; its level pack lives in providers/opencode.py.
 
 
 def level_profile_name(provider: str, level: str) -> str:

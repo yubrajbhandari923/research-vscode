@@ -62,7 +62,7 @@ ADAPTER = Adapter(
     name="agy", label="Google Antigravity", build=build, levels=LEVELS,
     blurb="Google Antigravity CLI (`agy`). Interactive and headless, model and effort, JSON output. Not the same tool as Gemini CLI.",
     caps={"interactive": True, "headless": True, "model": True, "effort": True, "structured_output": "json",
-          "usage": False, "resume": True, "mcp": ".agents/mcp_config.json", "instructions": "AGENTS.md"},
+          "usage": False, "resume": True, "mcp": ".agents/mcp_config.json", "instructions": "AGENTS.md", "watchdog": False},
     profile={"provider": "agy", "command": "agy", "args": [], "model": None, "effort": None},
     resume_probe=resume_probe, resume_argv=resume_argv, session_id=lambda out: last_json_value(out, "conversation_id"),
     list_models=list_models, mcp_install=mcp_install,

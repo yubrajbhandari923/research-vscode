@@ -200,7 +200,8 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
         for x in enabled:
             actions.append({"claude": "Register the Research MCP server for Claude Code in main/.mcp.json",
                             "agy": "Register the Research MCP server for Antigravity in main/.agents/mcp_config.json",
-                            "codex": "Register the Research MCP server for Codex with `codex mcp add research` (your user-level Codex config)"}[x])
+                            "codex": "Register the Research MCP server for Codex with `codex mcp add research` (your user-level Codex config)",
+                            "opencode": "Register the Research MCP server for OpenCode in main/opencode.json"}.get(x) or f"Register the Research MCP server for {x}")
         tl = spec.get("tools") or {}
         from . import packs as _packs
         want = [x for x in (tl.get("packs") if tl.get("packs") is not None else []) if x != "core-research"]

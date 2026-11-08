@@ -52,7 +52,7 @@ ADAPTER = Adapter(
     name="claude", label="Claude Code", build=build, levels=LEVELS,
     blurb="Anthropic’s Claude Code. Default. Interactive and headless, per-task model choice, reports token usage.",
     caps={"interactive": True, "headless": True, "model": True, "effort": False, "structured_output": "json",
-          "usage": True, "resume": False, "mcp": ".mcp.json", "instructions": "CLAUDE.md"},
+          "usage": True, "resume": False, "mcp": ".mcp.json", "instructions": "CLAUDE.md", "watchdog": False},
     profile={"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
     level_extra={"headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model_flag": "--model", "prompt_flag": None},
     usage_parser="claude_json", resume_probe=resume_probe, resume_argv=resume_argv,

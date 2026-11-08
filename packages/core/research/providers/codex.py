@@ -86,7 +86,7 @@ ADAPTER = Adapter(
     name="codex", label="OpenAI Codex", build=build, levels=LEVELS,
     blurb="OpenAI Codex CLI. Interactive and headless (`codex exec`), model and reasoning effort, runs in a sandbox.",
     caps={"interactive": True, "headless": True, "model": True, "effort": True, "structured_output": "jsonl",
-          "usage": False, "resume": True, "mcp": "codex mcp add", "instructions": "AGENTS.md"},
+          "usage": False, "resume": True, "mcp": "codex mcp add", "instructions": "AGENTS.md", "watchdog": False},
     profile={"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
     resume_probe=resume_probe, resume_argv=resume_argv,
     session_id=lambda out: last_json_value(out, "thread_id", reverse=False),   # codex --json: {"type":"thread.started","thread_id":…}

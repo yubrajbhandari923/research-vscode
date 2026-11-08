@@ -276,7 +276,7 @@ def serve(root: str, stdin=None, stdout=None, author: Optional[Dict[str, Any]] =
 
 # =============================================================================== install
 
-CLIENTS = ["claude", "vscode", "cursor", "gemini", "agy", "codex"]
+CLIENTS = ["claude", "vscode", "cursor", "gemini", "agy", "codex", "opencode"]
 # Editor clients are plain JSON files written here; agent CLIs (claude, agy, codex) are written by their provider adapters.
 _EDITORS = {"vscode": (".vscode/mcp.json", "servers", lambda argv: {"type": "stdio", "command": argv[0], "args": argv[1:]}),
             "cursor": (".cursor/mcp.json", "mcpServers", lambda argv: {"command": argv[0], "args": argv[1:]}),

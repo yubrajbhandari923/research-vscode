@@ -48,7 +48,45 @@ def parse_claude_json(text: str) -> Dict[str, Any]:
     return out
 
 
-PARSERS = {"claude_json": parse_claude_json}
+def parse_opencode_jsonl(text: str) -> Dict[str, Any]:
+    """`opencode run --format json` (one event per line, `sessionID` on all) → usage fields. Tokens and cost are summed over `step_finish`
+    events. `complete` is False when no terminal step_finish was seen (killed, timed out, missing final event): usage is then partial."""
+    out: Dict[str, Any] = {"result_text": "", "errors": [], "complete": False, "malformed_lines": 0}
+    sums = {"input_tokens": 0, "output_tokens": 0, "reasoning_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0, "cost_usd": 0.0}
+    seen = False
+    for line in (text or "").splitlines():
+        if not line.strip():
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            out["malformed_lines"] += 1
+            continue
+        if not isinstance(d, dict):
+            continue
+        if d.get("sessionID"):
+            out.setdefault("session_id", d["sessionID"])
+        part = d.get("part") or {}
+        if d.get("type") == "text":
+            out["result_text"] = (out["result_text"] + str(part.get("text") or ""))[-4000:]
+        elif d.get("type") == "error":
+            e = d.get("error") or {}
+            out["errors"].append(str(e.get("message") or (e.get("data") or {}).get("message") or e.get("name") or e)[:300])
+        elif d.get("type") == "step_finish":
+            tk, cache = part.get("tokens") or {}, (part.get("tokens") or {}).get("cache") or {}
+            for dst, v in (("input_tokens", tk.get("input")), ("output_tokens", tk.get("output")), ("reasoning_tokens", tk.get("reasoning")),
+                           ("cache_read_tokens", cache.get("read")), ("cache_write_tokens", cache.get("write")), ("cost_usd", part.get("cost"))):
+                if isinstance(v, (int, float)):
+                    sums[dst] += v
+                    seen = True
+            out["final_reason"] = part.get("reason")
+            out["complete"] = part.get("reason") in ("stop", "end_turn", "length")
+    if seen:
+        out.update(sums)
+    return out
+
+
+PARSERS = {"claude_json": parse_claude_json, "opencode_jsonl": parse_opencode_jsonl}
 
 
 def record(p, source: str, usage: Dict[str, Any], **ctx: Any) -> Optional[Dict[str, Any]]:
@@ -57,6 +95,8 @@ def record(p, source: str, usage: Dict[str, Any], **ctx: Any) -> Optional[Dict[s
     if not any(k in vals for k in METRICS):
         return None
     rec = {"ts": now_iso(), "source": source, **{k: v for k, v in ctx.items() if v is not None}, **vals}
+    if usage.get("complete") is False:
+        rec["partial"] = True   # a measured but cut-off session: never zero, never dropped
     append_jsonl(_path(p), rec)
     return rec
 

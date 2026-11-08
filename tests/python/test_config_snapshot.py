@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-from research import registry, strategy as S, supervisor as SV
+from research import providers, registry, strategy as S, supervisor as SV
 from research.store import DEFAULT_CONFIG, Project
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -13,6 +13,7 @@ FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 INTENDED_NEW = {
     "agents.profiles.codex-fast", "agents.profiles.codex-balanced", "agents.profiles.codex-deep",         # generated from the provider registry
     "agents.profiles.agy-fast", "agents.profiles.agy-balanced", "agents.profiles.agy-deep",
+    "agents.profiles.opencode", "agents.profiles.opencode-fast", "agents.profiles.opencode-balanced", "agents.profiles.opencode-deep",   # WP13
     "orchestration.strategies.balanced_first", "orchestration.strategies.deep_first",                       # provider-neutral names (old ones kept)
     "orchestration.strategies.fast_max", "orchestration.strategies.balanced_heavy",
     "supervisor.launch_grace_seconds", "supervisor.escalation",                                             # already effective via supervisor.DEFAULTS
@@ -31,12 +32,18 @@ def _flat(d, path=""):
     return out
 
 
+def _frozen():
+    old = _flat(json.load(open(os.path.join(FIX, "default_config_pre_wp5.json"))))
+    old["agents.handoff.fallback_order"] = list(providers.KNOWN)   # derived from the provider registry (a new provider extends it)
+    return old
+
+
 def _is_new(key):
     return any(key == n or key.startswith(n + ".") for n in INTENDED_NEW)
 
 
 def test_defaults_equal_the_frozen_pre_wp5_snapshot_modulo_intended_new_keys():
-    old = _flat(json.load(open(os.path.join(FIX, "default_config_pre_wp5.json"))))
+    old = _frozen()
     new = _flat(json.loads(json.dumps(registry.defaults(), default=str)))
     assert {k: v for k, v in new.items() if k in old} == old, "a default moved"
     assert {k for k in new if k not in old and not _is_new(k)} == set()
@@ -45,7 +52,7 @@ def test_defaults_equal_the_frozen_pre_wp5_snapshot_modulo_intended_new_keys():
 
 
 def test_a_fresh_project_merges_to_the_snapshot_defaults(proj):
-    old = _flat(json.load(open(os.path.join(FIX, "default_config_pre_wp5.json"))))
+    old = _frozen()
     got = _flat(json.loads(json.dumps(proj.config, default=str)))
     diff = {k: (old[k], got.get(k)) for k in old if got.get(k) != old[k] and k not in ("project.name", "project.created_at", "project.git_repo", "project.goal")}
     assert diff == {}

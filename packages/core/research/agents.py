@@ -374,7 +374,10 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
             + (f" [required skills {', '.join(r['name'] for r in sk['required'])}]" if sk["required"] else "")
             + (f" [strategy {policy['strategy']}@{policy['fingerprint']} level {policy['level']} model {mdl}]" if policy else ""))
     kind = PR.provider_of(prof, name)
-    usage_parser = prof.get("usage_parser") or ("claude_json" if kind == "claude" and headless else None)
+    adapter = PR.ADAPTERS[kind]
+    usage_parser = prof.get("usage_parser") or (adapter.usage_parser if headless else None)
+    if adapter.env:   # provider-specific env (opencode: inline config with the MCP server and headless permissions)
+        env.update(adapter.env(prof, env, headless))
     caps = PR.CAPABILITIES[kind]
     if headless and caps["headless"] is not True and not prof.get("headless_args"):
         raise ResearchError(f"Provider {kind!r} has no headless mode configured")
@@ -392,7 +395,9 @@ def dispatch(p: Project, role: Optional[str] = None, target: Optional[str] = Non
         from .execution import prepare
         execution_id, argv = prepare(p, normalize_id(target, "T"), argv, env, src_root, headless,
                                      {"role": role, "target": label, "profile": name, "model": mdl, "objective": objective,
-                                      "instructions": orig_instructions, "strategy": strategy, "level": level, "effort": effort}, usage_parser)
+                                      "instructions": orig_instructions, "strategy": strategy, "level": level, "effort": effort}, usage_parser,
+                                     {"provider": kind, "exit_grace_seconds": prof.get("exit_grace_seconds", 30),
+                                      "idle_timeout_seconds": prof.get("idle_timeout_seconds", 1800)} if headless and adapter.final_event else None)
     return {"state": "prepared", "execution_id": execution_id, "allocation": allocation,
             "problem": None if shutil.which(cmd) else f"`{cmd}` is not installed or not on PATH. Nothing was substituted; install it or pick another agent.",
             "skills": {"required": [{k: r[k] for k in ("name", "level", "sha256")} for r in sk["required"]],

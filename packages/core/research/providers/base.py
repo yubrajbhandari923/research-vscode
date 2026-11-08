@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from ..util import ResearchError
@@ -31,6 +32,19 @@ class Adapter:
     list_models: Optional[Callable[[str], Optional[List[Dict[str, str]]]]] = None
     mcp_install: Optional[Callable[[str, Optional[str]], Dict[str, Any]]] = None     # (root, command) -> {"provider","where","scope"}
     mcp_registered: Optional[Callable[[str], Optional[bool]]] = None
+    version_info: Optional[Callable[[str], Dict[str, Any]]] = None     # (command) -> {"raw", "major", "minor", "patch", "line"}
+    final_event: Optional[Callable[[str], bool]] = None                # (stdout line) -> is it the provider's last event? enables the watchdog
+    env: Optional[Callable[[Dict[str, Any], Dict[str, str], bool], Dict[str, str]]] = None   # (profile, dispatch env, headless) -> extra env
+    checks: Optional[Callable[[str, str], List[Dict[str, Any]]]] = None   # (root, command) -> extra doctor rows {id, level, title, detail, fix}
+    limit_info: Optional[Callable[[str, str, Optional[int]], Optional["LimitInfo"]]] = None   # (stdout, stderr, exit_code) -> LimitInfo|None
+
+
+@dataclass(frozen=True)
+class LimitInfo:
+    """A provider refusal because of a usage/rate/overload/credit limit. `reset_at` is a tz-aware UTC datetime, None when unknown."""
+    kind: str                                  # usage | rate | overload | credit
+    reset_at: Optional[datetime]
+    raw: str
 
 
 def run(argv: List[str], cwd: Optional[str] = None, timeout: float = 15.0) -> Optional[subprocess.CompletedProcess]:

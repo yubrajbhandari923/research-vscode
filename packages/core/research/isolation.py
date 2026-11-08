@@ -44,7 +44,7 @@ PROFILE_SHAPE: Dict[str, Any] = {
 }
 # Credential locations that are never mountable, whatever the policy says.
 SECRET_DIRS = (".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker", ".netrc", ".azure", ".config/gh", ".claude",
-               ".config/research-os")
+               ".config/research-os", ".local/share/opencode")   # opencode keeps auth.json there
 SYSTEM_RO = ("/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt/conda", "/etc/alternatives", "/etc/ssl", "/etc/ld.so.cache",
              "/etc/ld.so.conf", "/etc/ld.so.conf.d", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf", "/etc/localtime",
              "/etc/resolv.conf", "/etc/ca-certificates", "/etc/pki")

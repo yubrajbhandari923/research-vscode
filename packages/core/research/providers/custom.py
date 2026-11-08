@@ -25,4 +25,4 @@ def build(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
 ADAPTER = Adapter(
     name="custom", label="Custom CLI", build=build, levels={lv: {"model": None, "effort": None} for lv in ("fast", "balanced", "deep")},
     caps={"interactive": True, "headless": "if headless_args", "model": "if model_flag", "effort": False,
-          "structured_output": None, "usage": "if usage_parser", "resume": False, "mcp": None, "instructions": None})
+          "structured_output": None, "usage": "if usage_parser", "resume": False, "mcp": None, "instructions": None, "watchdog": False})
