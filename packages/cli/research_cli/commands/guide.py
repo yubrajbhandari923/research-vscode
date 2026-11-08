@@ -468,15 +468,15 @@ def cmd_guide(a, p) -> int:
 def cmd_setup(a, p) -> int:
     from research import setup_agents as SA
     r = SA.setup(p, a.provider, a.preset, apply=a.apply and not a.dry_run, approve=a.approve or [], probe=a.probe,
-                 strategy=a.strategy)
+                 strategy=a.strategy, model=getattr(a, "agent_model", None))
     if a.json:
         out_json(r)
         return 0
-    print(("applied" if r["applied"] else "dry run (add --apply)") + f" · claude {r['claude']['version'] or 'not found'}")
+    print(("applied" if r["applied"] else "dry run (add --apply)") + f" · {r['provider']} {r['cli']['version'] or 'not found'}")
     for f in r["agent_files"]:
         print(f"  {f['state'].ljust(15)} {f['path']}  → {f['model']}")
-    for k in ("installed", "skipped", "unavailable", "recommended"):
-        for x in r[k]:
+    for k in ("installed", "skipped", "unavailable", "recommended", "next_steps"):
+        for x in r.get(k) or []:
             print(f"  {k}: {x}")
     print(f"  routing: {r['routing_verified']}")
     return 0

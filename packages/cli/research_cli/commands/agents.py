@@ -605,6 +605,7 @@ def attach(sub, add, group) -> None:
     x = add(ag, "setup", cmd_setup, "set up agent files for a provider: research agent setup PROVIDER --preset scientific [--apply]")
     x.set_defaults(what="agents")
     x.add_argument("provider", nargs="?", choices=PV.KNOWN, default=PV.KNOWN[0], help="one of " + ", ".join(PV.KNOWN))
+    x.add_argument("--agent-model", help="also set agents.profiles.PROVIDER.model (opencode: provider/model)")
     _setup_args(x)
     x = add(sub, "setup", cmd_setup, None)                                     # hidden: `setup agents --provider NAME`
     x.add_argument("what", choices=["agents"])

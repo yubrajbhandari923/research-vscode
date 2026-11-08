@@ -82,7 +82,7 @@ dependency. A test checks that each option exists in the defaults with the right
 
 | Key | Type | Default | Who | Meaning |
 |---|---|---|---|---|
-| `agents.default_profile` | str | `'claude'` |  | Which agent profile (claude, codex, agy, opencode, gemini, or one you define) `research dispatch` starts when a role names none. |
+| `agents.default_profile` | str | `'claude'` |  | Which agent profile (claude, codex, agy, opencode, gemini, or one you define) `research agent dispatch` starts when a role names none. |
 | `orchestration.enabled` | bool | `False` |  | Route work to cheaper or stronger models by level (fast, balanced, deep) instead of one model for everything. |
 | `orchestration.active_strategy` | str | `null` |  | Which named strategy maps task levels to models (for example balanced_first or deep_first). Empty uses the legacy tier routing. |
 | `orchestration.limits.haiku_attempts` | int | `3` |  | How many times the fast model may retry a task before work escalates. |
