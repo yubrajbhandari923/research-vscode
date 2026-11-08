@@ -164,7 +164,7 @@ def test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlin
             assert localbin.link(ws["path"]) is None
     finally:
         p.close()
-    assert "readlink" in open(cli["bin"]).read()
+    assert "$0" not in open(cli["bin"]).read()                          # never locates itself by path, so a symlink cannot confuse it
     os.symlink(cli["bin"], tmp_path / "elsewhere")                      # a link from any directory, relative cwd
     r = subprocess.run([str(tmp_path / "elsewhere"), "approval", "status"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
