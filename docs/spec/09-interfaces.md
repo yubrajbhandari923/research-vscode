@@ -52,12 +52,15 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research plan` | `plans`, `p` | research plans (decomposed into tasks) |
 | `research task` | `tasks`, `t` | tasks within plans (units of work) |
 | `research intervention` |  | supervisor interventions: list \| show \| approve \| reject \| cancel \| plan |
-| `research telegram` |  | Telegram alerts and chat commands (opt-in): setup \| status \| test \| remove \| poll |
 | `research env` |  | the project's Python environment: check \| create (uv) \| install |
 | `research supervisor` |  | the persistent supervisor: start \| status \| stop \| instruct T-12 (steer a task in words) \| debug [PLAN] (diagnose a halt) \| reload (apply settings, agents untouched) \| restart (new process, agents untouched) \| tick \| approve \| accept \| resolve \| continue (hand a task to another agent) \| providers |
 | `research proposal` | `proposals` | proposals: list \| show \| approve \| reject \| revise (ask for changes) \| experiment (agents: propose one) |
-| `research approval` |  | the approval PIN: status \| set-pin (create or change) \| verify |
+| `research approval` |  | the approval PIN: status \| set-pin (create or change) \| verify; chat-enroll \| chat-revoke \| chat-status (authenticator for chat approval) |
 | `research promote` | `promotion` | select experiment code for main: list \| changes \| prepare \| show \| diff \| verify \| review \| approve \| integrate \| abandon |
+| `research decisions` |  | open decision requests (what the supervisor or an agent is waiting for you to decide) |
+| `research investigate` |  | run the bounded investigator agent on a task or a halted plan (budget-capped; it never approves; protected changes wait for your PIN) |
+| `research decide` |  | answer a decision request: decide DR-001 [KEY \| "free text"] (no answer: show it) |
+| `research chat` |  | chat gateway (opt-in): setup [telegram\|discord] \| status \| pair CODE \| unpair PLATFORM USER \| test [PLATFORM] \| remove [PLATFORM] \| gateway start\|stop\|restart\|status\|run |
 | `research agent` |  | agent sessions: dispatch \| profiles \| providers \| executions \| instructions \| setup \| usage; and structured reports from a supervised agent (progress \| milestone \| … \| finish) |
 | `research mcp` |  | MCP server for agents (stdio); `research mcp install` registers it |
 | `research orchestrate` |  | route \| dispatch \| freeze \| attempt \| correct-test \| delegate \| status \| contract \| verify \| pin |
@@ -98,7 +101,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 
 **`research skills`** actions: `list` (list skills); `show` (print a skill's SKILL.md); `add` (import skill(s) from a folder or git repo (URL, owner/repo, …/tree/main/skills/x)); `remove` (remove a skill (moved to .research/cache/removed-skills)); `update` (re-import skills from their recorded source); `set` (project settings for a skill); `verify` (run a protocol skill's machine-checkable requirements); `audit` (which skills gate managed dispatch, and what direct Claude Code/Codex sessions can see); `link` ((re)create .claude/skills and .agents/skills links); `catalog` (the skills catalog: first-party, bundled (attributed copies) and install-from-source entries); `packs` (skill packs: list | enable ID [--optional] | disable ID); `install` (install catalog skill(s) (bundled copy, or fetched from the source at the pinned commit)); `enable` (turn a skill on (it stays on disk either way)); `disable` (turn a skill off: not suggested, not linked; files kept); `upgrade` (bring bundled and first-party skills to this release's version (never replaces a skill you changed)); `new` (create a skill); `duplicate` (copy a skill)
 
-Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `usage`.
+Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `telegram`, `usage`.
 <!-- /generated:cli -->
 
 ## Python API
@@ -139,7 +142,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-177 operations.
+212 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -154,6 +157,35 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `approval_set_pin` | new, old | yes |  |  |
 | `artifact_register` | path, run, experiment, description | yes | `artifact_register` |  |
 | `attempt_detail` | task, attempt |  |  |  |
+| `chat_approve_proposal` | id, content_hash, code, platform, user_id, role | yes |  | approve |
+| `chat_cmd_approve_start` | task | yes |  | decide |
+| `chat_cmd_blocked` |  |  |  | read |
+| `chat_cmd_choose` | n, via | yes |  | decide |
+| `chat_cmd_continue` | task, profile | yes |  | decide |
+| `chat_cmd_debug` |  |  |  | decide |
+| `chat_cmd_decisions` |  |  |  | read |
+| `chat_cmd_digest` |  |  |  | read |
+| `chat_cmd_finding` | id |  |  | read |
+| `chat_cmd_interventions` |  |  |  | read |
+| `chat_cmd_logs` | task, stream |  |  | read |
+| `chat_cmd_options` |  |  |  | read |
+| `chat_cmd_pause` | plan | yes |  | decide |
+| `chat_cmd_proposals` |  |  |  | read |
+| `chat_cmd_reject` | kind, id | yes |  | decide |
+| `chat_cmd_report` | scope |  |  | read |
+| `chat_cmd_resume` | plan | yes |  | decide |
+| `chat_cmd_say` | text, task, via | yes |  | decide |
+| `chat_cmd_status` |  |  |  | read |
+| `chat_cmd_stop` | task | yes |  | decide |
+| `chat_cmd_task` | task |  |  | read |
+| `chat_cmd_usage` | period |  |  | read |
+| `chat_gateway` | action | yes |  |  |
+| `chat_pair` | code, role | yes |  |  |
+| `chat_remove` | platform | yes |  |  |
+| `chat_setup` | platform, token, chat_id, discover, guild_id | yes |  |  |
+| `chat_status` |  |  |  |  |
+| `chat_test` | platform | yes |  |  |
+| `chat_users` | platform |  |  |  |
 | `check_run_budget` | experiment |  |  |  |
 | `checkpoint_create` | understanding, problem, next, commit | yes | `checkpoint_create` |  |
 | `checkpoint_draft` |  |  |  |  |
@@ -165,6 +197,11 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `create` | type | yes |  |  |
 | `debug_latest` |  |  |  |  |
 | `debug_run` | plan | yes |  |  |
+| `decision_answer` | id, key, text, via, note, pin | yes |  | decide |
+| `decision_expire` | id | yes |  |  |
+| `decision_list` | status, task |  |  | read |
+| `decision_request` | question, options, subject, default, expires_hours | yes | `decision_request` |  |
+| `decision_show` | id |  |  | read |
 | `dispatch` | role, target, objective, profile, model, instructions, headless, effort, strategy, level, create_workspace, allow_unfrozen | yes |  |  |
 | `dispatch_prepare` | role, target, objective, profile | yes | `dispatch_prepare` |  |
 | `doctor` | fix |  | `doctor` |  |
@@ -292,6 +329,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `strategy_use` | name, dry_run | yes |  |  |
 | `supersede_finding` | id, by, reason | yes |  |  |
 | `supervisor_daemon` | action | yes |  |  |
+| `supervisor_investigate` | task, plan, question | yes |  | decide |
 | `supervisor_status` | plan |  | `plan_status` |  |
 | `supervisor_task` | task, action, note, reason, attempts | yes |  |  |
 | `sync` |  | yes |  |  |
@@ -339,7 +377,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 - Strategies, hooks, orchestration, usage and evidence are CLI and RPC only; MCP covers the core loop and the supervised-agent reporting tools.
 
 <!-- generated:mcp -->
-44 tools.
+45 tools.
 
 | Tool | Purpose | Mutates | Required arguments |
 |---|---|---|---|
@@ -350,6 +388,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `task_context` | Focused brief for one task: goal, acceptance criteria, checks, plan objective, dependency results, related experiment state, skills to load, progress notes, rules. |  | `id` |
 | `agent_report` | Report on your supervised task: kind progress\|milestone\|artifact\|metric\|run\|hpc_job\|code\|problem\|report\|finish. | yes | `task`, `kind` |
 | `agent_propose` | Propose a plan change as a YAML patch (same schema as plan YAML, scope partial). | yes | `task`, `yaml`, `rationale` |
+| `decision_request` | Ask the researcher a decision with options. | yes | `question`, `options` |
 | `plan_status` | Supervised status of a plan: task phases, attempts, budgets, pending proposals. |  | `plan` |
 | `task_start` | Claim a task and mark it running. | yes | `id` |
 | `task_note` | Append a progress note to a task (the hand-off trail for whoever continues). | yes | `id`, `text` |
