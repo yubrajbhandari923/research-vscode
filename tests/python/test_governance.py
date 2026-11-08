@@ -7,6 +7,12 @@ import pytest
 from research import approval as AP, governance as G, plans as P, services, supervisor as SV
 from research.store import Project
 from research.util import PolicyBlocked, ResearchError
+import sys
+from conftest import as_agent, as_human
+from research import context as C
+from research import runs as R
+from research import services as S
+from research import verification as V
 
 
 @pytest.fixture
@@ -187,3 +193,47 @@ def test_grants_do_not_leak_across_threads():
         t.join()
     assert seen == {"governance": False, "supervisor": False}
     assert not G._GRANTS.get() and not SV._HUMAN_GRANTS.get()
+
+
+def _exp_with_runs(p, repo, n=2):
+    q = S.create_question(p, "Does alpha matter?")
+    e = S.create_experiment(p, "alpha sweep", question=q["id"], parameters={"alpha": [0.1, 0.5]}, planned_runs=6)
+    (repo / "sim.py").write_text(
+        "import research,sys\na=float(sys.argv[1])\nresearch.log_metric('err', abs(a-0.5))\n"
+        "open(f'out_{a}.png','wb').write(b'\\x89PNG\\r\\n')\nresearch.register_artifact(f'out_{a}.png', description='plot')\n")
+    runs = [R.exec_run(p, e["id"], f"{sys.executable} sim.py {a}", parameters={"alpha": a}, tee=False)
+            for a in (0.1, 0.5)[:n]]
+    return q, e, runs
+
+
+def test_agents_cannot_self_promote_findings(proj, repo, monkeypatch):
+    q, e, runs = _exp_with_runs(proj, repo)
+    as_agent(proj, "claude", "implementer", monkeypatch)
+    with pytest.raises(PolicyBlocked):
+        S.create_finding(proj, "alpha 0.5 best", supports=[runs[1]["id"]], status="supported")
+    f = S.create_finding(proj, "alpha 0.5 best", supports=[runs[1]["id"]])
+    for attempt in (lambda: S.set_status(proj, f["id"], "supported"),
+                    lambda: S.update_finding(proj, f["id"], status="supported"),
+                    lambda: V.review_finding(proj, f["id"], "supported")):
+        with pytest.raises(PolicyBlocked):
+            attempt()
+    assert proj.get("finding", f["id"])["status"] == "preliminary"
+    assert any(a["kind"] == "awaiting_review" for a in V.attention_items(proj))
+
+    as_agent(proj, "claude", "verifier", monkeypatch)  # same CLI, different role = independent
+    r = V.review_finding(proj, f["id"], "needs_work", "single seed")
+    assert r["finding"]["status"] == "preliminary" and r["review"]["author_name"] == "claude/verifier"
+    assert any(a["kind"] == "reviewer_disagrees" for a in C.research_home(proj)["attention_items"])
+    r = V.review_finding(proj, f["id"], "supported", "plots check out", confidence="medium")
+    assert r["finding"]["status"] == "supported" and r["finding"]["confidence"] == "medium"
+    assert not any(a["kind"] == "reviewer_disagrees" for a in V.attention_items(proj))
+
+    bare = S.create_finding(proj, "no evidence")
+    as_agent(proj, "codex", None, monkeypatch)
+    with pytest.raises(PolicyBlocked, match="no supporting evidence"):
+        V.review_finding(proj, bare["id"], "supported")
+    contra = V.review_finding(proj, bare["id"], "contradicted", "plot shows the opposite")
+    assert contra["finding"]["status"] == "contradicted" and "plot shows the opposite" in contra["finding"]["contradicting_evidence"]
+
+    as_human(proj)  # humans may set supported directly
+    assert S.set_status(proj, bare["id"], "supported")["status"] == "supported"

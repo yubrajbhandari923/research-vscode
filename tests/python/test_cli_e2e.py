@@ -17,7 +17,7 @@ from fake_telegram import FakeTelegram, TOKEN  # noqa: E402
 from research import localbin, planspec as PS, workspace as W
 from research.store import Project
 from test_supervisor import MOCK
-from test_supervisor_fixes import plan, t
+from test_supervisor import plan, t
 
 pytestmark = pytest.mark.skipif(os.name == "nt", reason="pty and POSIX launchers")
 ASSISTANT = "import os\nprint(open(os.environ['FAKE_REPLY_FILE']).read())\n"

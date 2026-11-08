@@ -2,6 +2,10 @@ import os
 import subprocess
 import sys
 
+import pty
+import select
+import time
+
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -191,27 +195,29 @@ NO_PIN_TESTS = {
 
 
 # --------------------------------------------------------------------------- markers (assigned here, so test files stay untouched)
-_DAEMON_FILES = ("test_cli_e2e", "test_supervisor", "test_autopromote")   # prefix match: also test_supervisor_fixes
-_PTY_FILES = ("test_cli_pin_link_escalation", "test_cli_e2e")
+_DAEMON_FILES = ("test_cli_e2e", "test_supervisor", "test_autopromote")   # prefix match
+_PTY_FILES = ("test_cli_e2e",)
+_PTY_TESTS = {"test_approval", "test_localbin", "test_escalation"}   # modules whose moved pty tests are named below
+_PTY_NAMES = set(['test_a_wrong_result_is_not_an_incomplete_deliverable_and_escalation_is_bounded', 'test_agent_shells_get_a_clear_message_and_are_never_locked_out', 'test_first_protected_action_without_a_pin_creates_one_instead_of_silently_passing', 'test_incomplete_deliverable_escalates_the_repair_attempt_to_the_stronger_model', 'test_install_links_research_into_main_runs_from_there_and_stays_out_of_git', 'test_link_never_replaces_real_files_and_unlink_removes_only_its_own_link', 'test_mismatched_new_pin_creates_nothing_and_authorizes_nothing', 'test_no_escalation_unless_configured_or_for_other_failures', 'test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlink_safe', 'test_no_terminal_fails_closed_without_counting_a_wrong_attempt', 'test_plan_validation_rejects_bad_escalation', 'test_set_pin_prompts_twice_without_echo_then_every_protected_action_asks'])
 _SLOW_FILES = ("test_acceptance", "test_guide_quarto", "test_fullreport")
 # Tests whose own measured time (setup + call, serial `--durations=0` run) is >= 2 s, by exact node id (file::test[param]).
 SLOW_TESTS = {
-    "test_agent_features.py::test_cli_hooks_usage_pin_and_check",
-    "test_agent_features.py::test_hook_timeout_failure_and_advisory",
-    "test_agent_features.py::test_strategy_aware_agent_files",
+    "test_cli.py::test_cli_hooks_usage_pin_and_check",
+    "test_hooks.py::test_hook_timeout_failure_and_advisory",
+    "test_strategy.py::test_strategy_aware_agent_files",
     "test_bootstrap.py::test_apply_refuses_an_existing_project_and_invalid_files",
     "test_bootstrap.py::test_yaml_and_wizard_produce_the_same_project_and_export_round_trips",
-    "test_cli_pin_link_escalation.py::test_a_wrong_result_is_not_an_incomplete_deliverable_and_escalation_is_bounded",
-    "test_cli_pin_link_escalation.py::test_agent_shells_get_a_clear_message_and_are_never_locked_out",
-    "test_cli_pin_link_escalation.py::test_first_protected_action_without_a_pin_creates_one_instead_of_silently_passing",
-    "test_cli_pin_link_escalation.py::test_incomplete_deliverable_escalates_the_repair_attempt_to_the_stronger_model",
-    "test_cli_pin_link_escalation.py::test_install_links_research_into_main_runs_from_there_and_stays_out_of_git",
-    "test_cli_pin_link_escalation.py::test_link_never_replaces_real_files_and_unlink_removes_only_its_own_link",
-    "test_cli_pin_link_escalation.py::test_mismatched_new_pin_creates_nothing_and_authorizes_nothing",
-    "test_cli_pin_link_escalation.py::test_no_escalation_unless_configured_or_for_other_failures",
-    "test_cli_pin_link_escalation.py::test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlink_safe",
-    "test_cli_pin_link_escalation.py::test_no_terminal_fails_closed_without_counting_a_wrong_attempt",
-    "test_cli_pin_link_escalation.py::test_set_pin_prompts_twice_without_echo_then_every_protected_action_asks",
+    "test_escalation.py::test_a_wrong_result_is_not_an_incomplete_deliverable_and_escalation_is_bounded",
+    "test_approval.py::test_agent_shells_get_a_clear_message_and_are_never_locked_out",
+    "test_approval.py::test_first_protected_action_without_a_pin_creates_one_instead_of_silently_passing",
+    "test_escalation.py::test_incomplete_deliverable_escalates_the_repair_attempt_to_the_stronger_model",
+    "test_localbin.py::test_install_links_research_into_main_runs_from_there_and_stays_out_of_git",
+    "test_localbin.py::test_link_never_replaces_real_files_and_unlink_removes_only_its_own_link",
+    "test_approval.py::test_mismatched_new_pin_creates_nothing_and_authorizes_nothing",
+    "test_escalation.py::test_no_escalation_unless_configured_or_for_other_failures",
+    "test_localbin.py::test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlink_safe",
+    "test_approval.py::test_no_terminal_fails_closed_without_counting_a_wrong_attempt",
+    "test_approval.py::test_set_pin_prompts_twice_without_echo_then_every_protected_action_asks",
     "test_config.py::test_cli_config_surface",
     "test_environment.py::test_configured_python_drives_the_shim_checks_and_agent_path",
     "test_environment.py::test_wizard_plans_and_creates_the_environment",
@@ -234,18 +240,18 @@ SLOW_TESTS = {
     "test_guide.py::test_rpc_guide_methods_and_what_is_read_only",
     "test_guide.py::test_status_and_overview_describe_the_guide",
     "test_guide.py::test_triggers_shape_the_reminder_only",
-    "test_guide_review.py::test_cannot_approve_over_provenance_errors_without_recorded_override",
-    "test_guide_review.py::test_guide_draft_requires_the_briefing_skill",
-    "test_guide_review.py::test_human_approval_is_separate_and_bound_to_the_text",
-    "test_guide_review.py::test_proposals_for_human_owned_sections_are_listed_and_not_rendered",
-    "test_guide_review.py::test_researcher_panels_show_review_and_approval_state_separately",
-    "test_guide_review.py::test_review_changes_no_record_and_history_is_appended",
-    "test_guide_review.py::test_review_goes_outdated_when_cited_evidence_changes",
-    "test_guide_review.py::test_review_request_requires_and_injects_the_briefing_skill",
-    "test_guide_review.py::test_review_validation",
-    "test_guide_review.py::test_rpc_and_mcp_guide_views_are_read_only",
-    "test_guide_review.py::test_unreviewed_by_default_and_review_is_not_approval",
-    "test_guide_review.py::test_unsound_review_blocks_approval",
+    "test_guide.py::test_cannot_approve_over_provenance_errors_without_recorded_override",
+    "test_guide.py::test_guide_draft_requires_the_briefing_skill",
+    "test_guide.py::test_human_approval_is_separate_and_bound_to_the_text",
+    "test_guide.py::test_proposals_for_human_owned_sections_are_listed_and_not_rendered",
+    "test_guide.py::test_researcher_panels_show_review_and_approval_state_separately",
+    "test_guide.py::test_review_changes_no_record_and_history_is_appended",
+    "test_guide.py::test_review_goes_outdated_when_cited_evidence_changes",
+    "test_guide.py::test_review_request_requires_and_injects_the_briefing_skill",
+    "test_guide.py::test_review_validation",
+    "test_guide.py::test_rpc_and_mcp_guide_views_are_read_only",
+    "test_guide.py::test_unreviewed_by_default_and_review_is_not_approval",
+    "test_guide.py::test_unsound_review_blocks_approval",
     "test_hpc.py::test_doctor_explains_an_unreachable_cluster_without_crashing",
     "test_hpc.py::test_doctor_failures_all_carry_an_actionable_fix",
     "test_hpc.py::test_failed_remote_job_is_recorded_as_failed",
@@ -328,21 +334,21 @@ SLOW_TESTS = {
     "test_providers.py::test_missing_executable_is_a_diagnosed_failure_and_dispatch_names_it",
     "test_providers.py::test_rpc_providers_and_prepare_never_runs",
     "test_providers.py::test_stop_marks_cancelled_not_failed",
-    "test_release_1_0.py::test_only_one_process_executes_a_task",
-    "test_research_os.py::test_agents_cannot_self_promote_findings",
-    "test_research_os.py::test_checks_gate_completion_for_agents_warn_humans",
-    "test_research_os.py::test_claims_release_and_next",
-    "test_research_os.py::test_cli_new_commands",
-    "test_research_os.py::test_compare_runs",
-    "test_research_os.py::test_mcp_protocol_and_tools",
-    "test_research_os.py::test_reviews_survive_rebuild",
-    "test_research_os.py::test_search_and_current_budget",
-    "test_research_os.py::test_skills_from_git_url",
-    "test_research_os.py::test_skills_import_link_match_remove",
-    "test_research_os.py::test_stale_tasks_reach_home_and_current_md",
-    "test_research_os.py::test_start_keeps_role_and_warns_when_not_ready",
-    "test_research_os.py::test_sweep_budget_and_runs",
-    "test_research_os.py::test_verify_moves_verify_tasks",
+    "test_execution.py::test_only_one_process_executes_a_task",
+    "test_governance.py::test_agents_cannot_self_promote_findings",
+    "test_hooks.py::test_checks_gate_completion_for_agents_warn_humans",
+    "test_plans_tasks.py::test_claims_release_and_next",
+    "test_cli.py::test_cli_new_commands",
+    "test_runs.py::test_compare_runs",
+    "test_mcp.py::test_mcp_protocol_and_tools",
+    "test_store.py::test_reviews_survive_rebuild",
+    "test_runs.py::test_search_and_current_budget",
+    "test_skills.py::test_skills_from_git_url",
+    "test_skills.py::test_skills_import_link_match_remove",
+    "test_plans_tasks.py::test_stale_tasks_reach_home_and_current_md",
+    "test_plans_tasks.py::test_start_keeps_role_and_warns_when_not_ready",
+    "test_runs.py::test_sweep_budget_and_runs",
+    "test_hooks.py::test_verify_moves_verify_tasks",
     "test_setup.py::test_new_experiment_full_flow_with_workspace_task_profile_and_prepared_agent",
     "test_slurm_rpc_cli.py::test_cli_budget_exit_code_for_agents",
     "test_slurm_rpc_cli.py::test_cli_full_flow",
@@ -364,7 +370,61 @@ def pytest_collection_modifyitems(items):
             item.fixturenames.insert(item.fixturenames.index("_clean_env") + 1, "_no_pin")   # before proj/repo open the config
         if mod.startswith(_DAEMON_FILES):
             item.add_marker(pytest.mark.daemon)
-        if mod in _PTY_FILES:
+        if mod in _PTY_FILES or (mod in _PTY_TESTS and item.originalname in _PTY_NAMES):
             item.add_marker(pytest.mark.pty)
         if mod in _SLOW_FILES or item.nodeid.split("/", 2)[-1] in SLOW_TESTS:
             item.add_marker(pytest.mark.slow)
+
+
+AGENT_VARS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_SANDBOX", "RESEARCH_AGENT", "RESEARCH_EXECUTION")
+
+
+def env_for(xdg, **extra):
+    env = {k: v for k, v in os.environ.items() if k not in AGENT_VARS and not k.startswith("RESEARCH_")}
+    env["XDG_CONFIG_HOME"] = str(xdg)
+    env.update(extra)
+    return env
+
+
+def pty_run(argv, answers, env, cwd, timeout=60):
+    """Run argv with a controlling terminal; type `answers` at each PIN prompt. Returns (exit code, prompts seen, transcript)."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(cwd)
+        os.execve(argv[0], argv, env)
+    buf, prompts, answers, t0 = "", [], list(answers), time.time()
+    while time.time() - t0 < timeout:
+        r, _, _ = select.select([fd], [], [], 0.5)
+        if r:
+            try:
+                data = os.read(fd, 4096).decode(errors="replace")
+            except OSError:
+                break
+            if not data:
+                break
+            buf += data
+            tail = buf[-80:]
+            if tail.rstrip().endswith(":") and "PIN" in tail and len(prompts) < len(answers) + 8 and (not prompts or buf.rfind("PIN") > buf.rfind(prompts[-1] + "\x00")):
+                prompts.append(tail.strip().splitlines()[-1])
+                os.write(fd, ((answers.pop(0) if answers else "") + "\n").encode())
+                buf += "\x00"
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status), prompts, buf.replace("\x00", "")
+
+
+def as_agent(p, name="claude", role=None, monkeypatch=None):
+    """Re-open the project as an agent identity (what RESEARCH_AGENT / RESEARCH_AGENT_ROLE do)."""
+    from research.util import detect_author
+    if monkeypatch is not None:
+        if role:
+            monkeypatch.setenv("RESEARCH_AGENT_ROLE", role)
+        else:
+            monkeypatch.delenv("RESEARCH_AGENT_ROLE", raising=False)
+    p.author = detect_author(agent=name)
+    return p
+
+
+def as_human(p):
+    from research.util import detect_author
+    p.author = detect_author(author_type="human")
+    return p

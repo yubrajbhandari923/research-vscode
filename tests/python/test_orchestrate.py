@@ -8,6 +8,16 @@ from research import plans, services as S
 from research import setup_agents as SA
 from research.util import PolicyBlocked, ResearchError
 from research_cli.main import main
+import io
+import subprocess
+import sys
+from research import agents
+from research import agents as AG
+from research import hooks
+from research import mcp
+from research import plans as P
+from research import rpc
+from research import runs as R
 
 
 @pytest.fixture
@@ -160,3 +170,142 @@ def test_cli_and_existing_dispatch_unchanged(proj, repo, capsys):
     d = json.loads(capsys.readouterr().out)
     assert d["provider_argv"][0] == "codex"
     assert main(["setup", "agents", "--json"]) == 0
+
+
+def use(p, name="sonnet_first"):
+    p.save_config({"orchestration.active_strategy": name})
+    p.config = p.load_config()
+
+
+def mk(p, plan, **kw):
+    return p.get("task", plans.create_task(p, plan["id"], "t", **kw)["id"])
+
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+ENV = {**os.environ, 'PYTHONPATH': os.path.join(ROOT, 'packages', 'core') + os.pathsep + os.path.join(ROOT, 'packages', 'cli')}
+
+
+def O_passed(proj, tid):
+    return O.verify_work(proj, tid)['passed']
+
+
+def _exp_with_runs(p, repo, n=2):
+    q = S.create_question(p, "Does alpha matter?")
+    e = S.create_experiment(p, "alpha sweep", question=q["id"], parameters={"alpha": [0.1, 0.5]}, planned_runs=6)
+    (repo / "sim.py").write_text(
+        "import research,sys\na=float(sys.argv[1])\nresearch.log_metric('err', abs(a-0.5))\n"
+        "open(f'out_{a}.png','wb').write(b'\\x89PNG\\r\\n')\nresearch.register_artifact(f'out_{a}.png', description='plot')\n")
+    runs = [R.exec_run(p, e["id"], f"{sys.executable} sim.py {a}", parameters={"alpha": a}, tee=False)
+            for a in (0.1, 0.5)[:n]]
+    return q, e, runs
+
+
+# ------------------------------------------------------------------ contracts and verification
+def test_contract_in_brief_and_file_boundary(proj, plan, repo):
+    use(proj)
+    t = mk(proj, plan, task_type="implementation", acceptance_criteria="a", checks=["cmd:true"])
+    O.set_contract(proj, t["id"], objective="parse metrics", allowed_files=["src/*.py"], constraints=["no new deps"],
+                   expected_outputs=["src/metrics.py"])
+    (repo / "test_x.py").write_text("def test_a():\n    assert 1\n")
+    O.freeze(proj, t["id"], ["test_x.py"])
+    d = O.dispatch_task(proj, t["id"])
+    brief = (repo / d["brief"]).read_text()
+    assert "Contract" in brief and "src/*.py" in brief and "no new deps" in brief and "orchestrate verify" in brief
+    (repo / "src").mkdir()
+    (repo / "src" / "metrics.py").write_text("x = 1\n")
+    assert O.verify_work(proj, t["id"])["passed"]
+    (repo / "other.py").write_text("y = 1\n")
+    r = O.verify_work(proj, t["id"])
+    assert not r["passed"] and "outside the contract" in r["diagnostics"][0] and "other.py" in r["diagnostics"][0]
+
+
+# ------------------------------------------------------------------ per-task overrides
+def test_task_override_applies_is_recorded_and_clears(proj, plan, repo):
+    use(proj)
+    a = mk(proj, plan, task_type="implementation")                   # unchecked → balanced by strategy
+    b = mk(proj, plan, task_type="implementation")
+    with pytest.raises(ResearchError):
+        O.set_override(proj, a["id"], level="nope")
+    O.set_override(proj, a["id"], level="deep")
+    O.set_override(proj, b["id"], profile="claude-fast", model="m-special")
+    ra, rb = O.route(proj, proj.get("task", a["id"])), O.route(proj, proj.get("task", b["id"]))
+    assert ra["model"] == "claude-opus-5-5" and ra["why"] == "task override" and ra["overrides"]["task_override"] == {"level": "deep"}
+    assert rb["profile"] == "claude-fast" and rb["model"] == "m-special"
+    d = O.dispatch_task(proj, a["id"], allow_unfrozen="test")
+    assert "claude-opus-5-5" in d["provider_argv"] and d["policy"]["overrides"]["task_override"] == {"level": "deep"}
+    assert agents.dispatch(proj, "implementer", a["id"], allow_unfrozen="test")["model"] == "claude-opus-5-5"
+    assert O.route(proj, proj.get("task", a["id"]), "fast")["level"] == "fast"      # per-dispatch beats per-task
+    O.set_override(proj, a["id"], clear=True)
+    assert O.route(proj, proj.get("task", a["id"]))["level"] == "balanced" and O.ledger(proj, a["id"]).get("override") is None
+
+
+# ---- 2/3: one effective task specification and policy across interfaces ----------------------------------
+def test_same_obligations_through_every_interface(proj, repo, contract_task):
+    O.set_contract(proj, contract_task['id'], objective='g', constraints=['no new deps'], allowed_files=['src/*.py'])
+    hooks.add(proj, 'gate', 'post_implementation', 'true', required=True)      # unapproved, required
+    core = plans.task_context(proj, contract_task['id'])['effective_spec']
+    out = io.StringIO()
+    req = {'id': 1, 'method': 'task_context', 'params': {'id': contract_task['id']}}
+    rpc.serve(str(repo), io.StringIO(json.dumps(req) + '\n'), out)
+    rows = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert [r for r in rows if r.get('id') == 1][0]['result']['effective_spec'] == core
+    out = io.StringIO()
+    msg = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'task_context', 'arguments': {'id': contract_task['id']}}}
+    mcp.serve(str(repo), io.StringIO(json.dumps(msg) + '\n'), out)
+    text = json.dumps(json.loads(out.getvalue()))
+    for needle in ('no new deps', 'src/*.py', 'HUMAN APPROVAL REQUIRED'):
+        assert needle in text
+    cli = subprocess.run([sys.executable, '-m', 'research_cli', 'task', 'context', contract_task['id'], '--json'], cwd=repo, env=ENV,
+                         capture_output=True, text=True)
+    assert cli.returncode == 0 and json.loads(cli.stdout)['effective_spec'] == core
+    brief = (repo / agents.dispatch(proj, 'implementer', contract_task['id'], allow_unfrozen='x')['brief']).read_text()
+    assert 'no new deps' in brief and 'HUMAN APPROVAL REQUIRED' in brief
+
+
+def test_conflicting_legacy_fields_block_dispatch_and_completion(proj, contract_task):
+    O.set_contract(proj, contract_task['id'], objective='something else')
+    spec = plans.task_context(proj, contract_task['id'])['effective_spec']
+    assert [c['field'] for c in spec['conflicts']] == ['objective']
+    with pytest.raises(PolicyBlocked, match='Conflicting'):
+        agents.dispatch(proj, 'implementer', contract_task['id'])
+    assert not O_passed(proj, contract_task['id'])
+
+
+def test_dispatch_profiles_roles_and_briefs(proj, repo):
+    q, e, runs = _exp_with_runs(proj, repo)
+    plan = P.create_plan(proj, "Repro", objective="match fig 3")
+    t = P.create_task(proj, plan["id"], "impl", checks=["file:x.png"], related_experiment_id=e["id"])
+    f = S.create_finding(proj, "claim", supports=[runs[0]["id"]])
+    proj.config["agents"]["roles"]["verifier"] = "codex"
+    proj.config["agents"]["profiles"]["codex"]["model"] = "gpt-5"
+    d = AG.dispatch(proj, None, t["id"])
+    assert d["role"] == "implementer" and d["profile"] == "claude" and d["provider_argv"][0] == "claude"
+    assert d["env"]["RESEARCH_AGENT_ROLE"] == "implementer" and d["brief"] in d["provider_argv"][-1]
+    brief = (repo / d["brief"]).read_text()
+    assert "IMPLEMENTER" in brief and "Task T-001" in brief and "file: x.png" in brief and "match fig 3" in brief
+    v = AG.dispatch(proj, None, f["id"])
+    assert v["role"] == "verifier" and v["provider_argv"][0] == "codex" and "-m" in v["provider_argv"] and "gpt-5" in v["provider_argv"]
+    vb = (repo / v["brief"]).read_text()
+    assert "check a claim against its evidence" in vb and "task verify" not in vb
+    g = AG.dispatch(proj, "planner", objective="Reproduce Table 2", profile="gemini")
+    assert g["argv"][:2] == ["gemini", "-i"] and "Reproduce Table 2" in (repo / g["brief"]).read_text()
+    assert AG.dispatch(proj, None, e["id"])["role"] == "analyst"
+    with pytest.raises(ResearchError, match="needs an objective"):
+        AG.dispatch(proj, "planner")
+    with pytest.raises(ResearchError, match="Unknown agent profile"):
+        AG.dispatch(proj, "analyst", e["id"], profile="nope")
+
+
+def test_role_env_changes_author_name(monkeypatch):
+    from research.util import detect_author
+    monkeypatch.setenv("RESEARCH_AGENT", "claude")
+    monkeypatch.setenv("RESEARCH_AGENT_ROLE", "verifier")
+    assert detect_author()["author_name"] == "claude/verifier"
+
+
+@pytest.fixture
+def contract_task(proj):
+    plan = plans.create_plan(proj, 'p')
+    return plans.create_task(proj, plan['id'], 't', goal='g', acceptance_criteria='a', checks=['cmd:true'])

@@ -250,3 +250,15 @@ def test_models_listed_per_provider_only():
     profs = {"claude-x": {"command": "claude", "model": "sonnet-x"}, "codex-x": {"provider": "codex", "command": "codex", "model": "gpt-x"}}
     assert [m["id"] for m in providers.available_models("codex", "codex-not-installed", profs)["models"]] == ["gpt-x"]
     assert [m["id"] for m in providers.available_models("claude", "claude", profs)["models"]] == ["sonnet-x"]
+
+
+def test_headless_timeout_is_failure_and_missing_executable_is_controlled(proj):
+    from research import agents
+    dispatch = {'argv': [sys.executable, '-c', 'import time; time.sleep(5)'], 'env': {},
+                'headless': True, 'usage_parser': None, 'policy': {}, 'role': 'implementer',
+                'profile': 'test', 'model': None}
+    result = agents.run_headless(proj, dispatch, timeout=0.05)
+    assert result['timed_out'] and result['exit_code'] == 124
+    dispatch['argv'] = ['/definitely/missing/research-agent']
+    with pytest.raises(ResearchError, match='Could not start agent'):
+        agents.run_headless(proj, dispatch)

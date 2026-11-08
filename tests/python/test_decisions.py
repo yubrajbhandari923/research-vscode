@@ -11,7 +11,7 @@ from research import api, approval as A, decisions as D, intervene as I, supervi
 from research.util import PolicyBlocked, ResearchError
 from test_intervention import WRONG, blocked, start, stub, ticks  # noqa: F401  (stub is a fixture)
 from test_supervisor import lproj  # noqa: F401
-from test_supervisor_fixes import phase
+from test_supervisor import phase
 
 GUIDE = {"kind": "intervention", "instruction": "try again with a hint", "actions": [{"type": "guide", "text": "write out.txt containing the word right"}, {"type": "retry"}]}
 FROZEN = {"kind": "intervention", "instruction": "fix the test", "actions": [{"type": "change_frozen_test", "path": "tests/x.py", "reason": "the assertion is wrong, see log"}]}

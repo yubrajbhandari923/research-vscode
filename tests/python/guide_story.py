@@ -9,7 +9,7 @@ from research import services as S
 from research import verification as V
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 
-from test_research_os import as_agent, as_human
+from conftest import as_agent, as_human
 
 
 def build(proj, monkeypatch):

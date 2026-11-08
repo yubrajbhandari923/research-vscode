@@ -11,6 +11,10 @@ from research.store import Project
 from research.util import NotFound, ResearchError
 
 from conftest import git
+from conftest import as_agent
+from research import context as C
+from research import plans
+from research.util import PolicyBlocked
 
 
 # ---------------------------------------------------------------------------- Plan CRUD
@@ -393,3 +397,65 @@ def test_task_links_to_experiment_and_question(proj):
     detail = V.task_detail(proj, task["id"])
     assert detail["question"]["id"] == q["id"]
     assert detail["experiment"]["id"] == e["id"]
+
+
+# ---- 6: project-wide blockers ----------------------------------------------------------------------------
+def test_blocked_task_in_another_active_plan_is_listed(proj):
+    from research import context
+    a, b = plans.create_plan(proj, 'a'), plans.create_plan(proj, 'b')
+    for pl in (a, b):
+        plans.update_plan(proj, pl['id'], status='active')
+    t = plans.create_task(proj, b['id'], 'stuck')
+    plans.update_task(proj, t['id'], status='blocked', blockers='need data')
+    assert [x['id'] for x in context.research_home(proj)['blocked_tasks']] == [t['id']]
+
+
+def test_dependency_cycles_rejected_without_mutation(proj):
+    plan = plans.create_plan(proj, 'plan')
+    a = plans.create_task(proj, plan['id'], 'a')
+    b = plans.create_task(proj, plan['id'], 'b', depends_on=[a['id']])
+    for deps in ([a['id']], [b['id']]):
+        with pytest.raises(ResearchError, match='cycle'):
+            plans.update_task(proj, a['id'], depends_on=deps)
+        assert not proj.get('task', a['id'])['depends_on']
+
+
+def test_claims_release_and_next(proj, monkeypatch):
+    plan = P.create_plan(proj, "P")
+    t1 = P.create_task(proj, plan["id"], "one")
+    t2 = P.create_task(proj, plan["id"], "two")
+    as_agent(proj, "claude", "implementer", monkeypatch)
+    started = P.start_task(proj, t1["id"])
+    assert started["claimed_by"] == "claude/implementer" and started["claimed_at"]
+    assert P.get_next_ready_task(proj, plan["id"])["id"] == t2["id"]  # claimed tasks are skipped
+    as_agent(proj, "codex", None, monkeypatch)
+    with pytest.raises(PolicyBlocked, match="claimed by claude/implementer"):
+        P.start_task(proj, t1["id"])
+    assert P.start_task(proj, t1["id"], force=True)["claimed_by"] == "codex"
+    rel = P.release_task(proj, t1["id"], "handing back: loader half done")
+    assert rel["status"] == "todo" and rel["claimed_by"] is None
+    notes = P.progress_notes(proj, t1["id"])
+    assert notes[0]["text"] == "handing back: loader half done" and notes[0]["author_name"] == "codex"
+
+
+def test_start_keeps_role_and_warns_when_not_ready(proj):
+    plan = P.create_plan(proj, "P")
+    t1 = P.create_task(proj, plan["id"], "one", assigned_role="verifier")
+    t2 = P.create_task(proj, plan["id"], "two", depends_on=[t1["id"]])
+    assert P.start_task(proj, t1["id"])["assigned_role"] == "verifier"
+    assert "not ready" in P.start_task(proj, t2["id"])["warnings"][0]
+
+
+def test_stale_tasks_reach_home_and_current_md(proj):
+    plan = P.create_plan(proj, "P")
+    t = P.create_task(proj, plan["id"], "slow")
+    P.start_task(proj, t["id"])
+    proj.conn.execute("UPDATE tasks SET updated_at='2020-01-01T00:00:00+00:00', claimed_at='2020-01-01T00:00:00+00:00'")
+    proj.conn.execute("UPDATE events SET ts='2020-01-01T00:00:00+00:00' WHERE entity_id=?", (t["id"],))
+    stale = P.stale_tasks(proj)
+    assert [x["id"] for x in stale] == [t["id"]] and stale[0]["idle_hours"] > 1000
+    home = C.research_home(proj)
+    assert any(a["kind"] == "stale_task" and a["id"] == t["id"] for a in home["attention_items"])
+    assert "STALE" in C.render_current_md(proj)
+    P.add_task_note(proj, t["id"], "still going")  # activity clears staleness
+    assert P.stale_tasks(proj) == []

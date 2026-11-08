@@ -10,7 +10,7 @@ from research import api, decisions as D, intervene as I, investigator as INV
 from research.util import PolicyBlocked, ResearchError
 from test_intervention import WRONG, blocked, start, ticks
 from test_supervisor import lproj  # noqa: F401
-from test_supervisor_fixes import phase
+from test_supervisor import phase
 
 FAKE = os.path.join(os.path.dirname(__file__), "fakes", "investigator")
 ADD = {"type": "add_task", "task": {"key": "extra", "title": "Extra diagnostic", "prompt": "print the environment", "agent": {"role": "implementer"}, "checks": ["file:env.txt"]}}

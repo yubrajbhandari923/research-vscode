@@ -311,3 +311,31 @@ def test_agent_setup_rpc_and_strategy_use(proj, repo):
     c("strategy_use", name="opus_first")
     d = c("agent_setup")
     assert d["strategy"]["name"] == "opus_first" and any(x["active"] for x in d["strategies"])
+
+
+# ------------------------------------------------------------------ agent files
+def test_strategy_aware_agent_files(proj, repo):
+    ad = repo / ".claude" / "agents"
+    ad.mkdir(parents=True)
+    (ad / "research-haiku.md").write_text("<!-- research:managed -->\nlegacy\n")
+    (ad / "research-deep.md").write_text("mine, no marker\n")
+    (ad / "my-agent.md").write_text("custom\n")
+    SA.setup(proj, apply=True, strategy="sonnet_first")
+    fast = (ad / "research-fast.md").read_text()
+    assert "model: claude-haiku-5-5" in fast and "WORKER" in fast and "orchestrate verify" in fast and "sonnet_first" in fast
+    bal = (ad / "research-balanced.md").read_text()
+    assert "COORDINATOR" in bal and "orchestrate contract" in bal and "research hook list" in bal and "← you" in bal
+    assert "escalat" in bal.lower() and "claude-opus-5-5" in bal
+    assert (ad / "research-deep.md").read_text() == "mine, no marker\n" and (ad / "my-agent.md").read_text() == "custom\n"
+    assert not (ad / "research-haiku.md").exists() and (repo / ".research" / "cache" / "removed-agents" / "research-haiku.md").exists()
+    before = (ad / "research-fast.md").read_text()
+    use_active(proj, "haiku_max")
+    plan = SA.plan_agent_files(proj)
+    assert any(f["tier"] == "fast" and f["state"] == "update" for f in plan)       # attempts differ → stale, will refresh
+    SA.setup(proj, apply=True)
+    assert (ad / "research-fast.md").read_text() != before and "haiku_max" in (ad / "research-fast.md").read_text()
+
+
+def use_active(p, name="sonnet_first"):
+    p.save_config({"orchestration.active_strategy": name})
+    p.config = p.load_config()

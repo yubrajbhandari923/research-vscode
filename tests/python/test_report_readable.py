@@ -8,8 +8,10 @@ from research import fullreport as FR
 from research import report as RP
 from research import services as S
 from research import verification as V
-from test_research_os import as_agent, as_human
+from conftest import as_agent, as_human
 import guide_story as GS
+import sys
+from research import runs as R
 
 
 @pytest.fixture
@@ -61,3 +63,32 @@ def test_full_report_gains_contents_and_stays_deterministic_and_complete(proj, s
     assert cov["ok"], cov
     for s in FR.SECTIONS:
         assert f"## {s}" in text
+
+
+def _exp_with_runs(p, repo, n=2):
+    q = S.create_question(p, "Does alpha matter?")
+    e = S.create_experiment(p, "alpha sweep", question=q["id"], parameters={"alpha": [0.1, 0.5]}, planned_runs=6)
+    (repo / "sim.py").write_text(
+        "import research,sys\na=float(sys.argv[1])\nresearch.log_metric('err', abs(a-0.5))\n"
+        "open(f'out_{a}.png','wb').write(b'\\x89PNG\\r\\n')\nresearch.register_artifact(f'out_{a}.png', description='plot')\n")
+    runs = [R.exec_run(p, e["id"], f"{sys.executable} sim.py {a}", parameters={"alpha": a}, tee=False)
+            for a in (0.1, 0.5)[:n]]
+    return q, e, runs
+
+
+def test_report_md_and_html(proj, repo, monkeypatch):
+    q, e, runs = _exp_with_runs(proj, repo)
+    arts = R.list_artifacts(proj, run=runs[1]["id"])
+    f = S.create_finding(proj, "alpha 0.5 is best", supports=[runs[1]["id"], arts[0]["id"]], limitations="one seed")
+    S.synthesize(proj, e["id"], interpretation="U-shaped", next_experiment="probe 1.0-1.5")
+    out = RP.write_report(proj, None, "both")
+    md = (repo / ".research/reports/project.md").read_text()
+    assert "## What we learned" in md and "alpha 0.5 is best" in md and "| run | status | alpha | err |" in md
+    assert "](../../out_0.5.png)" in md and "U-shaped" in md
+    html = (repo / ".research/reports/project.html").read_text()
+    assert 'src="../../out_0.5.png"' in html and "<table>" in html and 'class="tbl-wrap"' in html
+    scoped = RP.write_report(proj, q["id"], "md")
+    assert scoped["paths"] == [".research/reports/Q-001.md"]
+    custom = repo / "docs" / "r.md"
+    RP.write_report(proj, e["id"], "md", str(custom))
+    assert "](../out_0.5.png)" in custom.read_text()  # image paths follow the output folder

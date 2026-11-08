@@ -9,7 +9,7 @@ from research import guide_quarto as GQ
 from research import provenance as PV
 from research import verification as V
 from research.util import ResearchError
-from test_research_os import as_agent, as_human
+from conftest import as_agent, as_human
 import guide_story as GS
 
 needs_quarto = pytest.mark.skipif(GQ.find_quarto() is None, reason="Quarto is not installed")

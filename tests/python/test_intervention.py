@@ -16,7 +16,7 @@ from research.util import PolicyBlocked, ResearchError
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fakes"))
 from fake_telegram import FakeTelegram  # noqa: E402
 from test_supervisor import lproj, run_until  # noqa: F401  (lproj is a fixture)
-from test_supervisor_fixes import phase, plan, run_attempts, t
+from test_supervisor import phase, plan, run_attempts, t
 
 TOKEN = "123456789:AAH-fake_token_for_tests_0123456789abc"
 HUMAN = {"author_type": "human", "author_name": "alice", "author_model": None}
@@ -437,7 +437,7 @@ def test_cli_surfaces_exist_and_fail_clearly(lproj, tmp_path):
 
 def test_cli_intervention_approve_asks_for_the_pin_in_a_real_terminal(lproj, stub, tmp_path, monkeypatch):
     from research import localbin
-    from test_cli_pin_link_escalation import env_for, pty_run
+    from conftest import env_for, pty_run
     xdg = tmp_path / "xdgp"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     A.set_pin("4321")

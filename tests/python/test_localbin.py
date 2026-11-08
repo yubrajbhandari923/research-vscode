@@ -10,6 +10,10 @@ from research import localbin
 from research import mcp as MCP
 
 from conftest import git
+from conftest import env_for
+from research import workspace as W
+from research.store import Project
+from test_approval import cli  # noqa: F401  (fixture)
 
 
 def _bare_env(tmp_path):
@@ -95,3 +99,43 @@ def test_launcher_execs_the_recorded_interpreter_and_replaces_old_vendored_copy(
     assert r.returncode == 127 and "is gone" in r.stderr
     from research import machine
     assert os.path.realpath(proj.root) in machine.known_projects()
+
+
+# ------------------------------------------------------------------------------------------------ ./research in main
+def test_install_links_research_into_main_runs_from_there_and_stays_out_of_git(cli):
+    link = os.path.join(cli["repo"], "research")
+    assert os.path.islink(link) and os.path.realpath(link) == os.path.realpath(cli["bin"])
+    r = subprocess.run(["./research", "approval", "status"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
+    assert r.returncode == 0 and "PIN" in r.stdout, r.stderr
+    r = subprocess.run(["./research", "plan", "status", "demo-plan"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
+    assert r.returncode == 0 and "demo-plan" in r.stdout, "it resolves the project from main, through the link"
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=cli["repo"], capture_output=True, text=True).stdout
+    assert "research\n" not in status.replace("research.pre-ledger", ""), "the link is git-excluded, never committed"
+
+
+def test_link_never_replaces_real_files_and_unlink_removes_only_its_own_link(cli):
+    os.remove(os.path.join(cli["repo"], "research"))
+    os.mkdir(os.path.join(cli["repo"], "research"))                     # the project has its own `research/` package
+    r = localbin.install(cli["repo"], force=True)                       # installing must still succeed; only the convenience link is skipped
+    assert r["link"]["created"] is False and "already exists" in r["link"]["error"] and os.path.isdir(os.path.join(cli["repo"], "research"))
+    r = subprocess.run([cli["bin"], "bin", "link"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
+    assert r.returncode != 0 and "already exists" in r.stdout + r.stderr and os.path.isdir(os.path.join(cli["repo"], "research"))
+    r = subprocess.run([cli["bin"], "bin", "link", "--name", "rs"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
+    assert r.returncode == 0 and os.path.islink(os.path.join(cli["repo"], "rs"))
+    subprocess.run([cli["bin"], "bin", "unlink", "--name", "rs"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True)
+    assert not os.path.lexists(os.path.join(cli["repo"], "rs")) and os.path.isdir(os.path.join(cli["repo"], "research")), "a real directory is untouched"
+
+
+def test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlink_safe(cli, tmp_path):
+    p = Project(cli["repo"])
+    e = p.list("experiment")[0] if p.list("experiment") else None
+    try:
+        if e:
+            ws = W.ensure_for_experiment(p, e["id"])
+            assert localbin.link(ws["path"]) is None
+    finally:
+        p.close()
+    assert "$0" not in open(cli["bin"]).read()                          # never locates itself by path, so a symlink cannot confuse it
+    os.symlink(cli["bin"], tmp_path / "elsewhere")                      # a link from any directory, relative cwd
+    r = subprocess.run([str(tmp_path / "elsewhere"), "approval", "status"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
