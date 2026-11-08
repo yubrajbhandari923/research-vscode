@@ -23,9 +23,11 @@ GLYPHS = {"letters": {
     "O": [" ███ ", "█   █", "█   █", "█   █", " ███ "]}}
 BANNER = [" ".join(GLYPHS["letters"][c][i] for c in "RESEARCHOS") for i in range(5)]  # 59 columns
 GRADIENT = [(0, 215, 255), (60, 120, 255), (200, 80, 255)]  # cyan -> blue -> magenta
-STATUS = {"blue": "running queued submitted created active", "green": "passed ok succeeded completed done supported approved applied healthy",
-          "red": "failed error refuted rejected", "dark_orange": "pending warn proposed needs_review blocked revision_requested ready open",
-          "grey62": "cancelled archived superseded abandoned expired"}
+STATUS = {"blue": "running queued submitted created active investigating verify",
+          "green": "pass passed ok succeeded completed done supported approved applied healthy answered",
+          "red": "fail failed error refuted rejected contradicted",
+          "dark_orange": "pending warn proposed needs_review needs_work blocked revision_requested ready open preliminary",
+          "grey62": "cancelled archived superseded abandoned expired todo reversed unknown"}   # every core status must appear (test_tui_badges)
 
 
 def plain() -> bool:
