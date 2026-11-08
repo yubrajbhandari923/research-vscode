@@ -115,6 +115,9 @@ DUR = re.compile(r"\b\d+(\.\d+)?\s?(ms|s)\b")
 
 
 def norm(s: str, roots) -> str:
+    s = s.replace(sys.executable, "<PYEXE>")   # first: the interpreter may live inside the repo (.venv) or anywhere else
+    for r in {REPO_ROOT, os.path.realpath(REPO_ROOT)}:   # first, before any other rule can rewrite part of the path (long hex runs, dates...): the checkout's real location, wherever it lives
+        s = s.replace(r, "<REPO>")
     for r in roots:
         s = s.replace(r, "<ROOT>")
         s = s.replace(os.path.realpath(r), "<ROOT>")
@@ -130,8 +133,6 @@ def norm(s: str, roots) -> str:
     s = s.replace(sys.executable, "<PYEXE>")
     s = re.sub(r"(?<![\w.])\d+(\.\d+)?s\b", "<DUR>", s)   # whole-second durations too: a loaded machine turns 0s into 1s
     s = re.sub(r"\((\d+) B\)", "(<N> B)", s)               # file sizes in run-directory listings vary by a byte or two between runs
-    for r in {REPO_ROOT, os.path.realpath(REPO_ROOT)}:   # the checkout's real location, whatever it is called or wherever it lives (dev box, CI, a worktree)
-        s = s.replace(r, "<REPO>")
     s = re.sub(r"[A-Za-z0-9_.-]*research-vscode[^\s\"']*", "<REPO>", s)
     host = __import__("socket").gethostname().split(".")[0]      # the domain suffix depends on the network the machine is on
     s = re.sub(re.escape(host) + r"(\.[A-Za-z0-9-]+)*", "<HOST>", s)
