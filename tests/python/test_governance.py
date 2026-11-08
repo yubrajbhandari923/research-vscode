@@ -170,3 +170,20 @@ def test_agent_cannot_set_a_finding_supported_by_editing_its_file(proj, repo, mo
 
 
 # the Telegram offset/0600 test moved to test_chat_telegram.py (offset saved before handling, per-gateway cursors, 0600 files)
+
+def test_grants_do_not_leak_across_threads():
+    # a human grant held by one thread (e.g. the investigator's worker) must never authorise another thread of the same process
+    import threading
+    from research import governance as G, supervisor as SV
+    seen = {}
+    with G.approved("t"), SV.human_grant("t"):
+        assert G._GRANTS.get() and SV._HUMAN_GRANTS.get()
+
+        def other():
+            seen["governance"] = bool(G._GRANTS.get())
+            seen["supervisor"] = bool(SV._HUMAN_GRANTS.get())
+        t = threading.Thread(target=other)
+        t.start()
+        t.join()
+    assert seen == {"governance": False, "supervisor": False}
+    assert not G._GRANTS.get() and not SV._HUMAN_GRANTS.get()

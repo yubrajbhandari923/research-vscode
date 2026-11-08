@@ -16,6 +16,7 @@ complete a supervised task.
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import json
 import os
 import re
@@ -85,20 +86,21 @@ def _event(p: Project, tid: Optional[str], action: str, summary: str) -> None:
     p.event("task" if tid else "plan", tid, action, taskprompt.redact(summary) or "")
 
 
-_HUMAN_GRANTS: List[str] = []   # in-process only: pushed while an intervention a human already approved is being applied
+# Per-thread (context): pushed while an intervention a human already approved is being applied; never visible to another thread.
+_HUMAN_GRANTS: "contextvars.ContextVar[tuple]" = contextvars.ContextVar("research_human_grants", default=())
 
 
 @contextlib.contextmanager
 def human_grant(reason: str) -> Iterator[None]:
-    _HUMAN_GRANTS.append(reason)
+    tok = _HUMAN_GRANTS.set(_HUMAN_GRANTS.get() + (reason,))
     try:
         yield
     finally:
-        _HUMAN_GRANTS.pop()
+        _HUMAN_GRANTS.reset(tok)
 
 
 def require_human(p: Project, what: str) -> None:
-    if _HUMAN_GRANTS:
+    if _HUMAN_GRANTS.get():
         return
     if (p.author or {}).get("author_type") not in (None, "human") :
         from . import approval

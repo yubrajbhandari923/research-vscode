@@ -724,7 +724,7 @@ class Project:
                                    {"author_type": "system"})
                 if etype == "finding" and changes.get("status") == "supported" and cur.get("status") != "supported":
                     from . import governance as _g
-                    if _g.is_agent(self) and not _g._GRANTS:    # supported needs a human review
+                    if _g.is_agent(self) and not _g._GRANTS.get():    # supported needs a human review
                         changes.pop("status")
                         self.event("finding", id_, "import_rejected", f"status: supported from {self.rel(path)} refused: agents cannot mark findings supported",
                                    {"author_type": "system"})
