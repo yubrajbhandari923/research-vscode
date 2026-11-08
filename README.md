@@ -21,15 +21,56 @@ an index. It supports local runs, Remote SSH, SLURM and portable HPC bundles. It
 scientific notebooks, validate scientific truth, or autonomously schedule your research. Optional job isolation
 restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries are advisory). There is no required cloud service.
 
-> [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) · [Governance](docs/GOVERNANCE.md) ·
-> [Supervisor](docs/SUPERVISOR.md) · [Changelog](CHANGELOG.md).
+> [Getting started](docs/QUICKSTART.md) · [Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) · [Governance](docs/GOVERNANCE.md) ·
+> [Supervisor](docs/SUPERVISOR.md) · [Chat](docs/CHAT.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Changelog](CHANGELOG.md).
 
-## First run
+## Quick start (5 minutes)
 
-From a terminal, `research init my-project --layout ledger --apply` (preview without `--apply`), or open an empty folder in VS Code and run **Research: Initialize Project**.
-See [docs/QUICKSTART.md](docs/QUICKSTART.md) for both paths; agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
-The wizard creates `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each), links the shipped
-skills for your agents, registers the MCP server, approves nine starter hooks and creates the Scientist Guide: nothing is pushed.
+```bash
+# 1. Install the CLI from the latest GitHub release (wheel), in its own environment
+uv tool install ./research_panel-X.Y.Z-py3-none-any.whl      # or: pipx install ./research_panel-X.Y.Z-py3-none-any.whl
+research version
+
+# 2. Create a project (a preview; add --apply to create it)
+research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude
+research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude --apply
+cd sparse-ct/main && research doctor
+
+# 3. Set up an agent and a model strategy (you install and sign in to the agent's own CLI)
+research agent setup claude --apply
+research strategy use balanced_first
+
+# 4. Run a plan: validate, apply, start the supervisor
+research plan yaml template -o plans/research.yaml           # edit it, or use the example in the guide
+research plan yaml validate plans/research.yaml
+research plan yaml apply plans/research.yaml
+research plan run PLAN-001
+
+# 5. Watch and steer
+research tui                                                 # needs the [tui] extra
+research plan status PLAN-001
+```
+
+Prefer VS Code? Install the `.vsix` from the same release, open an empty folder and run **Research: Initialize Project**.
+The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](docs/QUICKSTART.md).
+
+## Feature tour
+
+| You want to | Look at |
+|---|---|
+| Install, update, match the extension and CLI versions | [Install](#install), [Getting started](docs/QUICKSTART.md#1-install) |
+| Let agents run a plan while you sleep, with checks and retries | [Supervisor](docs/SUPERVISOR.md), [Plans, tasks and agents](#plans-tasks-and-agents) |
+| Choose which model does which work (fast, balanced, deep) | [Providers and strategies](docs/PROVIDERS.md), [Model allocation](#model-allocation-and-contracts) |
+| Watch from a terminal or a panel | [`research tui`](docs/QUICKSTART.md#5-watching-and-steering), [Control Center](#control-center) |
+| Answer questions and steer from Telegram or Discord | [Chat](docs/CHAT.md) |
+| Keep scientific decisions in human hands | [Governance and the approval PIN](docs/GOVERNANCE.md) |
+| Survive provider usage limits unattended | [Usage limits](docs/QUICKSTART.md#8-usage-limits) |
+| Tell the story of your results | [Scientist Guide](docs/GUIDE.md) |
+| Give agents skills, hooks and MCP tools | [Skills, hooks and MCP](docs/AGENT_TOOLS.md) |
+| Fix a problem | [Troubleshooting](docs/TROUBLESHOOTING.md) |
+
+The project layout is `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each). Initialization links the shipped
+skills for your agents, registers the MCP server, approves nine starter hooks and creates the Scientist Guide. Nothing is pushed.
 
 ## Control Center
 
@@ -387,7 +428,7 @@ SQLite journal files blindly.
 | Symptom | Next action |
 |---|---|
 | "… is a Research OS v1 project" | It is a v1 project and was not touched; see "Starting a v2 project in a v1 folder" below |
-| CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install` |
+| CLI missing | Install it (see Install), use `.research/bin/research`, or run `research bin install`; more in [Troubleshooting](docs/TROUBLESHOOTING.md) |
 | Python fails to start in VS Code | Check Output → Research and `research.cliPath` (run `research version --json`) |
 | Run budget blocks an agent | Review failures and synthesize before launching more runs |
 | Required hook blocks work | Inspect its exact command, then have a human approve or deliberately disable it |
@@ -410,7 +451,7 @@ Re-register what still matters with `research question create`, `research findin
 
 ## Documentation
 
-[Quick start](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Getting started](docs/QUICKSTART.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [Chat](docs/CHAT.md) · [Configuration](docs/CONFIGURATION.md) ·
 [Technical specification](docs/SPEC.md) · [Scientist Guide](docs/GUIDE.md) · [Skills, hooks and MCP](docs/AGENT_TOOLS.md) ·
 [Providers](docs/PROVIDERS.md) · [Supervisor](docs/SUPERVISOR.md) · [Setup](docs/SETUP.md) ·
 [Changelog](CHANGELOG.md).
