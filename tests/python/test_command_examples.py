@@ -49,8 +49,6 @@ def test_example_parses(where, text, capsys, parser):
     except ValueError:
         pytest.skip('contains prose quoting')
     # Placeholders were elided, so a missing required argument is fine; a bad subcommand, choice or flag is not.
-    if text.startswith('research checkpoint -'):  # docs omit the `create` action: fix the docs, then delete this line
-        pytest.xfail('doc bug: bare `research checkpoint --flags`')
     try:
         parser.parse_args(argv)
     except SystemExit as e:

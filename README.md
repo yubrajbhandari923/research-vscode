@@ -193,7 +193,7 @@ research finding create "A conclusion supported by the observed results" \
   --supports EXP-001 RUN-0001 --confidence medium --limitations "Single seed"
 research finding create "A direction that failed" --kind failure --supports RUN-0003
 research decision create "The next research decision" --findings F-001
-research checkpoint --problem "Remaining uncertainty" --next "Next experiment"
+research checkpoint create --problem "Remaining uncertainty" --next "Next experiment"
 research resume
 research current
 ```

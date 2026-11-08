@@ -161,7 +161,7 @@ Everything below is implemented and covered by tests unless marked otherwise. Se
 | VS Code: Agents tab | Providers, the active strategy and its routing, tasks in flight (model pins, contracts), harness hooks (approve, run, enable), skills, MCP servers and managed agent files (Control Center) | 13A |
 | Reports | `research report`: Markdown + HTML summary of findings with evidence plots, experiments, decisions | 9.7 |
 | Search | `research search` / VS Code search box across every record | 9.6 |
-| Git snapshots | `research checkpoint --commit` commits `.research/` only (opt-in, never pushes) | 9.2 |
+| Git snapshots | `research checkpoint create --commit` commits `.research/` only (opt-in, never pushes) | 9.2 |
 | Theme-native design | Built only on VS Code theme variables; light, dark and high contrast | 13.12 |
 
 ---
@@ -1359,7 +1359,7 @@ research run sweep EXP-001 [--grid lr=1e-3,1e-4 --grid bs=32,64] [--mode local|d
 (`use_draft=False` / `--no-draft` disables filling). The VS Code form shows the draft for editing and saves with
 `use_draft=False`.
 
-**Git snapshot (opt-in).** `create_checkpoint(commit=True)` (`research checkpoint --commit`, the form's checkbox, the MCP
+**Git snapshot (opt-in).** `create_checkpoint(commit=True)` (`research checkpoint create --commit`, the form's checkbox, the MCP
 `checkpoint_create` tool), or every checkpoint when `git.commit_checkpoints: true`, then runs `gitinfo.snapshot`:
 `git add -- .research` and `git commit --only -m "research: CP-00N <title>" -- .research`. Only `.research/` is committed;
 anything else you have staged stays staged and uncommitted; nothing is pushed. The `committed` event is logged *before*
@@ -2458,7 +2458,7 @@ Telegram controls inside a running VS Code window (they are type-checked and bun
 
 1. **Never deletes or moves user data.** Artifacts are references. `rebuild` backs up the DB before replacing it.
    Research records and artifact references are retained. Skill removal moves managed skills to backup; arbitrary user commands and hooks can modify files with the user’s permissions.
-2. **Never pushes**, and commits only in opt-in or supervised cases: `checkpoint --commit` (or `git.commit_checkpoints: true`)
+2. **Never pushes**, and commits only in opt-in or supervised cases: `checkpoint create --commit` (or `git.commit_checkpoints: true`)
    commits `.research/` and nothing else and leaves other staged changes alone; the supervisor commits an agent's verified work in that task's worktree (`supervisor.commit_verified_work`, excluding `supervisor.commit_exclude`); unattended promotion (opt-in, two keys) fast-forwards local `main` and nothing else. No force, rebase or push, ever. Managed writes outside `.research/` include the `AGENTS.md` block, skill links, generated agent definitions, the configured Scientist Guide and explicitly installed MCP entries. Runs, checks and hooks can write anywhere permitted by the operating system.
 2a. **Removed skills are kept** in `.research/cache/removed-skills/` (remove, `--force` re-import, update).
 3. **Never silently rewrites history.**

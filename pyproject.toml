@@ -18,7 +18,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-xdist>=3"]
-tui = ["textual>=0.80"]
+tui = ["textual>=0.80; python_full_version >= '3.8.1'"]
 
 [project.scripts]
 research = "research_cli.main:main"
