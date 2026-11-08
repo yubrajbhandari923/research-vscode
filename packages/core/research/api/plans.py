@@ -147,6 +147,8 @@ def supervisor_task(p, task: str, action: str, note: Optional[str] = None, reaso
         return SV.void_attempts(p, task, note or reason or "attempts voided by a human", attempts)
     if action == "continue":
         return SV.continue_with(p, task, reason or "", note)
+    if action == "wait":       # a provider-limit decision request: wait for the reset however far away it is
+        return SV.wait_for_limit(p, task)
     if action in ("failed", "completed", "retry", "unblock"):
         return SV.resolve(p, task, action, note)
     raise ResearchError(f"unknown task action {action!r}")

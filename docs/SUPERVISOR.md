@@ -129,7 +129,7 @@ engineering failure: checks decide, not the sign of the result.
 | Checks fail (incorrect implementation, ambiguous spec, weak oracle) | Repair attempt with the diagnostics, up to `max_attempts_per_task` and `max_total_attempts` |
 | Environment (missing module, permissions) or resource limit | Task blocked for a human: not repairable by retrying |
 | Agent process crashed | Counts as an attempt; repaired within limits |
-| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically, unless `agents.handoff` is enabled with `on_provider_unavailable: try_next`, which continues with the next provider in `fallback_order` |
+| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically, unless `agents.handoff` is enabled with `on_provider_unavailable: try_next`, which continues with the next provider in `fallback_order`, or you opt in to waiting for the reset (§21) |
 | Unknown process state | *Attention*; never retried automatically; you settle it (`supervisor resolve`, UI **Retry**) |
 | Scientific assumption reported by the agent | *Attention* and a proposal; nothing continues |
 
@@ -418,3 +418,37 @@ structured outcome that Research OS validates against the closed action vocabula
 
 When the budget or run limit is used up (or the agent cannot start), nothing is called and the reply is a plain-text note telling you how to instruct the supervisor yourself;
 a decision request you answered in text stays open.
+
+## 21. Usage limits: wait and resume by itself (opt-in)
+
+A 5-hour or weekly limit ends on its own, so nobody needs to be there to press Retry. Off by default (`halt` is the behaviour described in §6); opt in with
+`supervisor.usage_limit.on_limit`:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `supervisor.usage_limit.on_limit` | `halt` | `halt`: the task stops at *attention* (today). `wait`: only the tasks that use that provider pause until it resets, then relaunch by themselves. `fallback_then_wait`: first the next provider of `agents.handoff.fallback_order`, else wait |
+| `supervisor.usage_limit.wait_buffer_seconds` | `120` | added after the provider's stated reset time |
+| `supervisor.usage_limit.max_wait_hours` | `8` | a reset further away (a weekly limit) is not waited out unattended: a decision request asks you to wait, switch provider, or stop |
+| `supervisor.usage_limit.unknown_reset_backoff_minutes` | `[15, 30, 60]` | relaunch intervals when the reset time is unknown; the last repeats |
+| `supervisor.usage_limit.short_backoff_minutes` | `[1, 2, 5]` | the same for rate and overload errors with no reset time |
+
+**Detection.** Every finished attempt, failed or exit 0, has its stdout **and** stderr read through the provider's adapter (`providers.limit_info`: Claude, Codex, opencode,
+agy; formats and which are real or realistic in `docs/PROVIDERS.md`), then through the structured-output check `halt` always used. Claude's weekly limit can exit 1 with nothing
+on stdout; the supervisor then reads the last API-error message of the session transcript (`~/.claude/projects/...`) when there is one. A run the supervisor stopped for its own
+timeout is read too (a provider may sleep inside its own retry loop, for example Claude with `CLAUDE_CODE_RETRY_WATCHDOG=1`; the attempt timeout, 90 minutes by default, is what ends that sleep,
+and the limit text is read from what it printed so far; a provider that printed nothing before the timeout is treated as an ordinary failure, which is the known gap).
+
+**What happens.** The attempt is voided and refunded exactly as before: it does not count against `max_attempts_per_task` or `max_total_attempts`; approvals and governance are untouched.
+The limit is stored per account (profile `account`, else the provider; all profiles of one provider share one login) in `.research/supervisor/limits.json`, so it survives a daemon restart.
+Tasks routed to that account enter phase `waiting_provider` with `resume_at` and are not launched; tasks on other providers keep running. When the time comes the voided attempt is relaunched
+with its session resumed where the adapter supports it. The daemon sleeps until the earliest `resume_at` (at most a minute at a time) instead of polling. Time spent waiting does not count
+toward `max_wall_minutes`. Pausing or stopping the plan always wins: a paused plan relaunches nothing, and Resume continues the wait. A reset that is not yet known keeps relaunching
+at the backoff intervals; a refused relaunch costs nothing.
+
+`fallback_then_wait` never weakens a rule: a fallback is skipped when a strategy level routes the task, when the other profile's model is not in `orchestration.available`, or when that account is
+limited too; the task then waits. A credit-balance refusal (no reset time) is never waited out blindly: it asks you.
+
+**Visibility.** Events `supervisor_waiting_provider` and `supervisor_resumed_after_limit`. With chat on, one alert when the wait starts (`Claude limit reached; resuming about 15:05 (in 1h 42m);
+other tasks continue`) and one when it resumes. Plan health becomes `waiting_for_provider` and the plan status (`supervisor_status`, `research plan status`) carries
+`waiting_provider: {provider, until, until_ts, tasks}` (ISO UTC time, epoch seconds, number of waiting tasks; `null` when nothing waits) for a status chip, and each task row has `resume_at`.
+A wait beyond `max_wait_hours` is a decision request (options `wait`, `switch`, `stop`; none is protected).

@@ -33,6 +33,8 @@ SUPERVISOR: Dict[str, Any] = {
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
     "investigator": {"auto": False, "max_per_plan": 3, "budget_usd": 2.0},   # on-demand investigator agent (investigator.py); auto = also on unclassified failures
+    "usage_limit": {"on_limit": "halt", "wait_buffer_seconds": 120, "max_wait_hours": 8,      # H.10: what a provider usage/rate limit does (supervisor.py)
+                    "unknown_reset_backoff_minutes": [15, 30, 60], "short_backoff_minutes": [1, 2, 5]},
     "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
     "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
 }
@@ -51,6 +53,7 @@ AUTO_PROMOTION: Dict[str, Any] = {
 }
 NOTIFICATIONS: Dict[str, Any] = {
     "halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False},
+    "discord": {"enabled": False, "thread_per_task": True},
     "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit"],
                "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
     "digest": {"at": None, "silent_if_unchanged": True},
@@ -339,6 +342,12 @@ OPTIONS: List[Option] = [
        why="An agent saying it is finished is not evidence.", effect="Off lets any actor complete supervised tasks through the ordinary gates.", risk="policy"),
     _o("supervisor.auto_apply_operational", "bool", "supervisor", "Auto-apply operational plan changes", "Agent proposals that only add new tasks (diagnostics, follow-ups) are applied without asking, up to the limit below.",
        why="Lets agents add a missing diagnostic step without stalling the plan.", effect="Off: every proposal waits for you.", risk="policy"),
+    _o("supervisor.usage_limit.on_limit", "enum", "supervisor", "When a provider's usage limit is hit", "halt: stop the task for you (today's behaviour). wait: pause only the tasks that use that provider until it resets, then relaunch them by themselves. fallback_then_wait: first try the next provider in agents.handoff.fallback_order (only where strategy, roles and orchestration.available allow it), else wait.",
+       choices=["halt", "wait", "fallback_then_wait"], why="A 5-hour or weekly limit ends by itself; nobody needs to be there to press Retry.", effect="Applies to the next limit. Attempts refused by a limit never count against the budgets; approvals and governance are untouched.", risk="policy"),
+    _o("supervisor.usage_limit.wait_buffer_seconds", "int", "supervisor", "Extra wait after the reset", "Seconds added after the provider's stated reset time before the task is relaunched.", why="Clocks differ by a minute or two.", effect="Applies to the next limit.", min_=0, max_=3600, unit="seconds"),
+    _o("supervisor.usage_limit.max_wait_hours", "float", "supervisor", "Longest unattended wait", "A reset further away than this (a weekly limit, say) is not waited out silently: the supervisor asks you (wait, switch provider, or stop).", why="Never an unattended multi-day wait unless you raise it.", effect="Applies to the next limit.", min_=0, max_=720, unit="hours", risk="policy"),
+    _o("supervisor.usage_limit.unknown_reset_backoff_minutes", "list", "supervisor", "Retry intervals when the reset time is unknown", "Minutes between relaunches when the provider did not say when the limit ends; the last value repeats. A refused relaunch costs nothing.", why="The relaunch is the probe; no extra paid call is made.", effect="Applies to the next limit.", unit="minutes"),
+    _o("supervisor.usage_limit.short_backoff_minutes", "list", "supervisor", "Retry intervals for rate and overload errors", "Minutes between relaunches after a short-lived rate-limit or overload error with no reset time; the last value repeats.", why="These clear in minutes, not hours.", effect="Applies to the next limit.", unit="minutes"),
     _o("supervisor.investigator.auto", "bool", "supervisor", "Investigate failures automatically", "When a task hits a failure the supervisor cannot classify, run the investigator agent once (read-mostly, never approves). Off: it only runs when you ask (`research investigate`, or a free-text answer to a decision request).",
        why="Novel failures need judgment the rules do not have.", effect="Spends model budget; capped by the two settings below. Protected changes still need your PIN.", risk="policy"),
     _o("supervisor.investigator.max_per_plan", "int", "supervisor", "Investigator runs per plan", "Most investigator runs for one plan; after that the supervisor just asks you in plain text.", why="Bounds spend.", effect="Further questions wait for you.", min_=0, max_=50),
@@ -398,6 +407,10 @@ OPTIONS: List[Option] = [
        why="Lets a cautious team review every instruction before it runs.", effect="Operational interventions wait in 'proposed' until approved."),
     _o("notifications.telegram.enabled", "bool", "supervisor", "Telegram notifications", "Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`).",
        why="An overnight run that stops should reach you.", effect="The supervisor contacts api.telegram.org while enabled."),
+    _o("notifications.discord.enabled", "bool", "supervisor", "Discord notifications", "Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only.",
+       why="Answer a halted run from your phone with buttons and threads.", effect="The chat gateway keeps an outbound connection to discord.com while enabled."),
+    _o("notifications.discord.thread_per_task", "bool", "supervisor", "One Discord thread per task", "Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals.",
+       why="Keeps a busy project channel readable.", effect="Applies to the next alert; existing threads are kept."),
     _o("notifications.alerts.on", "list", "supervisor", "Alert kinds", "Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit.",
        why="Silence the kinds you do not want on your phone.", effect="Alerts of other kinds are not queued."),
     _o("notifications.alerts.cooldown_minutes", "int", "supervisor", "Alert cooldown", "The same alert is not repeated inside this time; after it, one reminder ('still: ...').", min_=1, max_=10080, unit="minutes",
@@ -557,6 +570,13 @@ def validate(key: str, value: Any) -> Tuple[bool, Any, Optional[str]]:
             return False, None, f"Unsupported option type {t}."
     except (ValueError, TypeError):
         return False, None, "Expected a " + ("whole number." if t == "int" else "number." if t == "float" else "valid value.")
+    if o.key.startswith("supervisor.usage_limit.") and o.type == "list":
+        try:
+            nums = [float(x) for x in v]
+        except ValueError:
+            nums = []
+        if not nums or any(n <= 0 for n in nums):
+            return False, None, "Give one or more positive numbers, for example 15,30,60."
     if o.key == "backends.slurm.time" and not re.fullmatch(r"(\d+-)?\d{1,3}:\d{2}:\d{2}|\d+", str(v)):
         return False, None, "Use HH:MM:SS (or D-HH:MM:SS)."
     return True, v, None

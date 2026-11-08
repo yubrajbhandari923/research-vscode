@@ -30,7 +30,7 @@ from .util import PolicyBlocked, ResearchError, now_iso
 MAX_OPTIONS, STALE_ANSWERING_S = 8, 600
 PROTECTED_OPS = {"plan_promote"}
 # op -> (parameter that selects the behaviour, values that are safe without the PIN). Anything else is refused at creation.
-SAFE_OPS = {"plan_control": ("action", {"run", "pause", "resume"}), "supervisor_task": ("action", {"approve", "continue", "retry", "unblock", "completed", "failed"})}
+SAFE_OPS = {"plan_control": ("action", {"run", "pause", "resume"}), "supervisor_task": ("action", {"approve", "continue", "retry", "unblock", "completed", "failed", "wait"})}
 PROTECTED_VALUES = {"plan_control": {"stop"}}
 
 

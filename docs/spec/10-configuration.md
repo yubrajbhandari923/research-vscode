@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-105 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+112 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -138,6 +138,11 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor.on_failure` | enum | `'diagnose_and_repair'` | human only | diagnose_and_repair dispatches a bounded repair attempt; pause stops the plan for you to look; stop ends the run. |
 | `supervisor.enforce_completion` | bool | `True` | human only | While a plan runs, only the supervisor's verification (or a human `supervisor accept`) can mark its tasks done, by any route: CLI, MCP, UI or a hand-edited file. |
 | `supervisor.auto_apply_operational` | bool | `True` | human only | Agent proposals that only add new tasks (diagnostics, follow-ups) are applied without asking, up to the limit below. |
+| `supervisor.usage_limit.on_limit` | enum | `'halt'` | human only | halt: stop the task for you (today's behaviour). wait: pause only the tasks that use that provider until it resets, then relaunch them by themselves. fallback_then_wait: first try the next provider in agents.handoff.fallback_order (only where strategy, roles and orchestration.available allow it), else wait. |
+| `supervisor.usage_limit.wait_buffer_seconds` | int | `120` |  | Seconds added after the provider's stated reset time before the task is relaunched. |
+| `supervisor.usage_limit.max_wait_hours` | float | `8` | human only | A reset further away than this (a weekly limit, say) is not waited out silently: the supervisor asks you (wait, switch provider, or stop). |
+| `supervisor.usage_limit.unknown_reset_backoff_minutes` | list | `[15, 30, 60]` |  | Minutes between relaunches when the provider did not say when the limit ends; the last value repeats. A refused relaunch costs nothing. |
+| `supervisor.usage_limit.short_backoff_minutes` | list | `[1, 2, 5]` |  | Minutes between relaunches after a short-lived rate-limit or overload error with no reset time; the last value repeats. |
 | `supervisor.investigator.auto` | bool | `False` | human only | When a task hits a failure the supervisor cannot classify, run the investigator agent once (read-mostly, never approves). Off: it only runs when you ask (`research investigate`, or a free-text answer to a decision request). |
 | `supervisor.investigator.max_per_plan` | int | `3` |  | Most investigator runs for one plan; after that the supervisor just asks you in plain text. |
 | `supervisor.investigator.budget_usd` | float | `2.0` |  | Total provider-reported cost the investigator may use for this project; runs with no reported cost count toward the per-plan limit only. |
@@ -153,6 +158,8 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor_assistant.model` | str | `null` | human only | Model for the planning and debug agents. Empty uses the strongest Claude (claude-opus-5-5) when the profile is Claude, otherwise the profile's own model. |
 | `intervention.require_approval` | bool | `False` |  | Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN. |
 | `notifications.telegram.enabled` | bool | `False` |  | Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`). |
+| `notifications.discord.enabled` | bool | `False` |  | Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only. |
+| `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
 | `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |

@@ -29,7 +29,7 @@ from . import autopromote as AP, durability, planspec as PS, registry, taskpromp
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
-PHASES = ("waiting", "ready", "awaiting_approval", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
+PHASES = ("waiting", "ready", "awaiting_approval", "waiting_provider", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
 REPAIRABLE = {"incomplete_deliverable", "incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
 NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state"}
@@ -283,15 +283,19 @@ def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
         pass
     blocking = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason} for k, tid, ph, reason in unfinished if ph in HUMAN_PHASES]
     paused_promos = [{"task": i["id"], "key": i["id"], "title": f"promotion of {i['experiment']}", "phase": "blocked", "reason": i.get("error")} for i in ap if i["status"] == "paused"]
+    wp = waiting_provider(rs)
+    wpx = {"waiting_provider": wp} if wp else {}
     if moving or promo or iv:
-        return {"state": "progressing", "label": "running", "blocking": blocking, "fingerprint": "", "moving": len(moving)}
+        return {"state": "progressing", "label": "running", "blocking": blocking, "fingerprint": "", "moving": len(moving), **wpx}
     only_approval = blocking and all(b["phase"] == "awaiting_approval" for b in blocking) and not paused_promos
     stuck = blocking + paused_promos
+    if not stuck and wp:
+        return {"state": "waiting_for_provider", "label": f"waiting for {wp['provider']} until {_hhmm(wp['until_ts'])}", "blocking": [], "fingerprint": "", **wpx}
     if not stuck:
         return {"state": "idle", "label": "running (idle: waiting on dependencies)", "blocking": [], "fingerprint": ""}
     fp = "|".join(sorted(f"{b['task']}:{b['phase']}:{(b.get('reason') or '')[:60]}" for b in stuck))
     return {"state": "waiting_for_approval" if only_approval else "halted", "label": "WAITING FOR YOUR APPROVAL" if only_approval else "HALTED (needs you)",
-            "blocking": stuck, "fingerprint": fp}
+            "blocking": stuck, "fingerprint": fp, **wpx}
 
 
 def concurrency(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str, Any]:
@@ -336,7 +340,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                      "execution": last and {"id": last["execution"], "state": ex and ex["state"], "alive": ex and ex.get("alive"),
                                             "kind": last["kind"], "verification": last.get("verification"), "outcome": last.get("outcome")},
                      "requires_approval": bool((flat[key].get("execution") or {}).get("requires_approval")) and not (rs.get("approvals") or {}).get(tid),
-                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or []})
+                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso")})
     counts: Dict[str, int] = {}
     for r in rows:
         counts[r["phase"]] = counts.get(r["phase"], 0) + 1
@@ -346,7 +350,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                                                                              "max_wall_minutes": c["max_wall_minutes"]},
             "proposals": [x for x in list_proposals(p) if x.get("plan_key") == st["plan_key"] and x["status"] == "pending"],
             "auto_promotion": AP.summary(p, st, rs) if rs else AP.mode(p, st, {}),
-            "concurrency": concurrency(p, st, rs), "health": plan_health(p, st, rs),
+            "concurrency": concurrency(p, st, rs), "health": plan_health(p, st, rs), "waiting_provider": waiting_provider(rs),
             "daemon": daemon_status(p), "enforced": {"completion": bool(c["enforce_completion"])}}
 
 
@@ -358,6 +362,7 @@ def _entry(rs: Dict[str, Any], tid: str) -> Dict[str, Any]:
 def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
     """One deterministic scheduling pass over every running plan. Safe to call concurrently (state lock) and repeatedly."""
     out = {"plans": 0, "launched": [], "verified": [], "repairs": [], "blocked": [], "events": []}
+    busy = False
     with _lock(p):
         for rs in all_runs(p):
             if rs.get("state") != "running":
@@ -367,9 +372,11 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
                 continue
             out["plans"] += 1
             t = time.time() if now is None else now
-            rs["budgets"]["wall_seconds"] = rs["budgets"].get("wall_seconds", 0.0) + max(0.0, min(60.0, t - rs.get("last_tick", t)))
+            if not (waiting_provider(rs) and not _active(rs)):      # time spent waiting for a provider limit to reset is not the plan's working time
+                rs["budgets"]["wall_seconds"] = rs["budgets"].get("wall_seconds", 0.0) + max(0.0, min(60.0, t - rs.get("last_tick", t)))
             rs["last_tick"] = t
             c = cfg(p, st)
+            _limits_step(p)
             _reconcile_attempts(p, st, rs, c, out)
             _poll_hpc(p, st, rs, c, out)
             AP.step(p, st, rs, c, out)
@@ -379,6 +386,11 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             rs = load_run(p, rs["plan_id"]) or rs     # an intervention may have resolved/voided through the same state file
             _schedule(p, st, rs, c, out)
             _apply_deferred(p, st, rs)
+            wp = waiting_provider(rs)
+            if any(x.get("phase") in ACTIVE_PHASES for x in rs["tasks"].values()):
+                busy = True
+            elif wp:
+                out["next_wake"] = min(out.get("next_wake") or wp["until_ts"], wp["until_ts"])      # the daemon sleeps until then (no busy polling)
             if _plan_finished(p, st, rs) and AP.settled(p, st, rs):
                 rs["state"] = "completed"
                 rs["history"].append({"ts": now_iso(), "event": "completed"})
@@ -388,6 +400,8 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
                 rs["history"].append({"ts": now_iso(), "event": "paused", "why": "wall-time budget exhausted"})
                 out["events"].append(f"{st['plan_key']}: wall-time budget exhausted; paused")
             save_run(p, rs)
+    if busy:
+        out.pop("next_wake", None)
     return out
 
 
@@ -418,6 +432,8 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
             continue
         if e["phase"] in ("running", "verifying", "waiting_hpc", "attention", "blocked", "awaiting_approval") and e["phase"] != "awaiting_approval":
             continue
+        if e["phase"] == "waiting_provider" and not _resume_after_limit(p, tid, e, c):
+            continue
         deps = task.get("depends_on") or []
         if any(p.get("task", d)["status"] != "done" for d in deps if p.exists("task", d)):
             e["phase"] = "waiting"
@@ -444,6 +460,8 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
             continue
         try:
             _launch(p, st, rs, tid, kind, c, out)
+        except _Limited as ex:       # the provider this task routes to is waiting for a reset: nothing was launched, nothing was counted
+            _wait_or_switch(p, st, rs, tid, e, None, ex.profile, ex.until, "provider limit still active", c, out)
         except PolicyBlocked as ex:
             _block(p, st, rs, tid, f"policy: {ex}", out)
         except ResearchError as ex:
@@ -538,10 +556,13 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
             d = agents.dispatch(p, **{**kw, "level": lvl})
         if not d.get("available"):
             raise ResearchError(d.get("problem") or "provider not available")
+        if c["usage_limit"]["on_limit"] != "halt" and limited_until(p, d.get("profile")):
+            raise _Limited(d.get("profile"), limited_until(p, d.get("profile")))
         workspace = (d.get("allocation") or {}).get("workspace")
         text2 = text
         sid = None
-        if kind in ("repair", "resume") and role != "verifier" and c["session_resume"] != "never" and not esc:   # a different model cannot resume the old session
+        after_limit = e.pop("limit_relaunch", None)       # the previous attempt was refused by a provider limit: continue its session where possible
+        if (kind in ("repair", "resume") or after_limit) and role != "verifier" and c["session_resume"] != "never" and not esc:   # a different model cannot resume the old session
             sid = _resumable_session(p, e, spec, role, d)
         if sid:
             attempt["resumed_session"] = sid
@@ -601,7 +622,7 @@ def _resumable_session(p: Project, e: Dict[str, Any], spec: Dict[str, Any], role
     prof = d.get("profile")
     for a in reversed(e["attempts"][:-1]):
         sid = a.get("session_id")
-        if sid and a.get("role") == role and a.get("profile") == prof and a.get("state") in ("done",):
+        if sid and a.get("role") == role and a.get("profile") == prof and (a.get("state") == "done" or a.get("limit")):
             cmd = (d.get("provider_argv") or d["argv"])[0]
             kind = pv.provider_of({"command": cmd}, os.path.basename(cmd))
             return sid if pv.native_resume_supported(kind, cmd) else None
@@ -655,7 +676,7 @@ def _switch(p: Project, e: Dict[str, Any], tid: str, to_profile: str, why: str, 
     _event(p, tid, "supervisor_handoff", f"{a.get('profile')} → {to_profile} ({by}): {why[:160]}")
 
 
-def _fallback(p: Project, rs: Dict[str, Any], tid: str, e: Dict[str, Any], a: Optional[Dict[str, Any]], why: str, out: Dict[str, Any]) -> bool:
+def _fallback(p: Project, rs: Dict[str, Any], tid: str, e: Dict[str, Any], a: Optional[Dict[str, Any]], why: str, out: Dict[str, Any], ok=None) -> bool:
     """Opt-in automatic fallback to the next provider in agents.handoff.fallback_order. Bounded: each provider at most once per task and
     only while the supervisor's own attempt limits allow. Never used when the previous attempt's state is unknown."""
     h = (p.config.get("agents") or {}).get("handoff") or {}
@@ -668,7 +689,7 @@ def _fallback(p: Project, rs: Dict[str, Any], tid: str, e: Dict[str, Any], a: Op
     cur = e.get("provider_override") or (e["attempts"][-1].get("profile") if e.get("attempts") else None)
     for kind in h.get("fallback_order") or []:
         name = avail.get(kind)
-        if name and name not in tried and name != cur:
+        if name and name not in tried and name != cur and (ok is None or ok(name)):
             _switch(p, e, tid, name, why, "policy (fallback_order)")
             if rs["state"] in ("attention", "blocked"):
                 rs["state"] = "running"
@@ -782,24 +803,33 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
     sid = _session_id(p, a, ex)
     if sid:
         a["session_id"] = sid
-    if ex["state"] == "cancelled":
+    wait_mode = c["usage_limit"]["on_limit"] != "halt"
+    # a limit can show on any finished attempt (exit 0 too, stdout or stderr); `halt` keeps today's scope: failed runs only. A human cancel is never second-guessed,
+    # but an attempt the supervisor itself stopped for its timeout may have been sleeping inside a provider's retry loop.
+    info = _limit_of(p, a, ex) if (wait_mode or ex["state"] == "failed") and (ex["state"] != "cancelled" or a.get("timeout_signalled")) else None
+    if info is None and wait_mode and ex["state"] in ("completed", "failed"):
+        _limit_clear_streak(p, a.get("profile"))
+    if ex["state"] == "cancelled" and not info:
         a["state"] = "cancelled"
         e.update(phase="attention", reason="the agent was cancelled; resume the plan to retry or `supervisor resolve`")
+        return
+    if info:       # not the agent's fault and not repairable by trying again now: void the attempt, keep it as evidence, count nothing
+        pe = info.raw[:200] or info.kind
+        a.update(state="failed", category="resource_limit", voided="provider error: " + pe, limit={"kind": info.kind, "reset_at": info.reset_at.isoformat() if info.reset_at else None})
+        rs["budgets"]["attempts"] = max(0, rs["budgets"]["attempts"] - 1)
+        _event(p, tid, "supervisor_provider_error", pe)
+        if wait_mode:
+            _on_limit(p, st, rs, tid, e, a, info, c, out)
+            return
+        e.update(phase="attention", reason=f"the provider refused the request ({pe}). Nothing was retried; resume the plan or press Retry when it is available again")
+        if _fallback(p, rs, tid, e, a, "provider error: " + pe, out):
+            return
+        out["blocked"].append({"task": tid, "reason": e["reason"]})
         return
     if ex["state"] == "failed":
         a["state"] = "failed"
         logs = E.logs(p, a["execution"], 1500)
         tail = taskprompt.redact((logs.get("err") or logs.get("out") or "")[-900:]) or ""
-        pe = _provider_error(p, a)
-        if pe:     # not the agent's fault and not repairable by trying again now: pause the task, keep the attempt as evidence, count nothing
-            a.update(state="failed", category="resource_limit", voided="provider error: " + pe)
-            rs["budgets"]["attempts"] = max(0, rs["budgets"]["attempts"] - 1)
-            e.update(phase="attention", reason=f"the provider refused the request ({pe}). Nothing was retried; resume the plan or press Retry when it is available again")
-            _event(p, tid, "supervisor_provider_error", pe)
-            if _fallback(p, rs, tid, e, a, "provider error: " + pe, out):
-                return
-            out["blocked"].append({"task": tid, "reason": e["reason"]})
-            return
         code = ex.get("exit_code")
         cat = "environment" if code in (127, 126) or re.search(r"ModuleNotFoundError|command not found|No such file or directory: '", tail) else "agent_process_failure"
         a["category"] = cat
@@ -830,6 +860,295 @@ def _provider_error(p: Project, a: Dict[str, Any]) -> Optional[str]:
     except (OSError, ValueError, ResearchError):
         pass
     return None
+
+
+# ----------------------------------------------------------------------------------------------- provider usage limits (H.10)
+# `limits.json` (beside the run state, so it survives daemon restarts): {key: {until, provider, kind, raw, streak, alerted}} where `key` is the account
+# a limit applies to (profile `account`, else the provider kind: every profile of one provider shares one login) and `until` is the epoch time it may be
+# used again (reset + buffer). A limit only ever pauses the tasks that route to that account; the others keep running.
+class _Limited(Exception):
+    def __init__(self, profile: Optional[str], until: float):
+        super().__init__(f"{profile} is limited until {until}")
+        self.profile, self.until = profile, until
+
+
+def _now_ts() -> float:
+    from .providers import limits as L
+    return L.now().timestamp()           # the one clock (tests set a fake one)
+
+
+def _hhmm(until: Any) -> str:
+    import datetime as _dt
+    d = _dt.datetime.fromtimestamp(float(until)).astimezone()
+    return d.strftime("%H:%M") if abs(float(until) - _now_ts()) < 20 * 3600 else d.strftime("%a %H:%M")
+
+
+def _in_text(secs: float) -> str:
+    m = max(1, int(round(secs / 60)))
+    return f"{m // 60}h {m % 60:02d}m" if m >= 60 else f"{m}m"
+
+
+def _lim_path(p: Project) -> str:
+    return sdir(p, "limits.json")
+
+
+def _lim_load(p: Project) -> Dict[str, Any]:
+    try:
+        with open(_lim_path(p), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _lim_save(p: Project, d: Dict[str, Any]) -> None:
+    _atomic_write(_lim_path(p), json.dumps(d, indent=1, sort_keys=True) + "\n")
+
+
+def _limit_key(p: Project, profile: Optional[str]) -> str:
+    prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(profile or "") or {}
+    try:
+        return str(prof.get("account") or _providers().provider_of(prof, profile or ""))
+    except ResearchError:
+        return str(profile)
+
+
+def limited_until(p: Project, profile: Optional[str]) -> Optional[float]:
+    """Epoch time the account behind `profile` may be used again, None when it is not limited now."""
+    u = (_lim_load(p).get(_limit_key(p, profile)) or {}).get("until")
+    return float(u) if u and float(u) > _now_ts() else None
+
+
+def limits_status(p: Project) -> List[Dict[str, Any]]:
+    now = _now_ts()
+    return [{"account": k, "provider": v.get("provider"), "kind": v.get("kind"), "until": v["until"], "limited": v["until"] > now}
+            for k, v in sorted(_lim_load(p).items()) if v.get("until")]
+
+
+def _limit_clear_streak(p: Project, profile: Optional[str]) -> None:
+    d, k = _lim_load(p), _limit_key(p, profile)
+    if (d.get(k) or {}).get("streak"):
+        d[k]["streak"] = 0
+        _lim_save(p, d)
+
+
+def waiting_provider(rs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the plan status shows as a chip: the earliest provider wait, `{provider, until (ISO), until_ts, tasks}`; None when nothing waits."""
+    w = [e for e in (rs.get("tasks") or {}).values() if e.get("phase") == "waiting_provider" and e.get("resume_at")]
+    if not w:
+        return None
+    first = min(w, key=lambda e: e["resume_at"])
+    return {"provider": (first.get("waiting_provider") or {}).get("provider") or "provider", "until": first["resume_at_iso"], "until_ts": first["resume_at"], "tasks": len(w)}
+
+
+def _claude_projects_dir() -> str:
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+
+def _claude_transcript_error(a: Dict[str, Any]) -> str:
+    """Claude's weekly limit can exit 1 with nothing on stdout; the message then exists only in the session transcript
+    (~/.claude/projects/<cwd with / as ->/<session>.jsonl, an assistant entry with isApiErrorMessage). Newest transcript since the attempt began."""
+    import glob
+    d = os.path.join(_claude_projects_dir(), re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(a.get("cwd") or "")))
+    try:
+        newest = max(glob.glob(os.path.join(d, "*.jsonl")), key=os.path.getmtime)
+        with open(newest, encoding="utf-8", errors="replace") as f:
+            for line in reversed(f.read().splitlines()[-40:]):
+                m = json.loads(line)
+                if m.get("isApiErrorMessage"):
+                    c = (m.get("message") or {}).get("content")
+                    return c if isinstance(c, str) else " ".join(str(x.get("text", "")) for x in c or [] if isinstance(x, dict))
+    except (ValueError, OSError):
+        pass
+    return ""
+
+
+def _limit_of(p: Project, a: Dict[str, Any], ex: Dict[str, Any]):
+    """Is this finished attempt a provider refusal (usage/rate/overload/credit)? Reads the attempt's provider through its adapter (`providers.limit_info`) over
+    stdout AND stderr whatever the exit code; falls back to the structured-output check this module always had (`_provider_error`, any provider)."""
+    from . import execution as E
+    from .providers import limits as L
+    pv, name = _providers(), a.get("profile") or ""
+    logs = E.logs(p, a["execution"], 200000)
+    out, err, code = logs.get("out") or "", logs.get("err") or "", ex.get("exit_code")
+    try:
+        kind = pv.provider_of(((p.config.get("agents") or {}).get("profiles") or {}).get(name) or {}, name)
+    except ResearchError:
+        kind = "custom"
+    if kind == "claude" and code not in (0, None) and not out.strip() and not err.strip():
+        out = _claude_transcript_error(a)
+    info = pv.limit_info(kind, out, err, code)
+    if info is None and ex["state"] == "failed":
+        pe = _provider_error(p, a)
+        if pe:
+            info = L.info(pe) or pv.LimitInfo("usage", None, pe)
+    return info
+
+
+def _plan_wait(p: Project, key: str, provider: str, info, uc: Dict[str, Any]) -> float:
+    """Record the limit on its account and return the time (epoch) the attempt may be relaunched."""
+    d, now = _lim_load(p), _now_ts()
+    rec = d.get(key) or {}
+    ts = info.reset_at.timestamp() if info.reset_at else None
+    if info.kind == "credit" and not ts:     # waiting does not add credit: always ask the human (wait / switch / stop)
+        until = now + 3600.0 * float(uc["max_wait_hours"]) + 1
+    elif ts and ts > now:
+        until = ts + float(uc["wait_buffer_seconds"])
+    else:                          # no usable reset time: the relaunch is the probe, at growing intervals (short ones for rate/overload)
+        steps = [float(x) for x in uc["short_backoff_minutes" if info.kind in ("rate", "overload") else "unknown_reset_backoff_minutes"]] or [15.0]
+        until = now + 60 * steps[min(int(rec.get("streak") or 0), len(steps) - 1)]
+        rec["streak"] = int(rec.get("streak") or 0) + 1
+    prev = float(rec.get("until") or 0)
+    if prev <= now:
+        rec.pop("alerted", None)      # a new episode
+        prev = 0.0
+    rec.update(until=max(until, prev), provider=provider, kind=info.kind, raw=info.raw[:200])
+    d[key] = rec
+    _lim_save(p, d)
+    return rec["until"]
+
+
+def _on_limit(p, st, rs, tid, e, a, info, c, out) -> None:
+    """The attempt was refused by a limit (`wait` / `fallback_then_wait`). The attempt is already void and refunded."""
+    uc = c["usage_limit"]
+    profile = a.get("profile")
+    key, provider = _limit_key(p, profile), _provider_kind(p, profile)
+    until = _plan_wait(p, key, provider, info, uc)
+    e["limit_pending"] = {"profile": profile, "provider": provider, "until": until}
+    _wait_or_switch(p, st, rs, tid, e, a, profile, until, info.raw[:160], c, out)
+
+
+def _provider_kind(p: Project, profile: Optional[str]) -> str:
+    try:
+        return _providers().provider_of(((p.config.get("agents") or {}).get("profiles") or {}).get(profile or "") or {}, profile or "")
+    except ResearchError:
+        return str(profile)
+
+
+def _wait_or_switch(p, st, rs, tid, e, a, profile, until, why, c, out) -> None:
+    """fallback_then_wait: another provider first, if every rule allows it. Else wait for the reset; a reset beyond max_wait_hours becomes a decision request."""
+    uc = c["usage_limit"]
+    provider = _provider_kind(p, profile)
+    if uc["on_limit"] == "fallback_then_wait":
+        from . import orchestrate as O, strategy as S
+        avail = O.as_list(O.cfg(p).get("available"))
+        level = (_flat(st, tid).get("agent") or {}).get("level")
+        profs = (p.config.get("agents") or {}).get("profiles") or {}
+
+        def ok(name: str) -> bool:      # never weaken the strategy, never a model orchestration.available does not list, never another limited account
+            m = (profs.get(name) or {}).get("model")
+            return not limited_until(p, name) and not (S.active_name(p) and level) and not (avail and m and m not in avail)
+        if _fallback(p, rs, tid, e, a, f"{provider} limit: {why}", out, ok=ok):
+            return
+    if (until - _now_ts()) / 3600.0 > float(uc["max_wait_hours"]) and not e.get("limit_wait_ok"):
+        _ask_about_limit(p, st, rs, tid, e, profile, provider, until, c, out)
+        return
+    _enter_wait(p, tid, e, provider, profile, until)
+    _alert_limit(p, _limit_key(p, profile), provider, until)
+
+
+def _enter_wait(p: Project, tid: str, e: Dict[str, Any], provider: str, profile: Optional[str], until: float) -> None:
+    import datetime as _dt
+    iso = _dt.datetime.fromtimestamp(until, _dt.timezone.utc).isoformat(timespec="seconds")
+    last = (e.get("attempts") or [{}])[-1]
+    e.update(phase="waiting_provider", resume_at=until, resume_at_iso=iso, waiting_provider={"provider": provider, "profile": profile, "until": iso},
+             reason=f"waiting for the {provider} limit to reset; resuming about {_hhmm(until)} (in {_in_text(until - _now_ts())})",
+             limit_relaunch=bool(last.get("limit")) or None)
+    e["limit_kind"] = "repair" if (last.get("kind") == "repair") else "initial"
+    e.pop("limit_pending", None)
+    _event(p, tid, "supervisor_waiting_provider", f"{provider} limit: {e['reason']}")
+
+
+def _ask_about_limit(p, st, rs, tid, e, profile, provider, until, c, out) -> None:
+    from . import decisions as D
+    hours = (until - _now_ts()) / 3600.0
+    opts = [{"key": "wait", "label": f"Wait for {provider} (until about {_hhmm(until)})", "consequence": f"The task resumes by itself after the reset, about {hours:.0f} hours from now; other tasks continue.",
+             "action": {"kind": "op", "op": "supervisor_task", "params": {"task": tid, "action": "wait"}}}]
+    alt = next((n for k, n in _provider_profiles(p).items() if not limited_until(p, n) and n != profile and k != provider), None)
+    if alt:
+        opts.append({"key": "switch", "label": f"Switch this task to {alt}", "consequence": "The next attempt uses another provider (portable context, not the old session).",
+                     "action": {"kind": "op", "op": "supervisor_task", "params": {"task": tid, "action": "continue", "reason": alt}}})
+    opts.append({"key": "stop", "label": "Stop: pause the plan", "consequence": "Nothing runs until you resume the plan.",
+                 "action": {"kind": "op", "op": "plan_control", "params": {"plan": st["plan_key"], "action": "pause"}}})
+    credit = (_lim_load(p).get(_limit_key(p, profile)) or {}).get("kind") == "credit"
+    q = (f"The {provider} account is out of credit; waiting does not add any. What now for {tid}?" if credit else
+         f"The {provider} limit resets in about {hours:.0f} hours (more than the {c['usage_limit']['max_wait_hours']:g} hours the supervisor waits unattended). What now for {tid}?")
+    d = D.request(p, q,
+                  opts, subject=tid, created_by="supervisor", fingerprint=f"limit:{_limit_key(p, profile)}:{int(until // 3600)}")
+    e.update(phase="attention", reason=(f"the {provider} account is out of credit" if credit else f"the {provider} limit resets about {_hhmm(until)}, longer than max_wait_hours") + f": answer decision {d['id']} (wait / switch / stop)")
+    e["limit_pending"] = {"profile": profile, "provider": provider, "until": until}
+    out["blocked"].append({"task": tid, "reason": e["reason"]})
+
+
+def wait_for_limit(p: Project, tid: str) -> Dict[str, Any]:
+    """Human choice 'wait' on a limit decision request: wait for the reset however far away it is."""
+    require_human(p, "Waiting out a provider limit")
+    hit = PS.find_task_key(p, tid)
+    if not hit:
+        raise ResearchError(f"{tid} is not part of a managed plan")
+    with _lock(p):
+        rs = load_run(p, hit[0]["plan_id"])
+        e = _entry(rs, tid)
+        lp = e.get("limit_pending")
+        if not lp:
+            raise ResearchError(f"{tid} is not waiting on a provider limit decision")
+        until = limited_until(p, lp["profile"]) or lp["until"]
+        e["limit_wait_ok"] = True
+        _enter_wait(p, tid, e, lp["provider"], lp["profile"], until)
+        if rs["state"] in ("attention", "blocked"):
+            rs["state"] = "running"
+        save_run(p, rs)
+    return {"task": tid, "phase": e["phase"], "resume_at": e["resume_at_iso"]}
+
+
+def _resume_after_limit(p: Project, tid: str, e: Dict[str, Any], c: Dict[str, Any]) -> bool:
+    """True when a waiting task may launch again now. A limit another task extended (or a wait that is not over) keeps it waiting."""
+    now = _now_ts()
+    prof = (e.get("waiting_provider") or {}).get("profile")
+    until = max(float(e.get("resume_at") or 0), limited_until(p, prof) or 0)
+    if until > now:
+        if until > float(e.get("resume_at") or 0):
+            _enter_wait(p, tid, e, (e.get("waiting_provider") or {}).get("provider") or "provider", prof, until)
+        return False
+    e.update(phase="repair_pending" if e.get("limit_kind") == "repair" else "waiting", reason=None)
+    for k in ("resume_at", "resume_at_iso", "waiting_provider"):
+        e.pop(k, None)
+    _event(p, tid, "supervisor_resumed_after_limit", f"the provider limit has reset; relaunching {tid}")
+    return True
+
+
+def _limits_step(p: Project) -> None:
+    """Once per limit episode, when its reset has passed: the single 'resuming' alert (clears the one raised at the start)."""
+    d, now, dirty = _lim_load(p), _now_ts(), False
+    for k, v in d.items():
+        if v.get("alerted") and float(v.get("until") or 0) <= now:
+            try:
+                from .chat import alerts
+                alerts.clear(p, f"provider_limit:{k}", f"{(v.get('provider') or k).capitalize()} limit reset; resuming the waiting tasks.")
+            except Exception:       # noqa: BLE001 - an alert must never stop scheduling
+                pass
+            v.pop("alerted", None)
+            dirty = True
+    if dirty:
+        _lim_save(p, d)
+
+
+def _alert_limit(p: Project, key: str, provider: str, until: float) -> None:
+    """One chat message per limit episode (the alert outbox dedupes and cools down on top of this)."""
+    d = _lim_load(p)
+    if (d.get(key) or {}).get("alerted"):
+        return
+    try:
+        from . import notify
+        if not notify.chat_enabled(p):
+            return
+        from .chat import alerts
+        alerts.raise_(p, f"provider_limit:{key}", "provider_limit", "warn",
+                      f"{provider.capitalize()} limit reached; resuming about {_hhmm(until)} (in {_in_text(until - _now_ts())}); other tasks continue")
+        d.setdefault(key, {})["alerted"] = True
+        _lim_save(p, d)
+    except Exception:       # noqa: BLE001
+        pass
 
 
 def _session_id(p: Project, a: Dict[str, Any], ex: Dict[str, Any]) -> Optional[str]:
@@ -1693,6 +2012,8 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                     from . import notify
                     notify.step(p)
                     poll = float(cfg(p)["poll_seconds"])
+                    if r.get("next_wake") and not r.get("launched"):      # only provider waits are pending: sleep to the earliest reset (capped so stop/heartbeat stay responsive)
+                        poll = max(poll, min(60.0, r["next_wake"] - time.time()))
                     active = any(x.get("state") in ("running",) for x in all_runs(p))
                 idle = 0 if active else idle + 1
                 if exit_when_idle and idle >= 2:
