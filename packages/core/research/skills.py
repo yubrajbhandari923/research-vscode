@@ -526,7 +526,7 @@ def audit(p: Project) -> Dict[str, Any]:
                 + " or ".join(k for k, v in (("Claude Code", r["discoverable_claude"]), ("Codex", r["discoverable_agents"])) if not v)
                 for r in gated if not (r["discoverable_claude"] and r["discoverable_agents"])]
     return {"skills": rows, "problems": problems,
-            "note": "Managed dispatches (`research dispatch`, orchestrate, guide draft) block on missing required skills and "
+            "note": "Managed dispatches (`research agent dispatch`, orchestrate, guide draft) block on missing required skills and "
                     "inject them with a recorded hash. A direct Claude Code or Codex session is NOT gated: it can only discover "
                     "linked skills and read AGENTS.md. Use `research skill verify` and the deterministic Guide validators "
                     "to check the work regardless of how it was produced."}

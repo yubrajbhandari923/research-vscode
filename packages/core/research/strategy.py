@@ -344,7 +344,7 @@ def agent_doc(p, name: str, level: str, marker: str) -> str:
         "coordinator": ("You are the COORDINATOR. Turn approved objectives into tasks. For each delegated task write the contract "
                         "(`research orchestrate contract T-… --objective … --allowed-file … --constraint …`) and independent tests, run them to see "
                         "them fail, then `research orchestrate freeze T-… <tests>`. Delegate with `research orchestrate delegate` or "
-                        "`dispatch`; the active strategy picks the worker, so never repeat a model id. Review integration yourself."),
+                        "`research agent dispatch`; the active strategy picks the worker, so never repeat a model id. Review integration yourself."),
         "worker": ("You are a bounded WORKER. Satisfy the task contract and frozen tests, touching only the files it allows. After each "
                    "attempt run `research orchestrate verify T-… --tier " + level + " --record`; it returns the deterministic diagnostics and "
                    "the bounded next step. Never edit, delete or weaken frozen tests. If the spec or a test looks wrong, report it."),
@@ -358,7 +358,7 @@ description: Research OS {level}-level agent ({role}) under the {name} strategy.
 model: {prof['model'] or 'inherit'}
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
-<!-- {marker} — written by `research setup agents` for strategy {name}@{fingerprint(p, name)}; delete this line to take ownership -->
+<!-- {marker} — written by `research agent setup` for strategy {name}@{fingerprint(p, name)}; delete this line to take ownership -->
 {me}
 
 ## Strategy {name}
@@ -367,7 +367,7 @@ Levels in this project:
 
 - Attempts before escalation: {(sd.get('attempts') or {}).get(level, 'n/a')}; next after that: {'a human (block the task and explain)' if to == HUMAN else to}. At most {sd.get('max_escalations', 2)} escalations per task.
 - Scientific-assumption problems go to: {'a human' if sd.get('on_scientific_assumption') == HUMAN else sd.get('on_scientific_assumption')}.
-- Delegation uses `research orchestrate delegate` / `dispatch` (add `--tier LEVEL` only to override); a task may be pinned to a model with `research orchestrate pin`.
+- Delegation uses `research orchestrate delegate` / `research agent dispatch` (add `--tier LEVEL` only to override); a task may be pinned to a model with `research orchestrate pin`.
 - Verifiers must differ from the implementer's profile and model; a review that cannot is marked not independent.
 
 ## Project guidance (read live, not copied here)

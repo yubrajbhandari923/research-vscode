@@ -686,7 +686,7 @@ def continue_with(p: Project, tid: str, profile: str, note: Optional[str] = None
         raise ResearchError(f"{tid} is not part of a managed plan")
     prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(profile)
     if not prof:
-        raise ResearchError(f"No agent profile {profile!r}", hint="`research provider list` shows the profiles.")
+        raise ResearchError(f"No agent profile {profile!r}", hint="`research agent providers list` shows the profiles.")
     d = _providers().detect(prof, profile)
     if not d["installed"]:
         raise ResearchError(f"`{d['command']}` is not installed on this machine")

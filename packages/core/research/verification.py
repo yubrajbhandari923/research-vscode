@@ -244,7 +244,7 @@ def check_finding_status(p: Project, status: Optional[str], via_review: bool = F
         raise PolicyBlocked(
             "Agents can't mark a finding `supported` directly; it stays preliminary until an independent review.",
             hint="Create it as preliminary. A human or a different agent/role reviews it: "
-                 "`research finding review F-… --verdict supported --notes \"…\"` (or `research dispatch verifier F-…`).")
+                 "`research finding review F-… --verdict supported --notes \"…\"` (or `research agent dispatch verifier F-…`).")
 
 
 @atomic
@@ -261,7 +261,7 @@ def review_finding(p: Project, finding_id: str, verdict: str, notes: Optional[st
     if (pol.get("independent_reviewer", True) and me.get("author_type") == "agent"
             and f.get("author_type") == "agent" and (me.get("author_name") or "") == (f.get("author_name") or "")):
         raise PolicyBlocked(f"{fid} was written by {f.get('author_name')}; it needs an independent reviewer.",
-                            hint="Ask a human, or dispatch a different agent or role: `research dispatch verifier "
+                            hint="Ask a human, or dispatch a different agent or role: `research agent dispatch verifier "
                                  f"{fid}` (roles count as different reviewers, e.g. claude/implementer vs claude/verifier).")
     if verdict == "supported" and pol.get("require_evidence_for_supported", True) and not f["links"].get("supports"):
         raise PolicyBlocked(f"{fid} has no supporting evidence, so it can't be marked supported.",
