@@ -40,7 +40,8 @@ def test_checksum_mismatch_leaves_install_untouched():
 
 def test_check_only_and_up_to_date():
     rc, calls, msgs = _run("2.7.0", check=True)
-    assert rc == 0 and not calls and "latest 2.7.0" in msgs[0]
+    assert rc == 0 and not calls and "latest 2.7.0" in msgs[0] and "update available" in msgs[-1]
+    assert _run("2.6.0", check=True)[2][-1] == "up to date"                      # --check says so plainly, even when the latest release is not newer
     assert _run("2.6.0")[1] == []
 
 

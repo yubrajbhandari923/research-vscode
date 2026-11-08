@@ -116,6 +116,7 @@ def run(check=False, version=None, repo=REPO, major=False, from_file=None, fetch
                 breaking = ll[:1] > cl[:1]
                 out(f"current {current}, latest {latest}" + (" (major upgrade: breaking changes, needs --major)" if breaking else ""))
                 if check:
+                    out("up to date" if ll <= cl else "update available: run `research self-update`")
                     return 0
                 if not version and ll <= cl:
                     out("already up to date")
