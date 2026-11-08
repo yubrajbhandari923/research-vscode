@@ -130,6 +130,8 @@ def norm(s: str, roots) -> str:
     s = re.sub(r"(?<![\w.])\d+(\.\d+)?s\b", "<DUR>", s)   # whole-second durations too: a loaded machine turns 0s into 1s
     s = re.sub(r"\((\d+) B\)", "(<N> B)", s)               # file sizes in run-directory listings vary by a byte or two between runs
     s = re.sub(r"[A-Za-z0-9_.-]*research-vscode[^\s\"']*", "<REPO>", s)
+    host = __import__("socket").gethostname().split(".")[0]      # the domain suffix depends on the network the machine is on
+    s = re.sub(re.escape(host) + r"(\.[A-Za-z0-9-]+)*", "<HOST>", s)
     return s
 
 
