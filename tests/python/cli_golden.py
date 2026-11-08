@@ -117,16 +117,18 @@ def norm(s: str, roots) -> str:
     for r in roots:
         s = s.replace(r, "<ROOT>")
         s = s.replace(os.path.realpath(r), "<ROOT>")
+    s = re.sub(r"\"(pid|duration_s|elapsed|last_activity_age_days|[a-z_]*age_days|[a-z_]*_s)\": [-0-9.e]+", r'"\1": 0', s)
+    s = re.sub(r"PATH=\S+", "PATH=<PATH>", s)
+    s = re.sub(r"\"events\": \d+", '"events": N', s)
+    s = re.sub(r"since then: \d+ changes", "since then: N changes", s)
     s = re.sub(r"\b\d{8}-\d{6}\b", "<STAMP>", s)
     s = re.sub(r"\"modified\": [0-9.]+|- \*\*pid:\*\* \d+", "<VOLATILE>", s)
     s = TS.sub("<TS>", s)
     s = DATE.sub("<DATE>", s)
     s = HEX.sub("<HEX>", s)
-    s = re.sub(r"\.venv[^\s\"']*|/[^\s\"']*python[0-9.]*", "<PY>", s) if False else s
     s = s.replace(sys.executable, "<PYEXE>")
     s = re.sub(r"\d+\.\d+s\b", "<DUR>", s)
     s = re.sub(r"[A-Za-z0-9_.-]*research-vscode[^\s\"']*", "<REPO>", s)
-    s = re.sub(r"\"(pid|duration_s|elapsed|last_activity_age_days|[a-z_]*age_days|[a-z_]*_s)\": [-0-9.e]+", r'"\1": 0', s)
     return s
 
 
