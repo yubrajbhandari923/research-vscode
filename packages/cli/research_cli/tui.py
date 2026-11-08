@@ -1,7 +1,7 @@
 """Terminal UI for a ResearchOS project (`research tui`). Needs the optional `textual` package (pip install 'research-os[tui]').
 
-A thin view over the same core entry points the VS Code extension uses (research.rpc.Server): reading is direct,
-and every change (cancel run, approve/reject proposal) goes through the existing core function after a confirm.
+A thin view over the same core entry points the VS Code extension uses (`research.api.call`, the op layer): reading is direct,
+and every change (cancel run, approve/reject proposal) goes through the same op after a confirm.
 Approval PINs are typed into a masked field and passed straight to core; they are never stored, logged or shown.
 """
 from __future__ import annotations
@@ -232,8 +232,8 @@ class ResearchTUI(App):
         self.draw_banner()
         if not self.root:
             return
-        from research.rpc import Server
-        self.srv = Server(self.root)
+        from research import api
+        self.srv = api.Session(self.root)
         self.branch = git_branch(self.root)
         cols = {"runs": ("id", "status", "started", "summary"), "findings": ("id", "status", "title"),
                 "plans": ("id", "status", "title"), "approvals": ("id", "status", "proposal"),
@@ -316,8 +316,8 @@ class ResearchTUI(App):
         if not self.srv:
             return
         try:
-            self.snap = self.srv.m_tree()
-            self.proposals = self.srv.m_proposals()
+            self.snap = self.call('tree')
+            self.proposals = self.call('proposals')
         except Exception as e:
             self.query_one("#p-sys", Static).update(f"Could not read project: {e}")
             return
@@ -361,7 +361,7 @@ class ResearchTUI(App):
             t.append(f"{f['id']} ", style="bold").append_text(badge(f["status"])).append(f"  {f['title']}\n")
         put("p-find", t if T["findings"] else "No findings yet.")
         try:
-            sup = self.srv.m_managed_plans()
+            sup = self.call('managed_plans')
         except Exception:
             sup = []
         t = Text()
@@ -396,7 +396,7 @@ class ResearchTUI(App):
             if table == "approvals":
                 d = next(x for x in self.proposals if x["id"] == key)
             else:
-                d = self.srv.m_show(key)
+                d = self.call('show', id=key)
             text = render(d, skip=("events", "links", "type", "stdout_path_abs", "stderr_path_abs", "run_dir_abs"))
             if table == "runs":
                 text.append("\n--- stdout ---\n" + tail(d.get("stdout_path_abs")) + "\n--- stderr ---\n" + tail(d.get("stderr_path_abs"), 15))
@@ -414,10 +414,14 @@ class ResearchTUI(App):
             return None
         return t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value
 
-    def _do(self, fn, *a, **kw) -> None:
+    def call(self, name: str, **params: Any) -> Any:
+        from research import api
+        return api.call(name, self.srv, params, surface="tui")
+
+    def _do(self, name: str, **params: Any) -> None:
         from research.util import ResearchError
         try:
-            fn(*a, **kw)
+            self.call(name, **params)
             self.notify("Done")
         except ResearchError as e:
             self.notify(f"{e} {e.hint or ''}".strip(), severity="error")
@@ -432,7 +436,7 @@ class ResearchTUI(App):
         run = next((r for e in self.snap["experiments"] for r in e["runs"] if r["id"] == rid), {})
         if run.get("status") not in ("running", "queued", "submitted", "pending", "created"):
             return self.notify(f"{rid} is {run.get('status')}; nothing to cancel")
-        self.push_screen(Confirm(f"Cancel run {rid}?"), lambda ok: ok and self._do(self.srv.m_run_cancel, rid))
+        self.push_screen(Confirm(f"Cancel run {rid}?"), lambda ok: ok and self._do('run_cancel', id=rid))
 
     def _pending(self) -> Optional[str]:
         pid = self._current("approvals") if self._active() == "t4" else None
@@ -449,7 +453,7 @@ class ResearchTUI(App):
             return
 
         def decide(note: str, pin: Optional[str]) -> None:
-            self._do(self.srv.m_proposal_decide, pid, True, note=note, pin=pin)
+            self._do('proposal_decide', id=pid, approve=True, note=note, pin=pin)
 
         def got_note(note: Optional[str]) -> None:
             if note is None:
@@ -466,7 +470,7 @@ class ResearchTUI(App):
     def action_deny(self) -> None:
         pid = self._pending()
         if pid:
-            self.push_screen(Confirm(f"Reject {pid}?"), lambda ok: ok and self._do(self.srv.m_proposal_decide, pid, False))
+            self.push_screen(Confirm(f"Reject {pid}?"), lambda ok: ok and self._do('proposal_decide', id=pid, approve=False))
 
 
 def run(root: Optional[str] = None) -> None:

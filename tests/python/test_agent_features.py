@@ -250,20 +250,21 @@ def test_cli_hooks_usage_pin_and_check(proj, plan, repo, capsys):
 
 
 def test_rpc_agent_setup_has_new_sections(proj, plan, repo):
-    from research import rpc
+    from research import api
     use(proj)
     t = mk(proj, plan, task_type="implementation", acceptance_criteria="a", checks=["cmd:true"])
     e = services.create_experiment(proj, "e", hypothesis="h")
-    s = rpc.Server(str(repo))
-    s.m_task_pin(t["id"], level="deep")
+    sess = api.Session(str(repo))
+    c = lambda op_, **kw: api.call(op_, sess, kw)
+    c("task_pin", id=t["id"], level="deep")
     hooks.add(proj, "h1", "preflight", "true")
-    d = s.m_agent_setup()
+    d = c("agent_setup")
     row = next(x for x in d["tasks"] if x["id"] == t["id"])
     assert row["override"] == {"level": "deep"} and row["route"]["level"] == "deep" and row["checks"] == 1
     assert d["hooks"][0]["name"] == "h1" and not d["hooks"][0]["approved"] and d["usage"]["groups"] == {}
     assert d["experiments"][0]["id"] == e["id"]
-    assert s.m_hook_toggle("h1", False)["enabled"] is False
-    assert s.m_task_pin(t["id"], clear=True)["override"] is None
+    assert c("hook_toggle", name="h1", enabled=False)["enabled"] is False
+    assert c("task_pin", id=t["id"], clear=True)["override"] is None
 
 
 def test_unfrozen_gate_offers_the_coordinator_and_that_dispatch_is_allowed(proj, plan, repo):

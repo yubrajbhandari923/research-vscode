@@ -201,29 +201,30 @@ def test_cli_dispatch_really_launches_in_the_worktree(shared, mocks, monkeypatch
 
 
 def test_rpc_providers_and_prepare_never_runs(shared, mocks):  # noqa: F811
-    from research import rpc
+    from research import api
     repo, _ = shared
     bindir, out = mocks
-    srv = rpc.Server(str(repo)) if hasattr(rpc, "Server") else rpc.RpcServer(str(repo))
+    sess = api.Session(str(repo))
+    c = lambda op_, **kw: api.call(op_, sess, kw)
     with Project(str(repo)) as p:
         t, _ws = _task(p)
         p.save_config({"agents.profiles.codex.command": str(bindir / "codex"), "agents.profiles.codex.provider": "codex"})
-    pv = srv.m_providers()
+    pv = c("providers")
     names = {x["name"]: x for x in pv["providers"]}
     assert {"claude", "codex", "agy"} <= set(names) and names["codex"]["installed"] and pv["default"] == "claude"
     out.unlink(missing_ok=True)   # the --version probe above ran the mock; only the dispatch is under test
-    d = srv.m_dispatch("implementer", t["id"], profile="codex", model="m1", effort="high")
+    d = c("dispatch", role="implementer", target=t["id"], profile="codex", model="m1", effort="high")
     assert d["state"] == "prepared" and d["allocation"]["reasoning_effort"] == "high" and not out.exists()   # prepared, not started
-    assert srv.m_executions(t["id"])[0]["state"] == "prepared"
+    assert c("executions", task=t["id"])[0]["state"] == "prepared"
     with pytest.raises(ResearchError):
-        srv.m_execution_start(d["execution_id"])   # interactive executions are started by a terminal, not the server
-    h = srv.m_dispatch("implementer", t["id"], profile="codex", headless=True)
-    srv.m_execution_start(h["execution_id"])
+        c("execution_start", id=d["execution_id"])   # interactive executions are started by a terminal, not the server
+    h = c("dispatch", role="implementer", target=t["id"], profile="codex", headless=True)
+    c("execution_start", id=h["execution_id"])
     for _ in range(80):
-        if srv.m_execution_show(h["execution_id"])["state"] in ("completed", "failed"):
+        if c("execution_show", id=h["execution_id"])["state"] in ("completed", "failed"):
             break
         time.sleep(0.1)
-    assert srv.m_execution_show(h["execution_id"])["state"] == "completed" and out.exists()
+    assert c("execution_show", id=h["execution_id"])["state"] == "completed" and out.exists()
 
 
 def test_cross_provider_strategy_routes_levels_to_different_providers(shared, mocks):  # noqa: F811

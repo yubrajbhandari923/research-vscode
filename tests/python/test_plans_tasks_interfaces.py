@@ -309,8 +309,8 @@ def test_the_hpc_context_key_is_actually_set():
 def test_extension_commands_only_call_rpc_methods_that_exist():
     """A typo'd RPC name is a runtime error the user sees as a broken button."""
     import re
-    from research.rpc import Server
-    methods = {n[2:] for n in dir(Server) if n.startswith("m_")}
+    from research.api import OPS
+    methods = set(OPS)
     with open(_ext("src", "commands.ts"), encoding="utf-8") as f:
         src = f.read()
     called = set(re.findall(r"rpc\('([a-z_]+)'", src))

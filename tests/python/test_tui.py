@@ -97,7 +97,7 @@ def test_runs_filter_and_kill_confirm(proj):
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Confirm"
         await pilot.press("n")
-        assert app.srv.m_show(r["id"])["status"] == "running"
+        assert app.call("show", id=r["id"])["status"] == "running"
     go(app, then)
 
 
@@ -129,15 +129,15 @@ def _decide(proj, key, pin_set, monkeypatch):
 @pytest.mark.parametrize("pin_set", [False, True])
 def test_approve_pending_proposal(proj, pin_set, monkeypatch):
     pid, root = _decide(proj, "a", pin_set, monkeypatch)
-    from research.rpc import Server
-    st = [x["status"] for x in Server(root).m_proposals() if x["id"] == pid][0]
+    from research import api
+    st = [x["status"] for x in api.call("proposals", api.Session(root)) if x["id"] == pid][0]
     assert st in ("approved", "applied")
 
 
 def test_deny_pending_proposal(proj, monkeypatch):
     pid, root = _decide(proj, "d", False, monkeypatch)
-    from research.rpc import Server
-    assert [x["status"] for x in Server(root).m_proposals() if x["id"] == pid][0] == "rejected"
+    from research import api
+    assert [x["status"] for x in api.call("proposals", api.Session(root)) if x["id"] == pid][0] == "rejected"
 
 
 def test_wrong_pin_does_not_approve(proj):
@@ -154,5 +154,5 @@ def test_wrong_pin_does_not_approve(proj):
         await pilot.press(*"0000", "enter")
         await pilot.pause()
     go(app, then)
-    from research.rpc import Server
-    assert [x["status"] for x in Server(root).m_proposals() if x["id"] == pr["id"]][0] == "pending"
+    from research import api
+    assert [x["status"] for x in api.call("proposals", api.Session(root)) if x["id"] == pr["id"]][0] == "pending"

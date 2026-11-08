@@ -8,6 +8,8 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from ..util import ResearchError
+
 LEVELS = ("fast", "balanced", "deep")   # the logical levels every provider's level pack and every strategy speak
 
 
@@ -43,6 +45,22 @@ def server_cmd(root: str) -> List[str]:
         return ["research", "mcp"]
     from .. import localbin
     return [localbin.install(root)["path"], "mcp"]
+
+
+def merge_json(path: str, key: str, name: str, entry: Dict[str, Any]) -> str:
+    """Set `entry` as server `name` under `key` in a JSON config file (other servers and keys are kept). Returns the path."""
+    from ..store import _atomic_write
+    data: Dict[str, Any] = {}
+    if os.path.exists(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError:
+            raise ResearchError(f"{path} is not valid JSON; fix or remove it first")
+    data.setdefault(key, {})[name] = entry
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    _atomic_write(path, json.dumps(data, indent=2) + "\n")
+    return path
 
 
 def json_has_research(root: str, rel: str, key: str) -> bool:

@@ -6,7 +6,7 @@ import shutil
 from typing import Any, Dict, List, Optional
 
 from ..util import as_list
-from .base import Adapter, json_has_research, last_json_value, run, server_cmd
+from .base import Adapter, json_has_research, last_json_value, merge_json, run, server_cmd
 
 # Level pack: the models the built-in claude-fast/balanced/deep profiles have always used. Claude Code has no effort flag here.
 LEVELS = {"fast": {"model": "claude-haiku-5-5", "effort": None},
@@ -43,8 +43,8 @@ def resume_argv(argv: List[str], session_id: str) -> Optional[List[str]]:
 
 
 def mcp_install(root: str, cmd: Optional[str] = None) -> Dict[str, Any]:
-    from .. import mcp
-    mcp.install(root, ["claude"], command=server_cmd(root)[0])
+    argv = server_cmd(root)
+    merge_json(os.path.join(root, ".mcp.json"), "mcpServers", "research", {"type": "stdio", "command": argv[0], "args": argv[1:]})
     return {"provider": "claude", "where": ".mcp.json", "scope": "project"}
 
 

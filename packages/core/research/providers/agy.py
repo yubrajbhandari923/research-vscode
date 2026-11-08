@@ -1,11 +1,12 @@
 """Google Antigravity CLI (`agy`) adapter."""
 from __future__ import annotations
 
+import os
 import shutil
 from typing import Any, Dict, List, Optional
 
 from ..util import as_list
-from .base import Adapter, json_has_research, last_json_value, run, server_cmd
+from .base import Adapter, json_has_research, last_json_value, merge_json, run, server_cmd
 
 # Level pack. Source: `agy --help` (agy 1.5.0): `--effort` takes low|medium|high. UNVERIFIED defaults: no model id is pinned (`agy models`
 # lists what the account may use) and the levels differ by effort only. Pin `model` in agents.profiles.agy-<level> to taste.
@@ -52,10 +53,8 @@ def list_models(command: str) -> Optional[List[Dict[str, str]]]:
 
 
 def mcp_install(root: str, cmd: Optional[str] = None) -> Dict[str, Any]:
-    import os
-    from .. import mcp
     argv = server_cmd(root)
-    mcp._merge_json(os.path.join(root, ".agents", "mcp_config.json"), "mcpServers", "research", {"command": argv[0], "args": argv[1:]})
+    merge_json(os.path.join(root, ".agents", "mcp_config.json"), "mcpServers", "research", {"command": argv[0], "args": argv[1:]})
     return {"provider": "agy", "where": ".agents/mcp_config.json", "scope": "project"}
 
 

@@ -296,17 +296,18 @@ def test_config_edit_replaces_whole_list_block():
 
 
 def test_agent_setup_rpc_and_strategy_use(proj, repo):
-    from research import rpc
+    from research import api
     (repo / ".vscode").mkdir()
     (repo / ".vscode" / "mcp.json").write_text('{"servers": {"research": {"command": "r"}, "other": {"command": "npx", "args": ["x"]}}}')
-    s = rpc.Server(str(repo))
-    d = s.m_agent_setup()
+    sess = api.Session(str(repo))
+    c = lambda op_, **kw: api.call(op_, sess, kw)
+    d = c("agent_setup")
     assert d["strategy"] is None and {x["name"] for x in d["strategies"]} >= set(BUILTINS) and d["harness"]["configured"] is False
     reg = {c["client"]: c["registered"] for c in d["mcp"]["clients"]}
     assert reg["vscode"] and not reg["claude"] and d["mcp"]["others"][0]["name"] == "other"
     with pytest.raises(ResearchError):
-        s.m_strategy_use("nope")
-    assert s.m_strategy_use("opus_first", dry_run=True)["previous"] is None and s.m_agent_setup()["strategy"] is None
-    s.m_strategy_use("opus_first")
-    d = s.m_agent_setup()
+        c("strategy_use", name="nope")
+    assert c("strategy_use", name="opus_first", dry_run=True)["previous"] is None and c("agent_setup")["strategy"] is None
+    c("strategy_use", name="opus_first")
+    d = c("agent_setup")
     assert d["strategy"]["name"] == "opus_first" and any(x["active"] for x in d["strategies"])
