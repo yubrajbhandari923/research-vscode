@@ -16,7 +16,7 @@ Release artifacts go on the GitHub release, not in git.
 
 ## Releasing (when the user asks)
 1. On `development`: bump version in `pyproject.toml`, `package.json`, `packages/vscode-extension/package.json`, `packages/core/research/__init__.py`; add a `CHANGELOG.md` entry; update README and docs for user-visible changes.
-2. Run tests (`python -m pytest -q`), `npm run typecheck`, `scripts/package.sh`; install the VSIX locally.
+2. Run tests (`python -m pytest -q -m "not daemon"`, then `python -m pytest -q -n 0 -m daemon`), `npm run typecheck`, `scripts/package.sh`; install the VSIX locally.
 3. Commit and push `development`.
 4. Merge to main without committing, then strip dev-only paths:
    ```bash

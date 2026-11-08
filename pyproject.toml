@@ -17,7 +17,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "pytest-xdist>=3"]
 tui = ["textual>=0.80"]
 
 [project.scripts]
@@ -32,13 +32,18 @@ research = ["templates/**/*", "templates/*", "_vendor/yaml/LICENSE"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
-# `-m "not slow"` skips the end-to-end scenarios (bundles executed in subprocesses, the acceptance run)
-# for a fast inner loop; CI and the release build run everything.
+# Default = fast inner loop (parallel, no slow/daemon tests). Full run: `-m "slow or not slow or daemon"`;
+# daemon tests run serially: `-n 0 -m daemon`. Markers are assigned in tests/python/conftest.py.
+addopts = '-m "not slow and not daemon" -n auto'
 markers = [
-    "slow: end-to-end scenarios that execute bundles or whole workflows in subprocesses",
+    "slow: end-to-end scenarios or tests over ~2 s (bundles, whole workflows, real Quarto builds)",
+    "daemon: starts a supervisor or gateway process (run serially, -n 0)",
+    "pty: needs /dev/tty",
+    "ext: needs node",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
+    "pytest-xdist>=3",
 ]
