@@ -29,6 +29,14 @@ LABELS: Dict[str, str] = {n: a.label for n, a in ADAPTERS.items()}
 CAPABILITIES: Dict[str, Dict[str, Any]] = {n: a.caps for n, a in ADAPTERS.items()}   # read-only view of the capability table
 
 
+def register(name: str, build, caps: Dict[str, Any], label: Optional[str] = None) -> Adapter:
+    """Runtime registration of a provider that is not part of the package (examples/custom-provider). It gets an empty level pack and is not
+    in `KNOWN` (no default profiles, setup wizard or fallback order); select it with `provider: <name>` in a profile."""
+    a = Adapter(name=name, label=label or name, build=build, caps=caps, levels={lv: {"model": None, "effort": None} for lv in LEVELS})
+    ADAPTERS[name], LABELS[name], CAPABILITIES[name] = a, a.label, a.caps
+    return a
+
+
 def level_profile_name(provider: str, level: str) -> str:
     return f"{provider}-{level}"
 

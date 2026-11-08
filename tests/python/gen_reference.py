@@ -16,7 +16,7 @@ for sub in ("packages/core", "packages/cli"):
 
 COMMAND = "python tests/python/gen_reference.py"
 TARGETS = {"cli": "docs/spec/09-interfaces.md", "ops": "docs/spec/09-interfaces.md", "mcp": "docs/spec/09-interfaces.md",
-           "config": "docs/spec/10-configuration.md"}
+           "config": "docs/spec/10-configuration.md", "capabilities": "docs/PROVIDERS.md", "levels": "docs/PROVIDERS.md"}
 
 
 def _cell(s) -> str:
@@ -88,6 +88,25 @@ def config() -> str:
         rows = [(f"`{o.key}`", o.type, f"`{registry.default(o.key)!r}`" if registry.default(o.key) is not None else "`null`", "human only" if o.risk != "normal" else "", o.help) for o in opts]
         out += ["", f"#### {cats[cat]}", "", _table(["Key", "Type", "Default", "Who", "Meaning"], rows)]
     return "\n".join(out)
+
+
+def capabilities() -> str:
+    """Provider capability table (rows: capability, columns: provider), straight from `providers.ADAPTERS`."""
+    from research import providers as P
+    names = list(P.ADAPTERS)
+    keys = ["interactive", "headless", "model", "effort", "structured_output", "usage", "resume", "mcp", "instructions", "watchdog"]
+    show = lambda v: "yes" if v is True else "no" if v is False else "-" if v is None else f"`{v}`"
+    rows = [(f"`{k}`", *(show(P.ADAPTERS[n].caps.get(k)) for n in names)) for k in keys]
+    rows.append(("`limit_info` (usage-limit parser)", *("yes" if P.ADAPTERS[n].limit_info else "no" for n in names)))
+    rows.append(("`version_info`", *("yes" if P.ADAPTERS[n].version_info else "no" for n in names)))
+    return _table(["Capability", *names], rows)
+
+
+def levels() -> str:
+    from research import providers as P
+    rows = [(f"`{n}`", *(f"`{a.levels[lv]['model'] or 'CLI default'}`" + (f" ({a.levels[lv]['effort']})" if a.levels[lv]["effort"] else "") for lv in P.LEVELS))
+            for n, a in P.ADAPTERS.items()]
+    return _table(["Provider", *P.LEVELS], rows)
 
 
 def render(name: str, text: str, body: str) -> str:
