@@ -117,7 +117,7 @@ def test_fix_objects_are_normalised_and_the_cli_survives_command_only_fixes(proj
     assert DR.normalize_fix("do it") == {"text": "do it"}
     assert DR.normalize_fix({"text": "t", "safe": True}) == {"text": "t", "safe": True}
     assert DR.normalize_fix(None) is None and DR.normalize_fix({}) is None
-    from research_cli import main as M
+    from research_cli.commands import project as M
     real = DR.run
     DR.run = lambda root: {"root": root, "healthy": True, "summary": {"errors": 0, "warnings": 1, "info": 0, "ok": 0}, "checks": [
         {"id": "x", "area": "A", "level": "warn", "title": "t", "detail": "", "fix": {"command": "research sync"}}]}

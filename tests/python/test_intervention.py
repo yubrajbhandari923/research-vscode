@@ -65,7 +65,7 @@ def test_status_says_halted_when_nothing_moves_and_waiting_for_approval_when_onl
     h = s["health"]
     assert h["state"] == "halted" and "HALTED" in h["label"] and [b["task"] for b in h["blocking"]] == [phase(lproj, "a")["id"]] and h["fingerprint"]
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "packages", "cli"))
-    from research_cli import supervisor_cmds
+    from research_cli.commands import supervisor as supervisor_cmds
     text = "\n".join(supervisor_cmds._status_lines(s))
     assert "HALTED" in text and "nothing is running" in text and "supervisor instruct" in text
     # a plan waiting only for a start approval is a different thing
