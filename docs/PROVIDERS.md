@@ -63,7 +63,7 @@ Headless runs capture stdout/stderr to `.research/orchestration/executions/<id>.
 
 ## Continuing a task with another provider
 
-A stopped or failed task can be continued by another provider in the same worktree; see [GOVERNANCE.md](GOVERNANCE.md#3-claude-codex-and-antigravity). Antigravity runs headless (`agy -p --output-format json --mode accept-edits`) and resumes with `--conversation`.
+A stopped or failed task can be continued by another provider in the same worktree; see [GOVERNANCE.md](GOVERNANCE.md#continuing-a-task-with-another-agent). Antigravity runs headless (`agy -p --output-format json --mode accept-edits`) and resumes with `--conversation`.
 
 ## Capabilities
 
