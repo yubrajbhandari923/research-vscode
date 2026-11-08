@@ -272,36 +272,6 @@ def debug_latest(p) -> Optional[Dict[str, Any]]:
     return notify.latest_debug(p)
 
 
-@op(sync=False)
-def telegram_status(p) -> Dict[str, Any]:
-    from .. import notify
-    return notify.status(p)
-
-
-@op(sync=False, mutates=True)
-def telegram_set(p, token: str, chat_id: Optional[str] = None, discover: bool = False) -> Dict[str, Any]:
-    from .. import notify
-    if discover and not chat_id:
-        chat_id = notify.discover_chat(token.strip(), 45)
-        if chat_id is None:
-            raise ResearchError("No message reached the bot in 45 seconds", hint="Open your bot in Telegram, press Start or send any message, then try again.")
-    notify.set_credentials(token, chat_id)
-    return notify.status(p)
-
-
-@op(sync=False, mutates=True)
-def telegram_clear(p) -> Dict[str, Any]:
-    from .. import notify
-    notify.clear_credentials()
-    return notify.status(p)
-
-
-@op(mutates=True, needs_project=False)
-def telegram_test(s) -> Dict[str, Any]:
-    from .. import notify
-    return {"sent": notify.send("Research OS: Telegram is connected. Send /help for commands.")}
-
-
 # dispatch and executions -----------------------------------------------------------------------------
 @op(mutates=True)
 def dispatch(p, role: Optional[str] = None, target: Optional[str] = None, objective: Optional[str] = None,

@@ -169,25 +169,4 @@ def test_agent_cannot_set_a_finding_supported_by_editing_its_file(proj, repo, mo
     assert proj.q1("SELECT id FROM events WHERE action='import_rejected' AND entity_id=?", (f["id"],))
 
 
-def test_poll_saves_offset_before_handling_and_keeps_0600(proj, monkeypatch, tmp_path):
-    import stat
-    from research import notify
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg2"))
-    sent = []
-
-    def api(token, method, params=None, timeout=10):
-        if method == "getUpdates":
-            return {"ok": True, "result": [u for u in [{"update_id": 5, "message": {"chat": {"id": 7}, "text": "/help"}}] if u["update_id"] >= int((params or {}).get("offset") or 0)]}
-        return {"ok": True}
-
-    def boom(*a, **k):
-        sent.append(notify.credentials()["offset"])    # the offset file is already written when the handler replies
-        raise RuntimeError("network down")
-    monkeypatch.setattr(notify, "_api", api)
-    monkeypatch.setattr(notify, "send", boom)
-    notify.set_credentials("123456:" + "A" * 24, 7)
-    with pytest.raises(RuntimeError):
-        notify.poll(proj)
-    assert notify.credentials()["offset"] == 6                          # a failed send must not replay the update
-    assert stat.S_IMODE(os.stat(notify._path()).st_mode) == 0o600
-    assert sent == [6] and notify.poll(proj) == 0 and len(sent) == 1
+# the Telegram offset/0600 test moved to test_chat_telegram.py (offset saved before handling, per-gateway cursors, 0600 files)

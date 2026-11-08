@@ -1,5 +1,7 @@
-"""Supervisor intervention, halt detection, the debug agent and the Telegram channel. Real supervisor ticks, git and a scripted agent. The planning/debug
-agent (`intervene.run_assistant`) and the Telegram HTTP call (`notify._api`) are the only stand-ins: no model and no network are used."""
+"""Supervisor intervention, halt detection, the debug agent and the chat alerts. Real supervisor ticks, git and a scripted agent. The planning/debug
+agent (`intervene.run_assistant`) is the only stand-in; Telegram is the shared fake Bot API (tests/python/fakes/fake_telegram.py): no model and no
+network are used. Gateway-level behaviour lives in test_chat_*.py."""
+import asyncio
 import json
 import os
 import stat
@@ -11,6 +13,8 @@ import pytest
 
 from research import approval as A, intervene as I, notify, planspec as PS, supervisor as SV
 from research.util import PolicyBlocked, ResearchError
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "fakes"))
+from fake_telegram import FakeTelegram  # noqa: E402
 from test_supervisor import lproj, run_until  # noqa: F401  (lproj is a fixture)
 from test_supervisor_fixes import phase, plan, run_attempts, t
 
@@ -274,34 +278,25 @@ def test_a_restart_in_the_middle_of_implementing_applies_each_action_exactly_onc
 
 
 # ------------------------------------------------------------------------------------------------ Telegram + debug agent
-class Tg:
-    def __init__(self):
-        self.sent, self.updates, self.calls = [], [], []
-
-    def api(self, token, method, params, timeout=15.0):
-        assert token == TOKEN
-        self.calls.append(method)
-        if method == "sendMessage":
-            self.sent.append((str(params["chat_id"]), params["text"]))
-            return {"ok": True, "result": {}}
-        if method == "getUpdates":
-            off = int(params.get("offset") or 0)
-            return {"ok": True, "result": [u for u in self.updates if u["update_id"] >= off]}
-        return {"ok": True}
-
-    def say(self, text, chat=777, uid=None):
-        self.updates.append({"update_id": uid or len(self.updates) + 1, "message": {"chat": {"id": chat}, "text": text}})
-
-
 @pytest.fixture
 def tg(monkeypatch, tmp_path, lproj):
+    from research import machine
+    from research.chat import gateway
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg2"))
-    fake = Tg()
-    monkeypatch.setattr(notify, "_api", fake.api)
+    fake = FakeTelegram()
+    monkeypatch.setenv("RESEARCH_TELEGRAM_API", fake.url)
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    monkeypatch.setenv("no_proxy", "127.0.0.1")
+    monkeypatch.setattr(gateway, "ensure_running", lambda p=None: {"action": "none"})        # no real gateway process in these tests
     notify.set_credentials(TOKEN, 777)
     lproj.config["notifications"] = {"halt_grace_seconds": 0, "auto_debug": True, "telegram": {"enabled": True}}
     lproj.save_config()
-    return fake
+    machine.remember(lproj.root)
+    from research.chat.telegram import TelegramChannel
+    fake.deliver = lambda: asyncio.run(gateway.Gateway({"telegram": TelegramChannel()}, discover=False).pump_once())   # what the gateway does each tick
+    yield fake
+    gateway.stop()          # a supervisor started by the test starts a real gateway process; do not leave it behind
+    fake.stop()
 
 
 def join_threads():
@@ -326,12 +321,16 @@ def test_a_halt_sends_one_message_with_the_debug_summary_and_options_then_report
                               {"label": "Fix the task", "instruction": "Make the task print right.", "class": "implementation"}], "recommended": 1}
     notify.step(lproj)
     join_threads()
-    assert len(tg.sent) == 1 and tg.sent[0][0] == "777"
-    msg = tg.sent[0][1]
+    assert tg.sent == [], "the supervisor writes to the outbox; only the gateway talks to Telegram"
+    tg.deliver()
+    assert len(tg.sent) == 1 and tg.messages[0]["chat"] == "777"
+    msg = tg.sent[0]
+    assert "2. Fix the task" in json.dumps(tg.messages[0]["markup"]) and "Pause plan" in json.dumps(tg.messages[0]["markup"])
     assert "HALTED" in msg and "most likely the check is mistaken" in msg.lower() and "1. Relax the check [scientific]" in msg and "2. Fix the task [implementation] (recommended)" in msg and "/choose N" in msg
     assert TOKEN not in msg
     notify.step(lproj)
     join_threads()
+    tg.deliver()
     assert len(tg.sent) == 1, "one notice per halt, not one per pass"
     rec = notify.latest_debug(lproj)
     assert rec["state"] == "done" and len(rec["options"]) == 2 and "opus" in rec["model"] or "default" in rec["model"]
@@ -344,31 +343,33 @@ def test_telegram_commands_report_status_and_route_instructions_but_never_approv
     tid = phase(lproj, "w")["id"]
     tg.say("/status")
     tg.say("/blocked")
-    tg.say("/status", chat=999)                              # a stranger is ignored completely
+    tg.say("/status", chat=999)                              # a stranger gets a pairing code and nothing else
     notify.poll(lproj)
-    texts = [m for c, m in tg.sent]
-    assert len(texts) == 2 and all(c == "777" for c, _ in tg.sent)
+    mine = [m for m in tg.messages if m["chat"] == "777"]
+    texts = [m["text"] for m in mine]
+    assert len(texts) == 2 and [m["text"].startswith("You are not paired yet") for m in tg.messages if m["chat"] == "999"] == [True]
     assert "HALTED" in texts[0] and "fx" in texts[0] and tid in texts[1] and "wrong" in texts[1].lower() or "attempt" in texts[1].lower()
     tg.say("/help")
     tg.say(f"/say {tid} The output only has to exist, drop the content check.")
     stub.reply = {"summary": "Relax the check.", "actions": [{"type": "amend_task", "fields": {"checks": ["file:out.txt"]}}, {"type": "reverify"}]}
     tg.sent.clear()
     notify.poll(lproj)
-    assert len(tg.sent) == 2 and "/say" in tg.sent[0][1]
-    reply = tg.sent[1][1]
+    assert len(tg.sent) == 2 and "/say" in tg.sent[0]
+    reply = tg.sent[1]
     assert "needs your approval with the PIN" in reply and f"research intervention approve INT-001" in reply
     its = I.list_all(lproj)
     assert len(its) == 1 and its[0]["source"] == "telegram" and its[0]["state"] == "proposed" and not its[0]["applied"], "chat cannot approve a protected change"
     tg.say("/pause")
     tg.sent.clear()
     notify.poll(lproj)
-    assert "paused" in tg.sent[0][1]
+    assert "paused" in tg.sent[0]
     assert SV.status(lproj, "fx")["state"] == "paused"
     tg.say("/resume")
     tg.say("/nonsense")
     tg.sent.clear()
     notify.poll(lproj)
-    assert "resumed" in tg.sent[0][1] and "Unknown command" in tg.sent[1][1]
+    # resuming starts a real supervisor, whose notify step may queue an alert that a real gateway process delivers meanwhile: order-free
+    assert any("resumed" in m for m in tg.sent) and any("Unknown command" in m for m in tg.sent)
 
 
 def test_choose_turns_a_debug_option_into_an_intervention_and_plain_text_goes_to_the_only_blocked_task(lproj, stub, tg):
@@ -382,14 +383,15 @@ def test_choose_turns_a_debug_option_into_an_intervention_and_plain_text_goes_to
     notify.poll(lproj)
     its = I.list_all(lproj)
     assert len(its) == 1 and its[0]["instruction"] == "Print right instead." and its[0]["state"] == "approved", "unprotected: applied under the researcher's instruction"
-    assert "Applied under your instruction" in tg.sent[-1][1]
+    assert "Applied under your instruction" in tg.sent[-1]
     assert ticks(lproj, lambda: iv_state(lproj, its[0]["id"]) in ("resolved", "failed"), 120)
 
 
 def test_halt_notice_without_the_debug_agent_and_no_telegram_means_no_network(lproj, stub, monkeypatch, tmp_path):
+    from research.chat import telegram
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg3"))
     calls = []
-    monkeypatch.setattr(notify, "_api", lambda *a, **k: calls.append(a) or {"ok": True, "result": []})
+    monkeypatch.setattr(telegram, "_api", lambda *a, **k: calls.append(a) or {"ok": True, "result": []})
     lproj.config["notifications"] = {"halt_grace_seconds": 0, "auto_debug": False, "telegram": {"enabled": False}}
     lproj.save_config()
     start(lproj, WRONG)
@@ -404,6 +406,8 @@ def test_halt_notice_without_the_debug_agent_and_no_telegram_means_no_network(lp
     notify.step(lproj)
     join_threads()
     assert calls == [] and notify.latest_debug(lproj)["state"] == "done"
+    from research.chat import alerts
+    assert not os.path.exists(alerts.outbox_path(lproj)), "chat off: nothing is queued either"
 
 
 # ------------------------------------------------------------------------------------------------ CLI (real launcher)
