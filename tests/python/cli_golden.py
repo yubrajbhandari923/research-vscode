@@ -127,7 +127,7 @@ def norm(s: str, roots) -> str:
     s = DATE.sub("<DATE>", s)
     s = HEX.sub("<HEX>", s)
     s = s.replace(sys.executable, "<PYEXE>")
-    s = re.sub(r"\d+\.\d+s\b", "<DUR>", s)
+    s = re.sub(r"(?<![\w.])\d+(\.\d+)?s\b", "<DUR>", s)   # whole-second durations too: a loaded machine turns 0s into 1s
     s = re.sub(r"[A-Za-z0-9_.-]*research-vscode[^\s\"']*", "<REPO>", s)
     return s
 
