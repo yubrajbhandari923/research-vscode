@@ -5,8 +5,8 @@ Install the CLI first (README, Install). Everything below works from a terminal;
 ## Terminal only
 
 ```bash
-research project-init sparse-ct --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex   # preview
-research project-init sparse-ct --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex --apply
+research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex   # preview
+research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude,codex --apply
 cd sparse-ct/main
 research question create "Which sampling pattern recovers the most detail?"
 research experiment create "pattern study" -q Q-001 --hypothesis "Radial beats uniform" --planned-runs 3

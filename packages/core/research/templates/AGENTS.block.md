@@ -75,7 +75,7 @@ the human to open the project in VS Code with the Research Panel extension, or t
 ### Context hand-off
 - A complete hand-off (new session, another model, a human): `research report --full --check`. It is a deterministic
   dump of the records — **not** a synthesis. It interprets nothing; don't quote it as if it concluded something.
-- To review the managed block: `research agents-md --diff`. Everything outside the two marker comments below is the project's — never rewrite it.
+- To review the managed block: `research agent instructions --diff`. Everything outside the two marker comments below is the project's — never rewrite it.
 
 ### Tiered agents (optional)
 If `orchestration.enabled`: `research strategy show` says which model level does what (or the legacy Opus/Sonnet/Haiku tiers when no

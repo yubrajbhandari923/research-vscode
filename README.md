@@ -26,7 +26,7 @@ restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries
 
 ## First run
 
-From a terminal, `research project-init my-project --apply` (preview without `--apply`), or open an empty folder in VS Code and run **Research: Initialize Project**.
+From a terminal, `research init my-project --layout ledger --apply` (preview without `--apply`), or open an empty folder in VS Code and run **Research: Initialize Project**.
 See [docs/QUICKSTART.md](docs/QUICKSTART.md) for both paths; agents and providers (Claude Code, Codex, Antigravity) are in [docs/PROVIDERS.md](docs/PROVIDERS.md).
 The wizard creates `main/` (your code, GitHub's root), `ledger/` (research records) and `experiments/` (one worktree each), links the shipped
 skills for your agents, registers the MCP server, approves two starter hooks and creates the Scientist Guide: nothing is pushed.
@@ -194,7 +194,7 @@ research finding create "A conclusion supported by the observed results" \
 research finding create "A direction that failed" --kind failure --supports RUN-0003
 research decision create "The next research decision" --findings F-001
 research checkpoint create --problem "Remaining uncertainty" --next "Next experiment"
-research resume
+research status --full
 research current
 ```
 
@@ -244,9 +244,9 @@ blocks completion independently. Roles are self-declared conventions, not authen
 Hand-edited files and direct Python internals are outside the CLI policy boundary.
 
 ```bash
-research dispatch planner --objective "Design the next experiment"
+research agent dispatch planner --objective "Design the next experiment"
 research task dispatch T-001
-research dispatch verifier F-001
+research agent dispatch verifier F-001
 ```
 
 `research task context T-001` (also the MCP `task_context` tool, the RPC call behind the editor, and the start of every

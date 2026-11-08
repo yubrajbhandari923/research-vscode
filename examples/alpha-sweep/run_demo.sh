@@ -63,4 +63,4 @@ research checkpoint --title "Baseline chosen: alpha=0.5" \
   --problem "Stability edge above alpha=1.0 unknown." \
   --next "Run EXP-002 (alpha 1.2, 1.5) — expect divergence above ~1.11."
 echo
-research resume
+research status --full

@@ -11,8 +11,8 @@ to a different provider and nothing is lost.
 | Wizard | Initialize Project → Agents: enable any of the three, pick the default (Claude Code by default). |
 | UI | Control Center → **Agents** → *Make default*. |
 | YAML | `agents.default_profile: codex` in `.research/config.yaml` (the UI edits the same key). |
-| One dispatch | Task → Dispatch → Agent / Model / Mode, or `research dispatch implementer T-001 --profile codex --agent-model gpt-5 --effort high`. |
-| CLI | `research provider list`, `research provider set-default codex`. |
+| One dispatch | Task → Dispatch → Agent / Model / Mode, or `research agent dispatch implementer T-001 --profile codex --agent-model gpt-5 --effort high`. |
+| CLI | `research agent providers list`, `research agent providers set-default codex`. |
 
 Changing the default affects only future dispatches; a running session keeps what it was launched with. Research OS never
 substitutes another provider or model when the one you asked for is missing: dispatch reports the problem instead.
@@ -43,7 +43,7 @@ whatever the provider.
 
 1. `AGENTS.md` in `main/`: one set of rules (a managed block). Codex and Antigravity read it directly; `CLAUDE.md` is created as `@AGENTS.md`, so Claude reads the same text. Nothing is duplicated per provider.
 2. A **task brief** (Markdown) generated from canonical records: goal, question, experiment hypothesis/parameters/criteria, plan, dependencies, checks, prior runs/findings, policies, required skills, working directory and branch, and how to run, record and finish. Its **absolute path** is in the prompt and in `RESEARCH_BRIEF`.
-3. The **Research MCP server** for live state: `research provider mcp NAME --apply` registers it (`.mcp.json` for Claude, `.agents/mcp_config.json` for Antigravity, `codex mcp add` for Codex at user level), then **starts it from the experiment worktree and lists its tools**. Registration is not reported as working until that succeeds.
+3. The **Research MCP server** for live state: `research agent providers mcp NAME --apply` registers it (`.mcp.json` for Claude, `.agents/mcp_config.json` for Antigravity, `codex mcp add` for Codex at user level), then **starts it from the experiment worktree and lists its tools**. Registration is not reported as working until that succeeds.
 
 ## Prepare, start, running, completed, verified
 
@@ -55,7 +55,7 @@ whatever the provider.
 | **failed / cancelled / unknown** | Non-zero exit (or could not start), stopped by you, or the launcher disappeared without an outcome. |
 | **verified** | The task's checks and review policy passed (`research task verify`). Only this counts scientifically. |
 
-`research execution list|show|logs|stop|retry`. A task can only be launched once at a time (a kernel lock); a prepared execution is single use.
+`research agent executions list|show|logs|stop|retry`. A task can only be launched once at a time (a kernel lock); a prepared execution is single use.
 Headless Claude Code runs are started with `--permission-mode acceptEdits` and `--allowedTools` limited to the `research` CLI and MCP server, because nobody can answer a prompt; arbitrary shell commands are not pre-approved. Override per profile with `allowed_tools: [...]` and `permission_mode`. The ledger's `.research/bin` is put on `PATH`. Exit 0 means the process ended, not that the task passed: run the task's checks (they run in the experiment worktree).
 
 Headless runs capture stdout/stderr to `.research/orchestration/executions/<id>.out|.err` and the exit status.

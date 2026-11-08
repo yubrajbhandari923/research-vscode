@@ -13,7 +13,7 @@ Everything is also plain YAML in `.research/config.yaml`; the wizard only fills 
 ## CLI-only
 
 Nothing here needs VS Code. Run the `research env …`, `research config set …` and `research hpc …` commands shown below in your project; they write the same `.research/config.yaml` keys the wizard does.
-After setup, `research doctor` reports problems and `research provider list` shows your agent CLIs. The VS Code checks at the end of this page have terminal equivalents (`research plan yaml validate`, `research supervisor status`).
+After setup, `research doctor` reports problems and `research agent providers list` shows your agent CLIs. The VS Code checks at the end of this page have terminal equivalents (`research plan yaml validate`, `research supervisor status`).
 
 ## 1. This computer (uses uv)
 
@@ -86,6 +86,6 @@ hpc:
 
 - [ ] `research env check` is green (or you consciously rely on the system `python3`)
 - [ ] `research hpc doctor --compute` is green (HPC only)
-- [ ] `research provider list` shows your agent CLIs installed and signed in
+- [ ] `research agent providers list` shows your agent CLIs installed and signed in
 - [ ] `research plan yaml validate your-plan.yaml`
 - [ ] `research supervisor status` shows no warning (or the VS Code Control Center → **Plans** opens without a warning banner)
