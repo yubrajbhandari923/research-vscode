@@ -32,6 +32,7 @@ SUPERVISOR: Dict[str, Any] = {
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "investigator": {"auto": False, "max_per_plan": 3, "budget_usd": 2.0},   # on-demand investigator agent (investigator.py); auto = also on unclassified failures
     "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
     "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
 }
@@ -39,7 +40,8 @@ GOVERNANCE: Dict[str, Any] = {
     "experiments": {"agent_creation": "propose_only"},
     "tasks": {"agent_creation": "bounded_auto", "allowed_auto_types": ["bugfix", "diagnostic", "verification"], "max_auto_per_experiment": 3},
     "scientific_changes": {"require_human_approval": True},
-    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False},
+    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False,
+                 "chat": {"enabled": False}, "chat_allow": []},
     "experiment_overrides": {},
 }
 AUTO_PROMOTION: Dict[str, Any] = {
@@ -337,6 +339,10 @@ OPTIONS: List[Option] = [
     _o("supervisor.require_approval_for_scientific_changes", "bool", "supervisor", "Approve scientific changes", "Proposals that change hypotheses, methods, checks, acceptance, parameters or existing task definitions always wait for you.",
        why="Science is the researcher's decision.", effect="Turning it off lets proposals of any kind apply automatically (not recommended).", risk="policy"),
     _o("governance.experiments.agent_creation", "enum", "governance", "Agents creating experiments", "human_only: agents cannot even propose. propose_only: agents submit a proposal; you approve it with your PIN. Agents never create experiments directly.",
+    _o("supervisor.investigator.auto", "bool", "supervisor", "Investigate failures automatically", "When a task hits a failure the supervisor cannot classify, run the investigator agent once (read-mostly, never approves). Off: it only runs when you ask (`research investigate`, or a free-text answer to a decision request).",
+       why="Novel failures need judgment the rules do not have.", effect="Spends model budget; capped by the two settings below. Protected changes still need your PIN.", risk="policy"),
+    _o("supervisor.investigator.max_per_plan", "int", "supervisor", "Investigator runs per plan", "Most investigator runs for one plan; after that the supervisor just asks you in plain text.", why="Bounds spend.", effect="Further questions wait for you.", min_=0, max_=50),
+    _o("supervisor.investigator.budget_usd", "float", "supervisor", "Investigator budget (USD)", "Total provider-reported cost the investigator may use for this project; runs with no reported cost count toward the per-plan limit only.", why="Bounds spend.", effect="Beyond it the supervisor asks you in plain text.", min_=0, max_=1000),
        choices=["propose_only", "human_only"], why="Experiments are scientific decisions.", effect="Applies at once, to every creation path.", risk="policy"),
     _o("governance.tasks.agent_creation", "enum", "governance", "Agents creating tasks", "human_only, propose_only, or bounded_auto (agents add operational tasks of the allowed types inside their own experiment, up to the limit).",
        choices=["bounded_auto", "propose_only", "human_only"], why="Keeps the plan yours while letting agents add a missing diagnostic.", effect="Applies at once. The older supervisor switches below can only tighten it.", risk="policy"),
@@ -351,6 +357,10 @@ OPTIONS: List[Option] = [
        why="Keeps long plans moving when one provider runs out of credit.", effect="Bounded by the attempt limits; never used when an attempt's state is unknown.", risk="policy"),
     _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: " + ", ".join(_providers.KNOWN) + ". Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=list(_providers.KNOWN)),
     _o("agents.handoff.on_provider_unavailable", "enum", "agents", "When a provider is unavailable", "try_next continues with the next provider; pause stops the task for you.", choices=["pause", "try_next"], why="Opt-in.", effect="Needs automatic fallback on."),
+    _o("governance.approval.chat.enabled", "bool", "governance", "Approve from chat with an authenticator code", "Lets an approver on a paired chat account approve some PIN-protected proposals by sending a 6-digit authenticator (TOTP) code. Also needs `research approval chat-enroll` on this machine. Frozen tests, scientific plan or hypothesis edits, governance/approval settings, the PIN/authenticator and the chat allow-list always stay computer-only.",
+       why="Approving from a phone when you are away. As strong as your chat account AND your authenticator device.", effect="Off: chat can only ask you to approve at the computer.", risk="policy"),
+    _o("governance.approval.chat_allow", "list", "governance", "What chat may approve", "Narrows what chat may approve: experiment_proposal, plan_add_tasks, budget_increase, retry, role_change, promotion, resume, decision_option. Empty means all of these (never the computer-only ones).",
+       why="Least privilege for the phone.", effect="Anything not listed needs the PIN at the computer.", risk="policy"),
     _o("agents.handoff.on_unknown_execution_state", "enum", "agents", "When an attempt's state is unknown", "Always pause: a task is never relaunched while its previous process might still be running.", choices=["pause"], why="Prevents two agents editing one worktree.", effect="Fixed."),
     _o("supervisor.session_resume", "enum", "supervisor", "Continue the agent's own session", "auto continues the provider's native conversation for repairs when the installed CLI proves it can; never always starts fresh with a generated hand-off.",
        choices=["auto", "never"], why="Native sessions keep context cheaply; hand-offs work everywhere.", effect="Applies to later repair attempts.", advanced=True),

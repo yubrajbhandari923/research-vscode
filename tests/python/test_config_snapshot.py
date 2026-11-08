@@ -19,6 +19,9 @@ INTENDED_NEW = {
     "supervisor.launch_grace_seconds", "supervisor.escalation",                                             # already effective via supervisor.DEFAULTS
     "auto_promotion.test_command", "auto_promotion.review_timeout_minutes", "auto_promotion.max_file_mb",   # already effective via autopromote.DEFAULTS
     "auto_promotion.protected_test_globs",
+    "notifications.alerts.on", "notifications.alerts.cooldown_minutes", "notifications.alerts.escalate_after",       # WP14a chat gateway
+    "notifications.alerts.approval_expiry_hours", "notifications.digest.at", "notifications.digest.silent_if_unchanged",
+    "governance.approval.chat", "governance.approval.chat_allow", "supervisor.investigator",                                            # WP14b: approval from chat (TOTP)
 }
 
 

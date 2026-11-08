@@ -364,8 +364,32 @@ def cmd_telegram(a, p) -> int:
         sup = notify.ensure_running(p)
         return _emit(a, {**notify.status(p), "supervisor": sup}, lambda d: [green("✓ ") + "Telegram connected; token and chat id are stored only on this machine",
                      green("✓ ") + "supervisor " + ("started: it answers your chat and alerts you on halts" if sup["action"] == "start" else "is running: it answers your chat and alerts you on halts")
+    if a.action == "chat-status":
+        st = AP.chat_status()
+        return _emit(a, st, [("authenticator enrolled" if st["chat_enrolled"] else "no authenticator enrolled (research approval chat-enroll)")
+                                                                                + ("; chat approval is DISABLED until you log in with `research approval verify`" if st["chat_disabled"] else "")])
                      if not sup.get("error") else yellow("! start it with `research supervisor start`: " + sup["error"])])
     if act == "test":
+    if a.action in ("chat-enroll", "chat-revoke"):
+        if not AP.interactive():
+            raise PolicyBlocked("This needs an interactive terminal", hint="Run it in your own terminal.")
+        pin = AP.read_pin()
+        if a.action == "chat-revoke":
+            AP.chat_revoke(pin)
+            return _emit(a, {"chat_enrolled": False}, [green("✓ ") + "authenticator removed; chat approval is off"])
+
+        def show(uri, secret):
+            print(f"Add this to your authenticator app (once):\n  {uri}\n  secret: {secret}", file=sys.stderr)
+            if a.qr:
+                try:
+                    import qrcode
+                    q = qrcode.QRCode()
+                    q.add_data(uri)
+                    q.print_ascii(out=sys.stderr)
+                except ImportError:
+                    print("(--qr needs the `qrcode` package; use the URI or secret above)", file=sys.stderr)
+        AP.chat_enroll(pin, lambda: AP.read_pin("Current 6-digit code: "), show)
+        return _emit(a, {"chat_enrolled": True}, [green("✓ ") + "authenticator enrolled. Also set governance.approval.chat.enabled: true to use it."])
         return _emit(a, {"sent": notify.send("Research OS test message. Send /help for commands.")}, lambda d: [green("✓ ") + "sent" if d["sent"] else yellow("not configured")])
     if act == "remove":
         notify.clear_credentials()
@@ -582,8 +606,9 @@ def attach(sub, add, group) -> None:
     x.add_argument("--rev", type=int, help="the revision you reviewed; refused if the proposal changed since")
     for f in ("title", "hypothesis", "rationale", "method", "expected_outputs", "related"):
         x.add_argument("--" + f.replace("_", "-"), dest=f, help="experiment proposal: " + f.replace("_", " "))
-    x = add(sub, "approval", cmd_approval, "the approval PIN: status | set-pin (create or change) | verify")
-    x.add_argument("action", choices=["status", "set-pin", "verify"])
+    x = add(sub, "approval", cmd_approval, "the approval PIN: status | set-pin (create or change) | verify; chat-enroll | chat-revoke | chat-status (authenticator for chat approval)")
+    x.add_argument("action", choices=["status", "set-pin", "verify", "chat-enroll", "chat-revoke", "chat-status"])
+    x.add_argument("--qr", action="store_true", help="chat-enroll: also draw a QR code (only if the `qrcode` package is installed)")
     x = add(sub, "promote", cmd_promote, "select experiment code for main: list | changes | prepare | show | diff | verify | review | approve | integrate | abandon",
             aliases=["promotion"])
     x.add_argument("action", choices=["list", "changes", "prepare", "show", "diff", "verify", "review", "approve", "integrate", "abandon"])
