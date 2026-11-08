@@ -243,7 +243,7 @@ test('Initialize Project: teaches first, previews the layout, creates main/ledge
     await click(byText(el, 'button', 'Next'));
     assert.match(el.textContent, /top level/); await click(byText(el, 'button', 'Next'));
     assert.match(el.textContent, /Claude Code/); assert.match(el.textContent, /OpenAI Codex/); assert.match(el.textContent, /Google Antigravity/);
-    assert.match(el.textContent, /sonnet_first/);
+    assert.match(el.textContent, /balanced_first/);
     await click(byText(el, 'button', 'Next')); assert.match(el.textContent, /copy your ledger/);
     await click(byText(el, 'button', 'Next'));
     // the Skills step: packs with descriptions, Core Research always on, nine cheap hooks, nothing injected into every prompt
