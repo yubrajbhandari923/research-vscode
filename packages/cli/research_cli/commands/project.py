@@ -18,40 +18,24 @@ from . import mut
 from ..output import _done, author, bold, cyan, dim, fmt_val, green, kv, magenta, out_json, print_experiment, print_finding, print_generic, red, section, st, yellow
 
 
-def print_resume(r: Dict[str, Any]) -> None:
-    pr = r["project"]
-    g = r["git"]
-    print(bold(f"━━ {pr['name']} ━━"))
-    if pr.get("goal"):
-        print(pr["goal"])
-    la = r.get("last_activity")
-    if la:
-        age = r.get("last_activity_age_days") or 0
-        print(dim(f"last activity {age:.0f} days ago — {la['summary']}") if age >= 1 else dim(f"last activity today — {la['summary']}"))
-    if g.get("branch"):
-        print(dim(f"git {g['branch']} @ {(g.get('commit') or '')[:10]}") + (yellow(" (uncommitted changes)") if g.get("dirty") else ""))
+def _resume_checkpoint(r) -> None:
     cp = r.get("latest_checkpoint")
     section("Latest checkpoint")
-    if cp:
-        print(f"  {cp['id']} {cp['title']} " + dim(f"({cp['created_at'][:10]}, {cp.get('age_days') or 0:.0f}d ago)")
-              + (yellow(" STALE") if cp.get("stale") else ""))
-        kv("understanding", cp.get("understanding"))
-        kv("problem", cp.get("current_problem"))
-        kv("next", cp.get("next_experiment"))
-        sc = r["since_checkpoint"]
-        if sc["events"]:
-            print(dim(f"  since then: {sc['events']} changes, {sc['runs']} runs, "
-                      f"{len(sc['findings'])} findings, {len(sc['experiments'])} experiments"))
-    else:
+    if not cp:
         print(dim("  none yet — `research checkpoint` to create one"))
-    b = r.get("baseline")
-    section("Baseline")
-    print(f"  {b['id']} {b['title']}" if b else dim("  none set — `research experiment baseline EXP-…`"))
-    section("Questions")
-    for q in r["active_questions"] + r["open_questions"] + r["blocked_questions"]:
-        print(f"  {q['id']}  {q['title']}  [{st(q['status'])}] {dim(str(q['experiments']) + ' exp')}")
-    if not (r["active_questions"] or r["open_questions"] or r["blocked_questions"]):
-        print(dim("  none open"))
+        return
+    print(f"  {cp['id']} {cp['title']} " + dim(f"({cp['created_at'][:10]}, {cp.get('age_days') or 0:.0f}d ago)")
+          + (yellow(" STALE") if cp.get("stale") else ""))
+    kv("understanding", cp.get("understanding"))
+    kv("problem", cp.get("current_problem"))
+    kv("next", cp.get("next_experiment"))
+    sc = r["since_checkpoint"]
+    if sc["events"]:
+        print(dim(f"  since then: {sc['events']} changes, {sc['runs']} runs, "
+                  f"{len(sc['findings'])} findings, {len(sc['experiments'])} experiments"))
+
+
+def _resume_beliefs(r) -> None:
     section("What we believe (findings)")
     for f in r["established_findings"][:10]:
         print(f"  {green('✓') if f['status'] == 'supported' else yellow('~')} {f['id']}  {f['title']}"
@@ -63,6 +47,9 @@ def print_resume(r: Dict[str, Any]) -> None:
         print(f"  {red('✗')} {f['id']}  {f['title']}")
     if not r["failed_directions"]:
         print(dim("  none recorded"))
+
+
+def _resume_work(r) -> None:
     section("Current experiments")
     for e in r["current_experiments"]:
         s = e["state"]
@@ -82,6 +69,31 @@ def print_resume(r: Dict[str, Any]) -> None:
         section("Look at")
         for s in r["suggested_files"][:8]:
             print(f"  {s['path']}  {dim(s['reason'])}" + ("" if s["exists"] else red(" (missing)")))
+
+
+def print_resume(r: Dict[str, Any]) -> None:
+    pr = r["project"]
+    g = r["git"]
+    print(bold(f"━━ {pr['name']} ━━"))
+    if pr.get("goal"):
+        print(pr["goal"])
+    la = r.get("last_activity")
+    if la:
+        age = r.get("last_activity_age_days") or 0
+        print(dim(f"last activity {age:.0f} days ago — {la['summary']}") if age >= 1 else dim(f"last activity today — {la['summary']}"))
+    if g.get("branch"):
+        print(dim(f"git {g['branch']} @ {(g.get('commit') or '')[:10]}") + (yellow(" (uncommitted changes)") if g.get("dirty") else ""))
+    _resume_checkpoint(r)
+    b = r.get("baseline")
+    section("Baseline")
+    print(f"  {b['id']} {b['title']}" if b else dim("  none set — `research experiment baseline EXP-…`"))
+    section("Questions")
+    for q in r["active_questions"] + r["open_questions"] + r["blocked_questions"]:
+        print(f"  {q['id']}  {q['title']}  [{st(q['status'])}] {dim(str(q['experiments']) + ' exp')}")
+    if not (r["active_questions"] or r["open_questions"] or r["blocked_questions"]):
+        print(dim("  none open"))
+    _resume_beliefs(r)
+    _resume_work(r)
 
 
 def print_status(r: Dict[str, Any]) -> None:
@@ -323,104 +335,122 @@ def cmd_mark(a, p) -> int:
     return 0
 
 
+def _cfg_options(a, p) -> int:
+    from research import registry as R
+    d = R.describe(p, a.category, a.search)
+    if a.json:
+        out_json(d)
+        return 0
+    for x in d["options"]:
+        tag = "" if x["source"] == "default" else f" [{x['source']}]"
+        print(f"  {x['key'].ljust(48)} {fmt_val(x['value']).ljust(10)}{tag}  {dim(x['label'])}")
+    return 0
+
+
+def _cfg_explain(a, p) -> int:
+    from research import registry as R
+    x = R.explain(p, a.key)
+    if a.json:
+        out_json(x)
+        return 0
+    print(bold(x["label"]) + dim(f"   {x['key']}"))
+    print("\n" + x["help"])
+    print("\nWhy: " + x["why"] + "\nEffect: " + x["effect"])
+    kv("value", f"{fmt_val(x['value'])} ({x['source']}{', inherited' if x['inherited'] else ''})")
+    kv("default", fmt_val(x["default"]))
+    kv("allowed", x["choices"] or (f"{x['min']}..{x['max']}" if x["min"] is not None or x["max"] is not None else x["type"]))
+    kv("needs a human", "yes" if x["approval"] else "no")
+    return 0
+
+
+def _cfg_set(a, p) -> int:
+    """set | reset"""
+    from research import registry as R
+    remove = a.action == "reset"
+    if a.action == "set" and a.value is None:
+        raise ResearchError("config set needs KEY and VALUE")
+    change = {a.key: None if remove else a.value}
+    if a.cfg_dry:
+        r = R.preview(p, change, a.scope, remove)
+        if a.json:
+            out_json(r)
+        else:
+            print(r["diff"] or dim("(no change)"))
+            for k, e in r["errors"].items():
+                print(red("✗ ") + f"{k}: {e}")
+        return 0 if r["ok"] else 1
+    r = R.apply(p, change, a.scope, a.reason, a.confirm, remove)
+    out_json(r) if a.json else print(green("✓ ") + (f"{a.key} " + ("reset" if remove else f"= {fmt_val(r['values'][a.key])}") + f" ({a.scope})" if r["changed"] else "no change"))
+    return 0
+
+
+def _cfg_sources(a, p) -> int:
+    from research import configfile as CF
+    from research.store import DEFAULT_CONFIG
+    src = CF.sources(p.raw_config, DEFAULT_CONFIG)
+    if a.json:
+        out_json(src)
+        return 0
+    width = max((len(k) for k in src), default=10)
+    for k, info in src.items():
+        colour = {"project": green, "machine": cyan, "default": dim}[info["source"]]
+        print(f"  {k.ljust(width)}  {fmt_val(info['value']).ljust(22)} {colour(info['source'])}")
+    m = CF.machine_path()
+    print()
+    kv("machine config", m if m and os.path.isfile(m) else f"{m} (absent)")
+    kv("project config", p.rel(p.config_path))
+    return 0
+
+
+def _cfg_show(a, p) -> int:
+    if a.sources:
+        return _cfg_sources(a, p)
+    shown = p.config if a.effective else p.raw_config
+    if a.json:
+        out_json(shown)
+    else:
+        from research import yamlio
+        sys.stdout.write(yamlio.dump(shown, block=True))
+        if not a.effective:
+            print(dim("\n  (this project's own settings only — add --effective for every value in force)"))
+    return 0
+
+
+def _cfg_check(a, p) -> int:
+    from research import configfile as CF
+    from research.store import DEFAULT_CONFIG
+    with open(p.config_path, encoding="utf-8") as f:
+        text = f.read()
+    r = CF.check(p.raw_config, DEFAULT_CONFIG, text)
+    if a.json:
+        out_json(r)
+        return 0 if r["ok"] else 1
+    for e in r["errors"]:
+        print(red("✗ ") + f"{e['key']}: {e['problem']}")
+    for w in r["warnings"]:
+        print(yellow("⚠ ") + w)
+    if r["unknown"]:
+        print(yellow(f"⚠ {len(r['unknown'])} key(s) this version does not recognize (kept as-is):"))
+        for u in r["unknown"][:10]:
+            print(dim(f"    {u['key']} = {fmt_val(u['value'])}"))
+    if r["redundant"]:
+        print(dim(f"  {len(r['redundant'])} key(s) repeat an inherited default and could be removed "
+                  f"(`research config reset KEY`)"))
+    if r["ok"] and not r["unknown"]:
+        print(green("✓ ") + "configuration is valid")
+    kv("machine config", r["machine_config"] or "none")
+    return 0 if r["ok"] else 1
+
+
+_CONFIG = {"options": _cfg_options, "explain": _cfg_explain, "set": _cfg_set, "reset": _cfg_set, "show": _cfg_show, "check": _cfg_check}
+
+
 @mut
 def cmd_config(a, p) -> int:
     """`research config show|check|options|explain|set|reset`. show/check never write."""
-    from research import configfile as CF
-    from research.store import DEFAULT_CONFIG
-    from research import registry as R
-    raw = p.raw_config
-
-    if a.action in ("options", "explain", "set", "reset"):
-        if a.action == "options":
-            d = R.describe(p, a.category, a.search)
-            if a.json:
-                out_json(d)
-                return 0
-            for x in d["options"]:
-                tag = "" if x["source"] == "default" else f" [{x['source']}]"
-                print(f"  {x['key'].ljust(48)} {fmt_val(x['value']).ljust(10)}{tag}  {dim(x['label'])}")
-            return 0
-        if not a.key:
-            raise ResearchError(f"config {a.action} needs a setting key")
-        if a.action == "explain":
-            x = R.explain(p, a.key)
-            if a.json:
-                out_json(x)
-                return 0
-            print(bold(x["label"]) + dim(f"   {x['key']}"))
-            print("\n" + x["help"])
-            print("\nWhy: " + x["why"] + "\nEffect: " + x["effect"])
-            kv("value", f"{fmt_val(x['value'])} ({x['source']}{', inherited' if x['inherited'] else ''})")
-            kv("default", fmt_val(x["default"]))
-            kv("allowed", x["choices"] or (f"{x['min']}..{x['max']}" if x["min"] is not None or x["max"] is not None else x["type"]))
-            kv("needs a human", "yes" if x["approval"] else "no")
-            return 0
-        remove = a.action == "reset"
-        if a.action == "set" and a.value is None:
-            raise ResearchError("config set needs KEY and VALUE")
-        change = {a.key: None if remove else a.value}
-        if a.cfg_dry:
-            r = R.preview(p, change, a.scope, remove)
-            if a.json:
-                out_json(r)
-            else:
-                print(r["diff"] or dim("(no change)"))
-                for k, e in r["errors"].items():
-                    print(red("✗ ") + f"{k}: {e}")
-            return 0 if r["ok"] else 1
-        r = R.apply(p, change, a.scope, a.reason, a.confirm, remove)
-        out_json(r) if a.json else print(green("✓ ") + (f"{a.key} " + ("reset" if remove else f"= {fmt_val(r['values'][a.key])}") + f" ({a.scope})" if r["changed"] else "no change"))
-        return 0
-
-    if a.action == "show":
-        if a.sources:
-            src = CF.sources(raw, DEFAULT_CONFIG)
-            if a.json:
-                out_json(src)
-                return 0
-            width = max((len(k) for k in src), default=10)
-            for k, info in src.items():
-                colour = {"project": green, "machine": cyan, "default": dim}[info["source"]]
-                print(f"  {k.ljust(width)}  {fmt_val(info['value']).ljust(22)} {colour(info['source'])}")
-            m = CF.machine_path()
-            print()
-            kv("machine config", m if m and os.path.isfile(m) else f"{m} (absent)")
-            kv("project config", p.rel(p.config_path))
-            return 0
-        shown = p.config if a.effective else raw
-        if a.json:
-            out_json(shown)
-        else:
-            from research import yamlio
-            sys.stdout.write(yamlio.dump(shown, block=True))
-            if not a.effective:
-                print(dim("\n  (this project's own settings only — add --effective for every value in force)"))
-        return 0
-
-    if a.action == "check":
-        with open(p.config_path, encoding="utf-8") as f:
-            text = f.read()
-        r = CF.check(raw, DEFAULT_CONFIG, text)
-        if a.json:
-            out_json(r)
-            return 0 if r["ok"] else 1
-        for e in r["errors"]:
-            print(red("✗ ") + f"{e['key']}: {e['problem']}")
-        for w in r["warnings"]:
-            print(yellow("⚠ ") + w)
-        if r["unknown"]:
-            print(yellow(f"⚠ {len(r['unknown'])} key(s) this version does not recognize (kept as-is):"))
-            for u in r["unknown"][:10]:
-                print(dim(f"    {u['key']} = {fmt_val(u['value'])}"))
-        if r["redundant"]:
-            print(dim(f"  {len(r['redundant'])} key(s) repeat an inherited default and could be removed "
-                      f"(`research config reset KEY`)"))
-        if r["ok"] and not r["unknown"]:
-            print(green("✓ ") + "configuration is valid")
-        kv("machine config", r["machine_config"] or "none")
-        return 0 if r["ok"] else 1
-    return 0
+    if a.action in ("explain", "set", "reset") and not a.key:
+        raise ResearchError(f"config {a.action} needs a setting key")
+    return _CONFIG[a.action](a, p)
 
 
 def cmd_rebuild(a, p) -> int:

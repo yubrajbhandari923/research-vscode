@@ -74,17 +74,48 @@ def _needs_project(a) -> bool:
     return need(a) if callable(need) else need
 
 
+def _run(a, fn) -> int:
+    if not _needs_project(a):
+        return fn(a)
+    p = _proj(a, sync=not _is_readonly(a))
+    try:
+        rc = fn(a, p)
+        if fn.__name__ in MUTATING:
+            try:
+                p.refresh_context()
+            except Exception:
+                pass
+        return rc or 0
+    finally:
+        p.close()
+
+
+def _fail(a, e: ResearchError) -> int:
+    if getattr(a, "json", False):
+        print(json.dumps({"error": str(e), "hint": e.hint, "code": e.exit_code}), file=sys.stderr)
+    else:
+        print(red("✗ ") + str(e), file=sys.stderr)
+        if e.hint:
+            print(dim("  " + e.hint), file=sys.stderr)
+    return e.exit_code
+
+
+def _split_tail(argv):
+    """Everything after `--` is the command a run/hpc subcommand executes."""
+    if "--" not in argv:
+        return argv, None
+    i = argv.index("--")
+    return argv[:i], argv[i + 1:]
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     # `research checkpoint` with no action (or only flags) → create
     if argv and argv[0] in ("checkpoint", "cp") and (len(argv) == 1 or argv[1].startswith("-")) \
             and not any(x in ("-h", "--help") for x in argv[1:]):
         argv.insert(1, "create")
-    tail: Optional[List[str]] = None
-    if "--" in argv:
-        i = argv.index("--")
-        argv, tail = argv[:i], argv[i + 1:]
     ap = build_parser()
+    argv, tail = _split_tail(argv)
     a = ap.parse_args(argv)
     if tail is not None:
         if hasattr(a, "cmd") and isinstance(getattr(a, "cmd", None), list) or getattr(a, "takes_tail", False):
@@ -101,27 +132,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         a._group.print_help()
         return 0
     try:
-        if not _needs_project(a):
-            return fn(a)
-        p = _proj(a, sync=not _is_readonly(a))
-        try:
-            rc = fn(a, p)
-            if fn.__name__ in MUTATING:
-                try:
-                    p.refresh_context()
-                except Exception:
-                    pass
-            return rc or 0
-        finally:
-            p.close()
+        return _run(a, fn)
     except ResearchError as e:
-        if getattr(a, "json", False):
-            print(json.dumps({"error": str(e), "hint": e.hint, "code": e.exit_code}), file=sys.stderr)
-        else:
-            print(red("✗ ") + str(e), file=sys.stderr)
-            if e.hint:
-                print(dim("  " + e.hint), file=sys.stderr)
-        return e.exit_code
+        return _fail(a, e)
     except KeyboardInterrupt:
         return 130
 

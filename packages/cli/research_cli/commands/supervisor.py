@@ -164,66 +164,96 @@ for _f in (cmd_plan_run, cmd_plan_pause, cmd_plan_resume, cmd_plan_stop, cmd_pla
 
 
 # ----------------------------------------------------------------------------------------------- supervisor
+def _sv_start(a, p) -> int:
+    from research import machine
+    machine.remember(p.root)
+    if a.foreground:
+        return SV.run_forever(p.root, a.exit_when_idle)
+    return _emit(a, SV.daemon_start(p, detach=True, exit_when_idle=a.exit_when_idle),
+                 lambda d: [green("✓ ") + (f"supervisor running (pid {d.get('pid')})" if d.get("running") else str(d.get("note")))])
+
+
+def _daemon_line(d) -> str:
+    if not d["running"]:
+        return yellow("not running") + dim("  " + (d.get("note") or ""))
+    return green(f"running (pid {d['pid']}, heartbeat {d['heartbeat_age_seconds']}s ago)") \
+        + (yellow("  restart recommended: " + d["restart_reason"]) if d.get("restart_required") else "")
+
+
+def _sv_status(a, p) -> int:
+    runs = [{"plan": r["plan_key"], "state": r.get("state"), "attempts": r["budgets"].get("attempts", 0)} for r in SV.all_runs(p)]
+    return _emit(a, {"daemon": SV.daemon_status(p), "plans": runs}, lambda x: [bold("supervisor ") + _daemon_line(x["daemon"])]
+                 + [f"  plan {r['plan']}: {r['state']} ({r['attempts']} attempts)" for r in x["plans"]])
+
+
+def _reload_lines(d) -> list:
+    if not d["valid"]:
+        return [red("✗ ") + "settings are invalid; nothing was applied"] + [red("  " + e) for e in d["errors"]]
+    out = [(green("✓ ") if d["applied"] else yellow("! ")) + d["note"]]
+    for k, label in (("live", "applied live"), ("next_launch", "apply to agents/jobs launched from now on"), ("restart", "need `research supervisor restart`")):
+        if d["changed"][k]:
+            out.append(f"  {label}: " + ", ".join(d["changed"][k]))
+    out += [yellow("  restart required: " + r) for r in d["restart_reasons"]]
+    return out
+
+
+def _sv_reload(a, p) -> int:
+    return _emit(a, SV.daemon_reload(p), _reload_lines)
+
+
+def _sv_restart(a, p) -> int:
+    return _emit(a, SV.daemon_restart(p, timeout=float(a.timeout)), lambda d: [(green("✓ ") if d.get("restarted") else yellow("! ")) + (d.get("note") or "")
+                 + (f" (pid {d.get('previous_pid')} -> {d.get('pid')})" if d.get("pid") and d.get("previous_pid") else "")])
+
+
+def _sv_stop(a, p) -> int:
+    return _emit(a, SV.daemon_stop(p), lambda d: [green("✓ ") + "stopped" if not d.get("running") else yellow("still running")])
+
+
+def _sv_tick(a, p) -> int:
+    return _emit(a, SV.tick(p), lambda d: [f"{d['plans']} plan(s): launched {len(d['launched'])}, verified {len(d['verified'])}, repairs {len(d['repairs'])}, blocked {len(d['blocked'])}"]
+                 + [dim("  " + e) for e in d["events"]])
+
+
+def _sv_approve(a, p) -> int:
+    return _emit(a, SV.approve_task(p, a.target, a.note), lambda d: [green("✓ ") + f"{d['task']} approved to start"])
+
+
+def _sv_accept(a, p) -> int:
+    return _emit(a, SV.accept(p, a.target, a.reason or ""), lambda d: [yellow("✓ ") + f"{d['task']} accepted WITHOUT verification (logged)"])
+
+
+def _sv_void(a, p) -> int:
+    return _emit(a, SV.void_attempts(p, a.target, a.reason or a.note or "attempts voided by a human"),
+                 lambda d: [green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
+
+
+def _sv_continue(a, p) -> int:
+    if not a.profile:
+        raise ResearchError("continue needs --profile (" + ", ".join(PV.KNOWN) + ")")
+    return _emit(a, SV.continue_with(p, a.target, a.profile, a.note), lambda d: [green("✓ ") + f"{d['task']} will continue with {d['profile']} as its next attempt, in the same worktree"])
+
+
+def _sv_providers(a, p) -> int:
+    return _emit(a, SV.provider_status(p, a.target), lambda d: [f"{r['provider']:<7} {'installed' if r['installed'] else 'NOT installed':<14} headless={r['headless']} native-resume={r['resume']}" for r in d["providers"]])
+
+
+def _sv_resolve(a, p) -> int:
+    o = "failed" if a.failed else "completed" if a.completed else "retry" if a.retry else "unblock" if a.unblock else None
+    if not o:
+        raise ResearchError("resolve needs --failed, --completed, --retry or --unblock")
+    return _emit(a, SV.resolve(p, a.target, o, a.note), lambda d: [green("✓ ") + f"{d['task']} resolved: {d['outcome']}"])
+
+
+_SUPERVISOR = {"start": _sv_start, "status": _sv_status, "instruct": lambda a, p: _cmd_instruct(a, p), "debug": lambda a, p: _cmd_debug(a, p),
+               "reload": _sv_reload, "restart": _sv_restart, "stop": _sv_stop, "tick": _sv_tick, "approve": _sv_approve, "accept": _sv_accept,
+               "void": _sv_void, "continue": _sv_continue, "providers": _sv_providers, "resolve": _sv_resolve}
+
+
 def cmd_supervisor(a, p) -> int:
-    act = a.action
-    if act == "start":
-        from research import machine
-        machine.remember(p.root)
-        if a.foreground:
-            return SV.run_forever(p.root, a.exit_when_idle)
-        return _emit(a, SV.daemon_start(p, detach=True, exit_when_idle=a.exit_when_idle),
-                     lambda d: [green("✓ ") + (f"supervisor running (pid {d.get('pid')})" if d.get("running") else str(d.get("note")))])
-    if act == "status":
-        d = SV.daemon_status(p)
-        runs = [{"plan": r["plan_key"], "state": r.get("state"), "attempts": r["budgets"].get("attempts", 0)} for r in SV.all_runs(p)]
-        return _emit(a, {"daemon": d, "plans": runs}, lambda x: [
-            bold("supervisor ") + (green(f"running (pid {x['daemon']['pid']}, heartbeat {x['daemon']['heartbeat_age_seconds']}s ago)")
-                                      + (yellow("  restart recommended: " + x["daemon"]["restart_reason"]) if x["daemon"].get("restart_required") else "") if x["daemon"]["running"]
-                                      else yellow("not running") + dim("  " + (x["daemon"].get("note") or "")))] +
-            [f"  plan {r['plan']}: {r['state']} ({r['attempts']} attempts)" for r in x["plans"]])
-    if act == "instruct":
-        return _cmd_instruct(a, p)
-    if act == "debug":
-        return _cmd_debug(a, p)
-    if act == "reload":
-        def rl(d):
-            if not d["valid"]:
-                return [red("✗ ") + "settings are invalid; nothing was applied"] + [red("  " + e) for e in d["errors"]]
-            out = [(green("✓ ") if d["applied"] else yellow("! ")) + d["note"]]
-            for k, label in (("live", "applied live"), ("next_launch", "apply to agents/jobs launched from now on"), ("restart", "need `research supervisor restart`")):
-                if d["changed"][k]:
-                    out.append(f"  {label}: " + ", ".join(d["changed"][k]))
-            out += [yellow("  restart required: " + r) for r in d["restart_reasons"]]
-            return out
-        return _emit(a, SV.daemon_reload(p), rl)
-    if act == "restart":
-        return _emit(a, SV.daemon_restart(p, timeout=float(a.timeout)), lambda d: [(green("✓ ") if d.get("restarted") else yellow("! ")) + (d.get("note") or "")
-                     + (f" (pid {d.get('previous_pid')} -> {d.get('pid')})" if d.get("pid") and d.get("previous_pid") else "")])
-    if act == "stop":
-        return _emit(a, SV.daemon_stop(p), lambda d: [green("✓ ") + "stopped" if not d.get("running") else yellow("still running")])
-    if act == "tick":
-        r = SV.tick(p)
-        return _emit(a, r, lambda d: [f"{d['plans']} plan(s): launched {len(d['launched'])}, verified {len(d['verified'])}, repairs {len(d['repairs'])}, blocked {len(d['blocked'])}"]
-                     + [dim("  " + e) for e in d["events"]])
-    if act == "approve":
-        return _emit(a, SV.approve_task(p, a.target, a.note), lambda d: [green("✓ ") + f"{d['task']} approved to start"])
-    if act == "accept":
-        return _emit(a, SV.accept(p, a.target, a.reason or ""), lambda d: [yellow("✓ ") + f"{d['task']} accepted WITHOUT verification (logged)"])
-    if act == "void":
-        return _emit(a, SV.void_attempts(p, a.target, a.reason or a.note or "attempts voided by a human"),
-                     lambda d: [green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
-    if act == "continue":
-        if not a.profile:
-            raise ResearchError("continue needs --profile (" + ", ".join(PV.KNOWN) + ")")
-        return _emit(a, SV.continue_with(p, a.target, a.profile, a.note), lambda d: [green("✓ ") + f"{d['task']} will continue with {d['profile']} as its next attempt, in the same worktree"])
-    if act == "providers":
-        return _emit(a, SV.provider_status(p, a.target), lambda d: [f"{r['provider']:<7} {'installed' if r['installed'] else 'NOT installed':<14} headless={r['headless']} native-resume={r['resume']}" for r in d["providers"]])
-    if act == "resolve":
-        o = "failed" if a.failed else "completed" if a.completed else "retry" if a.retry else "unblock" if a.unblock else None
-        if not o:
-            raise ResearchError("resolve needs --failed, --completed, --retry or --unblock")
-        return _emit(a, SV.resolve(p, a.target, o, a.note), lambda d: [green("✓ ") + f"{d['task']} resolved: {d['outcome']}"])
-    raise ResearchError(f"unknown supervisor action {act}")
+    if a.action not in _SUPERVISOR:
+        raise ResearchError(f"unknown supervisor action {a.action}")
+    return _SUPERVISOR[a.action](a, p)
 
 
 def _read_multiline() -> str:
@@ -424,54 +454,64 @@ def cmd_env(a, p) -> int:
 cmd_env = mut(cmd_env)
 
 
+def _print_promotion(r) -> None:
+    print(green("✓ ") + f"{r['id']} is {r['state']}")
+    g = r["gates"]
+    kv("tests", f"{g['tests']['state']} — {g['tests']['detail']}")
+    kv("evidence", f"{g['evidence']['state']} — {g['evidence']['detail']}")
+    kv("review", g["review"]["state"])
+    kv("approval", g["approval"]["state"])
+    kv("candidate", f"{r['branch']} @ {str(g['head'])[:8]}")
+    kv("classification", ", ".join(f"{k}={v}" for k, v in r["classification"].items()))
+    if r.get("path"):
+        kv("worktree", r["path"])
+
+
+def _promote_list(a, p, PR):
+    r = PR.list_candidates(p, include_closed=a.all)
+    if not a.json:
+        for c in r:
+            g = c["gates"]
+            print(f"  {c['id']}  {c['state']:<9} tests {g['tests']['state']:<10} review {g['review']['state']:<9} {c.get('title') or ''}")
+        if not r:
+            print(dim("no promotion candidates — `research promote changes WS-001` shows what could be promoted"))
+        return None
+    return r
+
+
+def _promote_diff(a, p, PR):
+    r = PR.diff(p, a.target)
+    if a.json:
+        return r
+    print(r["stat"] + "\n" + r["patch"])
+    return None
+
+
+_PROMOTE = {
+    "list": _promote_list,
+    "changes": lambda a, p, PR: PR.changes(p, a.target),
+    "prepare": lambda a, p, PR: PR.prepare(p, a.target, commits=a.commit, paths=a.path, title=a.title, reason=a.reason),
+    "show": lambda a, p, PR: PR.show(p, a.target),
+    "diff": _promote_diff,
+    "verify": lambda a, p, PR: PR.verify(p, a.target, a.command),
+    "review": lambda a, p, PR: PR.review(p, a.target, a.verdict, a.note),
+    "approve": lambda a, p, PR: PR.approve(p, a.target, a.note),
+    "integrate": lambda a, p, PR: PR.integrate(p, a.target, a.confirm),
+    "abandon": lambda a, p, PR: PR.abandon(p, a.target, a.reason),
+}
+
+
 def cmd_promote(a, p) -> int:
     from research import promotion as PR
-    act = a.action
-    if act == "list":
-        r = PR.list_candidates(p, include_closed=a.all)
-        if not a.json:
-            for c in r:
-                g = c["gates"]
-                print(f"  {c['id']}  {c['state']:<9} tests {g['tests']['state']:<10} review {g['review']['state']:<9} {c.get('title') or ''}")
-            if not r:
-                print(dim("no promotion candidates — `research promote changes WS-001` shows what could be promoted"))
-            return 0
-    elif act == "changes":
-        r = PR.changes(p, a.target)
-    elif act == "prepare":
-        r = PR.prepare(p, a.target, commits=a.commit, paths=a.path, title=a.title, reason=a.reason)
-    elif act == "show":
-        r = PR.show(p, a.target)
-    elif act == "diff":
-        r = PR.diff(p, a.target)
-        if not a.json:
-            print(r["stat"] + "\n" + r["patch"])
-            return 0
-    elif act == "verify":
-        r = PR.verify(p, a.target, a.command)
-    elif act == "review":
-        r = PR.review(p, a.target, a.verdict, a.note)
-    elif act == "approve":
-        r = PR.approve(p, a.target, a.note)
-    elif act == "integrate":
-        r = PR.integrate(p, a.target, a.confirm)
-    elif act == "abandon":
-        r = PR.abandon(p, a.target, a.reason)
-    else:
-        raise ResearchError(f"unknown promote action {act}")
+    if a.action not in _PROMOTE:
+        raise ResearchError(f"unknown promote action {a.action}")
+    r = _PROMOTE[a.action](a, p, PR)
+    if r is None:                    # the handler printed it
+        return 0
     if a.json:
         out_json(r)
     elif isinstance(r, dict) and "gates" in r:
-        print(green("✓ ") + f"{r['id']} is {r['state']}")
-        g = r["gates"]
-        kv("tests", f"{g['tests']['state']} — {g['tests']['detail']}")
-        kv("evidence", f"{g['evidence']['state']} — {g['evidence']['detail']}")
-        kv("review", g["review"]["state"])
-        kv("approval", g["approval"]["state"])
-        kv("candidate", f"{r['branch']} @ {str(g['head'])[:8]}")
-        kv("classification", ", ".join(f"{k}={v}" for k, v in r["classification"].items()))
-        if r.get("path"):
-            kv("worktree", r["path"])
+        _print_promotion(r)
     else:
         print(json.dumps(r, indent=2, default=str))
     return 0

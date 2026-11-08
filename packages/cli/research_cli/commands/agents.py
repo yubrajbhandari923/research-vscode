@@ -17,89 +17,111 @@ from .supervisor import _emit, _read
 from ..output import _done, bold, dim, green, out_json, red, section, yellow
 
 
-@mut
-def cmd_strategy(a, p) -> int:
-    """`research strategy list|show|use|validate|route` — named model-allocation strategies."""
+def _st_list(a, p) -> int:
+    from research import strategy as S
+    r = {"active": S.active_name(p), "strategies": S.listing(p)}
+    if a.json:
+        out_json(r)
+        return 0
+    print(dim("  active: ") + (r["active"] or "none (legacy tier routing)"))
+    for s_ in r["strategies"]:
+        print(f"  {'*' if s_['active'] else ' '} {s_['name'].ljust(14)} {dim(s_['origin'].ljust(9))} {s_['description'] or ''}")
+    return 0
+
+
+def _print_strategy(r, p) -> None:
     from research import harness as H
+    print(f"{r['name']} [{r['origin']}] @{r['fingerprint']}" + (f" extends {r['extends']}" if r["extends"] else ""))
+    d = r["definition"]
+    print(dim("  " + (d.get("description") or "")))
+    for lv, x in r["resolved_levels"].items():
+        print(f"  level {lv.ljust(9)} → {x.get('profile')} ({x.get('model') or 'cli default'})")
+    print("  route    " + ", ".join(f"{c}→{lv}" for c, lv in d["route"].items()))
+    print(f"  coordinator {d['coordinator']} · guide {d['guide']} · scientific-assumption → {d['on_scientific_assumption']}")
+    print("  attempts " + ", ".join(f"{k}:{v}" for k, v in d["attempts"].items()) + " · escalate " +
+          ", ".join(f"{k}→{v}" for k, v in d["escalate"].items()) + f" · max escalations {d['max_escalations']}")
+    for e in r["validation"]["errors"]:
+        print(red("✗ ") + e)
+    for w in r["validation"]["warnings"] + H.warnings(p):
+        print(yellow("⚠ ") + w)
+
+
+def _st_show(a, p) -> int:
+    from research import harness as H
+    from research import strategy as S
+    r = S.show(p, a.name)
+    r["harness"] = {k: v for k, v in H.resolve(p).items() if k not in ("skills_detail", "context_detail")}
+    if a.json:
+        out_json(r)
+    elif not r.get("name"):
+        print(r["legacy"])
+    else:
+        _print_strategy(r, p)
+    return 0
+
+
+def _st_validate(a, p) -> int:
+    from research import harness as H
+    from research import strategy as S
+    names = [a.name] if a.name else ([S.active_name(p)] if S.active_name(p) else sorted(p.config["orchestration"]["strategies"]))
+    rs = [S.validate(p, n) for n in names]
+    hw = H.warnings(p)
+    if a.json:
+        out_json({"results": rs, "harness_warnings": hw})
+    else:
+        for r in rs:
+            print((green("✓ ") if r["ok"] else red("✗ ")) + r["strategy"])
+            for e in r["errors"]:
+                print(red("    ✗ ") + e)
+            for w in r["warnings"]:
+                print(yellow("    ⚠ ") + w)
+        for w in hw:
+            print(yellow("⚠ ") + w)
+    return 0 if all(r["ok"] for r in rs) else 1
+
+
+def _st_route(a, p) -> int:
     from research import orchestrate as O
     from research import strategy as S
-    act, name = a.action, a.name
-    if act == "list":
-        r = {"active": S.active_name(p), "strategies": S.listing(p)}
-        if a.json:
-            out_json(r)
-            return 0
-        print(dim("  active: ") + (r["active"] or "none (legacy tier routing)"))
-        for s_ in r["strategies"]:
-            print(f"  {'*' if s_['active'] else ' '} {s_['name'].ljust(14)} {dim(s_['origin'].ljust(9))} {s_['description'] or ''}")
-        return 0
-    if act == "show":
-        r = S.show(p, name)
-        r["harness"] = {k: v for k, v in H.resolve(p).items() if k not in ("skills_detail", "context_detail")}
-        if a.json:
-            out_json(r)
-            return 0
-        if not r.get("name"):
-            print(r["legacy"])
-            return 0
-        print(f"{r['name']} [{r['origin']}] @{r['fingerprint']}" + (f" extends {r['extends']}" if r["extends"] else ""))
-        d = r["definition"]
-        print(dim("  " + (d.get("description") or "")))
-        for lv, x in r["resolved_levels"].items():
-            print(f"  level {lv.ljust(9)} → {x.get('profile')} ({x.get('model') or 'cli default'})")
-        print("  route    " + ", ".join(f"{c}→{lv}" for c, lv in d["route"].items()))
-        print(f"  coordinator {d['coordinator']} · guide {d['guide']} · scientific-assumption → {d['on_scientific_assumption']}")
-        print("  attempts " + ", ".join(f"{k}:{v}" for k, v in d["attempts"].items()) + " · escalate " +
-              ", ".join(f"{k}→{v}" for k, v in d["escalate"].items()) + f" · max escalations {d['max_escalations']}")
-        for e in r["validation"]["errors"]:
-            print(red("✗ ") + e)
-        for w in r["validation"]["warnings"] + H.warnings(p):
-            print(yellow("⚠ ") + w)
-        return 0
-    if act == "validate":
-        names = [name] if name else ([S.active_name(p)] if S.active_name(p) else sorted(p.config["orchestration"]["strategies"]))
-        rs = [S.validate(p, n) for n in names]
-        hw = H.warnings(p)
-        if a.json:
-            out_json({"results": rs, "harness_warnings": hw})
-        else:
-            for r in rs:
-                print((green("✓ ") if r["ok"] else red("✗ ")) + r["strategy"])
-                for e in r["errors"]:
-                    print(red("    ✗ ") + e)
-                for w in r["warnings"]:
-                    print(yellow("    ⚠ ") + w)
-            for w in hw:
-                print(yellow("⚠ ") + w)
-        return 0 if all(r["ok"] for r in rs) else 1
-    if act == "route":
-        if not name:
-            raise ResearchError("route needs a task id: research strategy route T-001 [--strategy NAME] [--level L]")
-        r = S.route_task(p, p.get("task", normalize_id(name, "T")), O.ledger(p, normalize_id(name, "T")),
-                         level=a.level, strategy=a.strategy, profile=a.profile, model=a.agent_model)
-        if a.json:
-            out_json(r)
-        else:
-            print(f"{r['task']}: {r['level']} → {r['profile']} ({r['model'] or 'cli default'}) as {r['role']}")
-            print(dim(f"  strategy {r['strategy']}@{r['fingerprint']} · class {r['class']} · {r['why']}"))
-            if r.get("warning"):
-                print(yellow("⚠ " + r["warning"]))
-        return 0
-    # use
-    if not name:
+    if not a.name:
+        raise ResearchError("route needs a task id: research strategy route T-001 [--strategy NAME] [--level L]")
+    r = S.route_task(p, p.get("task", normalize_id(a.name, "T")), O.ledger(p, normalize_id(a.name, "T")),
+                     level=a.level, strategy=a.strategy, profile=a.profile, model=a.agent_model)
+    if a.json:
+        out_json(r)
+    else:
+        print(f"{r['task']}: {r['level']} → {r['profile']} ({r['model'] or 'cli default'}) as {r['role']}")
+        print(dim(f"  strategy {r['strategy']}@{r['fingerprint']} · class {r['class']} · {r['why']}"))
+        if r.get("warning"):
+            print(yellow("⚠ " + r["warning"]))
+    return 0
+
+
+def _st_use(a, p) -> int:
+    from research import strategy as S
+    if not a.name:
         raise ResearchError("use needs a strategy name: research strategy use balanced_first")
     try:
-        r = S.use(p, name, a.dry_run)
+        r = S.use(p, a.name, a.dry_run)
     except ResearchError as e:   # an invalid strategy is reported (exit 1), never activated
-        v = S.validate(p, name)
+        v = S.validate(p, a.name)
         if a.json:
             out_json({"applied": False, **v})
         else:
             for err in v["errors"] or [str(e)]:
                 print(red("✗ ") + err)
         return 1
-    _done(a, r, msg=f"{'would switch' if a.dry_run else 'strategy'}: {r['previous'] or 'legacy'} → {name}" + dim("  (running sessions keep their snapshot)"))
+    _done(a, r, msg=f"{'would switch' if a.dry_run else 'strategy'}: {r['previous'] or 'legacy'} → {a.name}" + dim("  (running sessions keep their snapshot)"))
     return 0
+
+
+_STRATEGY = {"list": _st_list, "show": _st_show, "validate": _st_validate, "route": _st_route, "use": _st_use}
+
+
+@mut
+def cmd_strategy(a, p) -> int:
+    """`research strategy list|show|use|validate|route` — named model-allocation strategies."""
+    return _STRATEGY[a.action](a, p)
 
 
 def _contract_fields(a) -> dict:
@@ -108,65 +130,86 @@ def _contract_fields(a) -> dict:
     return {k: v for k, v in m.items() if v}
 
 
-@mut
-def cmd_hook(a, p) -> int:
-    """`research hook list|add|enable|disable|approve|revoke|run|results` — project harness hooks."""
+def _hk_list(a, p) -> int:
     from research import hooks as HK
-    act = a.action
-    if act == "list":
-        r = HK.listing(p)
-        if a.json:
-            out_json(r)
-            return 0
-        if not r:
-            print(dim("no hooks. Register one: research hook add NAME --stage post_implementation --command \"pytest tests/oracle -q\""))
-        for h in r:
-            st = green("approved") if h["approved"] else yellow("needs approval")
-            last = h["last"]
-            print(f"  {h['name'].ljust(16)} {h['stage'].ljust(20)} {st if h['enabled'] else dim('disabled')}  "
-                  + (dim(("passed" if last["ok"] else "FAILED") + " " + last["ts"][:16]) if last else dim("never run")))
-            print(dim(f"      {h['command']}  (timeout {h['timeout']:g}s{'' if h['required'] else ', advisory'})"))
+    r = HK.listing(p)
+    if a.json:
+        out_json(r)
         return 0
-    if act == "recommend":
-        r = HK.recommended(p)
-        if a.json:
-            out_json(r)
-            return 0
-        print(dim("detected: " + (", ".join(r["stacks"]) or "nothing yet (no code in this checkout)")))
-        for h in r["hooks"]:
-            st = green("approved") if h["approved"] else yellow("installed, needs approval") if h["installed"] else (dim("not installed") if h["applies"] else dim("not applicable here"))
-            print(f"  {h['name'].ljust(20)} {h['stage'].ljust(20)} {h['tier'].ljust(6)} {st}")
-            print(dim(f"      {h['description']}"))
-        print(dim("`research hook install` adds every cheap hook that applies here; `research hook install NAME` adds one (costly ones such as tests run project code, so approve them deliberately); add --approve to approve as you install"))
+    if not r:
+        print(dim("no hooks. Register one: research hook add NAME --stage post_implementation --command \"pytest tests/oracle -q\""))
+    for h in r:
+        st = green("approved") if h["approved"] else yellow("needs approval")
+        last = h["last"]
+        print(f"  {h['name'].ljust(16)} {h['stage'].ljust(20)} {st if h['enabled'] else dim('disabled')}  "
+              + (dim(("passed" if last["ok"] else "FAILED") + " " + last["ts"][:16]) if last else dim("never run")))
+        print(dim(f"      {h['command']}  (timeout {h['timeout']:g}s{'' if h['required'] else ', advisory'})"))
+    return 0
+
+
+def _hk_recommend(a, p) -> int:
+    from research import hooks as HK
+    r = HK.recommended(p)
+    if a.json:
+        out_json(r)
         return 0
-    if act == "install":
-        r = HK.install(p, [a.name] if a.name else None, a.approve)
-        _done(a, r, msg=("added: " + ", ".join(r["added"]) if r["added"] else "nothing to add")
-              + (f"; approved: {', '.join(r['approved'])}" if r["approved"] else "; they run only after `research hook approve`"))
-        return 0
-    if act == "results":
-        r = HK.results(p, a.name, a.limit)
-        if a.json:
-            out_json(r)
-        for x in ([] if a.json else r):
-            print(f"{x['ts'][:19]} {x['hook']} {green('ok') if x['ok'] else red('FAIL')} {x['seconds']}s" + ("" if x["ok"] else "\n" + x["output"][-600:]))
-        return 0
-    if act == "add":
-        if not (a.name and a.stage and a.command):
-            raise ResearchError("add needs NAME --stage STAGE --command CMD")
-        r = HK.add(p, a.name, a.stage, a.command, a.timeout, not a.advisory, a.description)
-        _done(a, r, msg=f"hook {a.name} registered; it will not run until a human runs `research hook approve {a.name}`")
-        return 0
-    if act in ("enable", "disable"):
-        _done(a, HK.set_enabled(p, a.name, act == "enable"), msg=f"hook {a.name} {act}d")
-        return 0
-    if act == "approve":
-        r = HK.approve(p, [a.name] if a.name else None)
-        _done(a, r, msg="approved: " + ", ".join(r["approved"]))
-        return 0
-    if act == "revoke":
-        _done(a, HK.revoke(p, a.name), msg=f"approval for {a.name} revoked")
-        return 0
+    print(dim("detected: " + (", ".join(r["stacks"]) or "nothing yet (no code in this checkout)")))
+    for h in r["hooks"]:
+        st = green("approved") if h["approved"] else yellow("installed, needs approval") if h["installed"] else (dim("not installed") if h["applies"] else dim("not applicable here"))
+        print(f"  {h['name'].ljust(20)} {h['stage'].ljust(20)} {h['tier'].ljust(6)} {st}")
+        print(dim(f"      {h['description']}"))
+    print(dim("`research hook install` adds every cheap hook that applies here; `research hook install NAME` adds one (costly ones such as tests run project code, so approve them deliberately); add --approve to approve as you install"))
+    return 0
+
+
+def _hk_install(a, p) -> int:
+    from research import hooks as HK
+    r = HK.install(p, [a.name] if a.name else None, a.approve)
+    _done(a, r, msg=("added: " + ", ".join(r["added"]) if r["added"] else "nothing to add")
+          + (f"; approved: {', '.join(r['approved'])}" if r["approved"] else "; they run only after `research hook approve`"))
+    return 0
+
+
+def _hk_results(a, p) -> int:
+    from research import hooks as HK
+    r = HK.results(p, a.name, a.limit)
+    if a.json:
+        out_json(r)
+    for x in ([] if a.json else r):
+        print(f"{x['ts'][:19]} {x['hook']} {green('ok') if x['ok'] else red('FAIL')} {x['seconds']}s" + ("" if x["ok"] else "\n" + x["output"][-600:]))
+    return 0
+
+
+def _hk_add(a, p) -> int:
+    from research import hooks as HK
+    if not (a.name and a.stage and a.command):
+        raise ResearchError("add needs NAME --stage STAGE --command CMD")
+    r = HK.add(p, a.name, a.stage, a.command, a.timeout, not a.advisory, a.description)
+    _done(a, r, msg=f"hook {a.name} registered; it will not run until a human runs `research hook approve {a.name}`")
+    return 0
+
+
+def _hk_toggle(a, p) -> int:
+    from research import hooks as HK
+    _done(a, HK.set_enabled(p, a.name, a.action == "enable"), msg=f"hook {a.name} {a.action}d")
+    return 0
+
+
+def _hk_approve(a, p) -> int:
+    from research import hooks as HK
+    r = HK.approve(p, [a.name] if a.name else None)
+    _done(a, r, msg="approved: " + ", ".join(r["approved"]))
+    return 0
+
+
+def _hk_revoke(a, p) -> int:
+    from research import hooks as HK
+    _done(a, HK.revoke(p, a.name), msg=f"approval for {a.name} revoked")
+    return 0
+
+
+def _hk_run(a, p) -> int:
+    from research import hooks as HK
     r = HK.run(p, a.stage or "post_implementation", a.task, a.experiment, names=[a.name] if a.name else None)
     if a.json:
         out_json(r)
@@ -176,6 +219,16 @@ def cmd_hook(a, p) -> int:
         for s_ in r["skipped"]:
             print(yellow(f"⚠ {s_['hook']} skipped: {s_['reason']}"))
     return 0 if r["ok"] else 1
+
+
+_HOOK = {"list": _hk_list, "recommend": _hk_recommend, "install": _hk_install, "results": _hk_results, "add": _hk_add,
+         "enable": _hk_toggle, "disable": _hk_toggle, "approve": _hk_approve, "revoke": _hk_revoke}
+
+
+@mut
+def cmd_hook(a, p) -> int:
+    """`research hook list|add|enable|disable|approve|revoke|run|results` — project harness hooks."""
+    return _HOOK.get(a.action, _hk_run)(a, p)
 
 
 def cmd_usage(a, p) -> int:
@@ -209,63 +262,79 @@ def _orch_task(p, a):
     return p.get("task", normalize_id(a.task, "T"))
 
 
+def _or_dispatch(a, p, O):
+    r = O.dispatch_task(p, a.task, a.tier, a.available, a.allow_unfrozen, a.strategy, a.profile, a.agent_model, a.headless)
+    if a.headless:
+        from research import agents as AG
+        h = AG.run_headless(p, r)
+        _done(a, h, msg=f"headless session finished (exit {h['exit_code']}); usage: {h['usage'] if isinstance(h['usage'], str) else 'recorded'}")
+        if not a.json:
+            print(h["result"])
+        return 124 if h["timed_out"] else (h["exit_code"] if h["exit_code"] is not None else 1)
+    if not a.json and not a.run:
+        print(f"{r['tier']} ({r['model']}) brief → {r['brief']}" + (f"  ⚠ {r['route']['note']}" if r["degraded"] else ""))
+        print(r["shell"])
+        return 0
+    if a.run and not a.json:
+        import subprocess
+        root = p.root
+        p.close()
+        return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
+    return r
+
+
+def _or_delegate(a, p, O):
+    r = O.delegate(p, a.task, a.rest[0], a.tier, a.goal, a.acceptance, a.check)
+    cf = _contract_fields(a)
+    if cf:
+        O.set_contract(p, r["id"], **cf)
+    return r
+
+
+def _or_contract(a, p, O):
+    cf = _contract_fields(a)
+    return O.set_contract(p, a.task, **cf) if cf else {"task": a.task, "contract": O.ledger(p, a.task).get("contract") or {}}
+
+
+def _or_verify(a, p, O):
+    r = O.verify_work(p, a.task, a.tier, a.record)
+    if not a.json:
+        print((green("✓ ") + "verified") if r["passed"] else (red("✗ ") + "not verified"))
+        for d in r["diagnostics"]:
+            print("  " + d.replace("\n", "\n    "))
+        for s_ in r["hooks_skipped"]:
+            print(yellow(f"  ⚠ hook {s_['hook']} skipped: {s_['reason']}"))
+        if r.get("next"):
+            print(dim(f"  next: {r['next']['action']}" + (f" → {r['next']['tier']}" if r["next"].get("tier") else "")))
+        return 0 if r["passed"] else 1
+    return r
+
+
+# each returns the record to print, or an int exit code when it already printed everything
+_ORCH = {
+    "route": lambda a, p, O: O.route(p, _orch_task(p, a), a.tier, a.available, a.strategy, a.profile, a.agent_model),
+    "dispatch": _or_dispatch,
+    "freeze": lambda a, p, O: O.freeze(p, a.task, a.rest),
+    "attempt": lambda a, p, O: O.record_attempt(p, a.task, a.tier, a.outcome, a.category, a.note, json.loads(a.usage) if a.usage else None),
+    "correct-test": lambda a, p, O: O.correct_test(p, a.task, a.rest[0], a.reason, a.tier),
+    "delegate": _or_delegate,
+    "contract": _or_contract,
+    "verify": _or_verify,
+    "pin": lambda a, p, O: O.set_override(p, a.task, a.level, a.profile, a.agent_model, a.clear),
+    "status": lambda a, p, O: O.status(p, a.task),
+}
+
+
 @mut
 def cmd_orchestrate(a, p) -> int:
     from research import orchestrate as O
-    act = a.action
-    if act == "route":
-        r = O.route(p, _orch_task(p, a), a.tier, a.available, a.strategy, a.profile, a.agent_model)
-    elif act == "dispatch":
-        r = O.dispatch_task(p, a.task, a.tier, a.available, a.allow_unfrozen, a.strategy, a.profile, a.agent_model, a.headless)
-        if a.headless:
-            from research import agents as AG
-            h = AG.run_headless(p, r)
-            _done(a, h, msg=f"headless session finished (exit {h['exit_code']}); usage: {h['usage'] if isinstance(h['usage'], str) else 'recorded'}")
-            if not a.json:
-                print(h["result"])
-            return 124 if h["timed_out"] else (h["exit_code"] if h["exit_code"] is not None else 1)
-        if not a.json and not a.run:
-            print(f"{r['tier']} ({r['model']}) brief → {r['brief']}" + (f"  ⚠ {r['route']['note']}" if r["degraded"] else ""))
-            print(r["shell"])
-            return 0
-        if a.run and not a.json:
-            import subprocess
-            root = p.root
-            p.close()
-            return subprocess.call(r["argv"], cwd=root, env={**os.environ, **r["env"]})
-    elif act == "freeze":
-        r = O.freeze(p, a.task, a.rest)
-    elif act == "attempt":
-        r = O.record_attempt(p, a.task, a.tier, a.outcome, a.category, a.note, json.loads(a.usage) if a.usage else None)
-    elif act == "correct-test":
-        r = O.correct_test(p, a.task, a.rest[0], a.reason, a.tier)
-    elif act == "delegate":
-        r = O.delegate(p, a.task, a.rest[0], a.tier, a.goal, a.acceptance, a.check)
-        cf = _contract_fields(a)
-        if cf:
-            O.set_contract(p, r["id"], **cf)
-    elif act == "contract":
-        cf = _contract_fields(a)
-        r = O.set_contract(p, a.task, **cf) if cf else {"task": a.task, "contract": O.ledger(p, a.task).get("contract") or {}}
-    elif act == "verify":
-        r = O.verify_work(p, a.task, a.tier, a.record)
-        if not a.json:
-            print((green("✓ ") + "verified") if r["passed"] else (red("✗ ") + "not verified"))
-            for d in r["diagnostics"]:
-                print("  " + d.replace("\n", "\n    "))
-            for s_ in r["hooks_skipped"]:
-                print(yellow(f"  ⚠ hook {s_['hook']} skipped: {s_['reason']}"))
-            if r.get("next"):
-                print(dim(f"  next: {r['next']['action']}" + (f" → {r['next']['tier']}" if r["next"].get("tier") else "")))
-            return 0 if r["passed"] else 1
-    elif act == "pin":
-        r = O.set_override(p, a.task, a.level, a.profile, a.agent_model, a.clear)
-    elif act == "status":
-        r = O.status(p, a.task)
-    else:
+    if a.action not in _ORCH:
         raise ResearchError("unknown action")
+    r = _ORCH[a.action](a, p, O)
+    if isinstance(r, int):
+        return r
     _done(a, r, msg=json.dumps(r, default=str) if not a.json else None)
-    return (0 if r["passed"] else 1) if act == "verify" else 0
+    return (0 if r["passed"] else 1) if a.action == "verify" else 0
 
 
 def cmd_agents(a, p) -> int:
@@ -416,7 +485,7 @@ def cmd_bin(a, p) -> int:
     if a.json:
         out_json(r)
     elif a.action == "status":
-        print((green("✓ ") + r["path"]) if r["exists"] else f"not installed — run: research bin install")
+        print((green("✓ ") + r["path"]) if r["exists"] else "not installed — run: research bin install")
     else:
         print(green("✓ ") + f"{os.path.relpath(r['path'], os.getcwd())} " + ("updated" if r["updated"] else "already up to date"))
         print(dim("  any agent or shell in this project can run it without installing anything"))

@@ -611,6 +611,23 @@ def cmd_run_compare(a, p) -> int:
     return 0
 
 
+def _print_sweep_reservation(p, opts, n) -> None:
+    """A sweep multiplies the reservation by every grid point, which is where a careless submission gets expensive fastest."""
+    from research.hpc.remote import reservation
+    merged = {**(p.config.get("backends", {}).get("slurm") or {}),
+              **{k: v for k, v in opts.items() if v not in (None, [], "")}}
+    one = reservation(merged, {"name": "local slurm"})
+    print()
+    print(bold(f"  Each of the {n} runs would RESERVE:"))
+    print("    " + yellow(one["summary"]))
+    if one.get("cpu_hours"):
+        tot = [f"{round(one['cpu_hours'] * n, 1)} CPU-hours"]
+        if one.get("gpu_hours"):
+            tot.append(f"{round(one['gpu_hours'] * n, 1)} GPU-hours")
+        print("    " + yellow(f"whole sweep, worst case: {' and '.join(tot)}"))
+    print(yellow("  Confirm this with whoever owns the allocation before running the sweep."))
+
+
 @mut
 def cmd_run_sweep(a, p) -> int:
     grid = {}
@@ -632,22 +649,7 @@ def cmd_run_sweep(a, p) -> int:
             print(f"  {pt['label']}  {dim(pt['command'])}")
         print(dim(f"{len(res['points'])} runs (dry run; nothing started)"))
         if a.mode == "slurm":
-            # A sweep multiplies the reservation by every grid point, which is where a careless
-            # submission gets expensive fastest.
-            from research.hpc.remote import reservation
-            merged = {**(p.config.get("backends", {}).get("slurm") or {}),
-                      **{k: v for k, v in opts.items() if v not in (None, [], "")}}
-            one = reservation(merged, {"name": "local slurm"})
-            n = len(res["points"])
-            print()
-            print(bold(f"  Each of the {n} runs would RESERVE:"))
-            print("    " + yellow(one["summary"]))
-            if one.get("cpu_hours"):
-                tot = [f"{round(one['cpu_hours'] * n, 1)} CPU-hours"]
-                if one.get("gpu_hours"):
-                    tot.append(f"{round(one['gpu_hours'] * n, 1)} GPU-hours")
-                print("    " + yellow(f"whole sweep, worst case: {' and '.join(tot)}"))
-            print(yellow(f"  Confirm this with whoever owns the allocation before running the sweep."))
+            _print_sweep_reservation(p, opts, len(res["points"]))
     else:
         for r in res["runs"]:
             print(f"  {r['id']}  [{st(r['status'])}]  {r.get('label') or ''}")

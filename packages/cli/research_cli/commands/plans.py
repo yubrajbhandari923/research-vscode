@@ -144,39 +144,15 @@ def cmd_task_show(a, p) -> int:
     return 0
 
 
+_TASK_FIELDS = (("title", "title"), ("goal", "goal"), ("type", "task_type"), ("status", "status"), ("role", "assigned_role"),
+                ("depends", "depends_on"), ("inputs", "inputs"), ("outputs", "expected_outputs"), ("acceptance", "acceptance_criteria"),
+                ("verification", "verification"), ("question", "related_question_id"), ("experiment", "related_experiment_id"),
+                ("result", "result"), ("blockers", "blockers"), ("notes", "notes"))
+
+
 @mut
 def cmd_task_update(a, p) -> int:
-    kw = {}
-    if a.title:
-        kw["title"] = a.title
-    if a.goal:
-        kw["goal"] = a.goal
-    if a.type:
-        kw["task_type"] = a.type
-    if a.status:
-        kw["status"] = a.status
-    if a.role:
-        kw["assigned_role"] = a.role
-    if a.depends:
-        kw["depends_on"] = a.depends
-    if a.inputs:
-        kw["inputs"] = a.inputs
-    if a.outputs:
-        kw["expected_outputs"] = a.outputs
-    if a.acceptance:
-        kw["acceptance_criteria"] = a.acceptance
-    if a.verification:
-        kw["verification"] = a.verification
-    if a.question:
-        kw["related_question_id"] = a.question
-    if a.experiment:
-        kw["related_experiment_id"] = a.experiment
-    if a.result:
-        kw["result"] = a.result
-    if a.blockers:
-        kw["blockers"] = a.blockers
-    if a.notes:
-        kw["notes"] = a.notes
+    kw = {field: getattr(a, arg) for arg, field in _TASK_FIELDS if getattr(a, arg)}
     if a.check is not None:
         kw["checks"] = [c for c in a.check if c]  # --check "" clears
     if a.skill is not None:

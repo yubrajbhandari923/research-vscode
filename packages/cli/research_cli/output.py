@@ -102,23 +102,7 @@ def fmt_val(v: Any) -> str:
     return "—" if v is None else str(v)
 
 
-def print_experiment(e: Dict[str, Any]) -> None:
-    s = e["state"]
-    print(f"{bold(e['id'])}  {bold(e['title'])}  [{st(e['status'])}]" + (green("  ★ baseline") if e.get("is_baseline") else ""))
-    if e.get("question"):
-        kv("question", f"{e['question']['id']} {e['question']['title']}")
-    if e.get("parent"):
-        kv("derived from", f"{e['parent']['id']} {e['parent']['title']}")
-    if e.get("param_delta"):
-        kv("delta", ", ".join(f"{k}: {d.get('from')} → {d.get('to')}" for k, d in e["param_delta"].items()))
-    for key, label in (("hypothesis", "hypothesis"), ("motivation", "motivation"), ("method", "method"),
-                       ("expected_outcome", "expected"), ("success_criteria", "success"), ("stop_conditions", "stop"),
-                       ("parameters", "parameters"), ("metrics_requested", "metrics"),
-                       ("expected_artifacts", "exp. artifacts"), ("planned_runs", "planned runs"),
-                       ("limitations", "limitations"), ("notes", "notes")):
-        kv(label, e.get(key))
-    kv("git", f"{e.get('git_branch') or '—'} @ {(e.get('git_commit') or '—')[:10]}" + (yellow(" (dirty)") if e.get("git_dirty") else ""))
-    kv("author", author(e))
+def _experiment_flags(s: Dict[str, Any]) -> List[str]:
     flag = []
     if s["unsynthesized"]:
         flag.append(yellow(f"⚠ {s['unsynthesized']} unsynthesized runs"))
@@ -126,25 +110,30 @@ def print_experiment(e: Dict[str, Any]) -> None:
         flag.append(red("run budget reached — synthesize before running more"))
     if s["over_failure_budget"]:
         flag.append(red(f"{s['unreviewed_failed']} failed runs need review"))
-    if flag:
-        print("  " + " · ".join(flag))
-    if e["runs"]:
-        section(f"Runs ({len(e['runs'])})")
-        pn, mn = e["run_param_names"], e["metric_names"]
-        hdr = ["run", "status", "exit", "time"] + pn + mn + ["label"]
-        rows = []
-        for r in e["runs"]:
-            rows.append([r["id"], r["status"], fmt_val(r.get("exit_code")), fmt_dur(r.get("duration_s"))]
-                        + [fmt_val((r.get("parameters") or {}).get(k)) for k in pn]
-                        + [fmt_val((r["metrics"].get(k) or {}).get("value") if (r["metrics"].get(k) or {}).get("value") is not None
-                                   else (r["metrics"].get(k) or {}).get("text")) for k in mn]
-                        + [r.get("label") or ""])
-        widths = [max(len(str(h)), *(len(str(x[i])) for x in rows)) for i, h in enumerate(hdr)]
-        print("  " + "  ".join(dim(str(h).ljust(w)) for h, w in zip(hdr, widths)))
-        for row in rows:
-            cells = [str(x).ljust(w) for x, w in zip(row, widths)]
-            cells[1] = st(row[1]) + " " * (widths[1] - len(row[1]))
-            print("  " + "  ".join(cells))
+    return flag
+
+
+def _metric_cell(r: Dict[str, Any], k: str):
+    m = r["metrics"].get(k) or {}
+    return fmt_val(m.get("value") if m.get("value") is not None else m.get("text"))
+
+
+def _print_runs_table(e: Dict[str, Any]) -> None:
+    section(f"Runs ({len(e['runs'])})")
+    pn, mn = e["run_param_names"], e["metric_names"]
+    hdr = ["run", "status", "exit", "time"] + pn + mn + ["label"]
+    rows = [[r["id"], r["status"], fmt_val(r.get("exit_code")), fmt_dur(r.get("duration_s"))]
+            + [fmt_val((r.get("parameters") or {}).get(k)) for k in pn] + [_metric_cell(r, k) for k in mn] + [r.get("label") or ""]
+            for r in e["runs"]]
+    widths = [max(len(str(h)), *(len(str(x[i])) for x in rows)) for i, h in enumerate(hdr)]
+    print("  " + "  ".join(dim(str(h).ljust(w)) for h, w in zip(hdr, widths)))
+    for row in rows:
+        cells = [str(x).ljust(w) for x, w in zip(row, widths)]
+        cells[1] = st(row[1]) + " " * (widths[1] - len(row[1]))
+        print("  " + "  ".join(cells))
+
+
+def _print_experiment_tail(e: Dict[str, Any]) -> None:
     if e["artifacts"]:
         section(f"Artifacts ({len(e['artifacts'])})")
         for a in e["artifacts"]:
@@ -160,6 +149,30 @@ def print_experiment(e: Dict[str, Any]) -> None:
         section("Findings")
         for f in e["findings"]:
             print(f"  {f['id']}  {f['title']}  [{st(f['status'])}]")
+
+
+def print_experiment(e: Dict[str, Any]) -> None:
+    print(f"{bold(e['id'])}  {bold(e['title'])}  [{st(e['status'])}]" + (green("  ★ baseline") if e.get("is_baseline") else ""))
+    if e.get("question"):
+        kv("question", f"{e['question']['id']} {e['question']['title']}")
+    if e.get("parent"):
+        kv("derived from", f"{e['parent']['id']} {e['parent']['title']}")
+    if e.get("param_delta"):
+        kv("delta", ", ".join(f"{k}: {d.get('from')} → {d.get('to')}" for k, d in e["param_delta"].items()))
+    for key, label in (("hypothesis", "hypothesis"), ("motivation", "motivation"), ("method", "method"),
+                       ("expected_outcome", "expected"), ("success_criteria", "success"), ("stop_conditions", "stop"),
+                       ("parameters", "parameters"), ("metrics_requested", "metrics"),
+                       ("expected_artifacts", "exp. artifacts"), ("planned_runs", "planned runs"),
+                       ("limitations", "limitations"), ("notes", "notes")):
+        kv(label, e.get(key))
+    kv("git", f"{e.get('git_branch') or '—'} @ {(e.get('git_commit') or '—')[:10]}" + (yellow(" (dirty)") if e.get("git_dirty") else ""))
+    kv("author", author(e))
+    flag = _experiment_flags(e["state"])
+    if flag:
+        print("  " + " · ".join(flag))
+    if e["runs"]:
+        _print_runs_table(e)
+    _print_experiment_tail(e)
 
 
 def print_finding(f: Dict[str, Any]) -> None:
