@@ -17,32 +17,29 @@ It uses the terminal. VS Code and the terminal UI show the same project, so you 
 
 ## 1. Install
 
-You need Python 3.8 or newer. Releases are on the
-[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest). Download the wheel
-(`research_panel-X.Y.Z-py3-none-any.whl`) and, if you use VS Code, the extension (`research-panel-X.Y.Z.vsix`).
+You need Python 3.8 or newer. The CLI and terminal UI are on [PyPI](https://pypi.org/project/research-panel/) as `research-panel`.
+If you use VS Code, download the extension (`research-panel-X.Y.Z.vsix`) from the
+[GitHub releases page](https://github.com/yubrajbhandari923/research-vscode/releases/latest).
 
 **The CLI** (in its own isolated environment, so it never touches your project's packages):
 
 ```bash
-uv tool install ./research_panel-X.Y.Z-py3-none-any.whl
+uv tool install "research-panel[tui]"
 research version
 ```
 
-With pipx instead: `pipx install ./research_panel-X.Y.Z-py3-none-any.whl`. If `research` is not found afterwards, add the tool directory to
-your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new terminal.
+With pipx instead: `pipx install "research-panel[tui]"`. If `research` is not found afterwards, add the tool directory to
+your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new terminal. The same wheel is also attached to every GitHub release
+(with `SHA256SUMS`) if you prefer to install from a file: `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl`.
 
-**Optional extras.** Install with them from the start (give the full path to the wheel):
-
-```bash
-uv tool install 'research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl'
-```
+**Optional extras.** The example above already includes the terminal UI:
 
 | Extra | Gives you |
 |---|---|
 | `[tui]` | the terminal UI, `research tui` |
 | `[discord]` | the Discord bot (Python 3.10 or newer; Telegram needs no extra) |
 
-Combine them as `research-panel[tui,discord]`. Add one later with `uv tool install --force` and the same wheel, or `pipx inject research-panel discord.py`.
+Combine them as `research-panel[tui,discord]`. Add one later by installing again with `--force`, for example `uv tool install --force "research-panel[tui,discord]"`, or `pipx inject research-panel discord.py`.
 
 **The VS Code extension** (needs the CLI above):
 

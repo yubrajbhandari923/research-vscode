@@ -46,7 +46,8 @@ existing entries are never edited. The project directory format (`store.PROJECT_
 2. `npm run package`
 3. `bash scripts/clean_install_test.sh`
 4. install the VSIX and the wheel locally and look at the result
-5. tag, and attach the VSIX, wheel, sdist and `SHA256SUMS` to a GitHub release (`research self-update` verifies the wheel against `SHA256SUMS`)
+5. tag, and attach the VSIX, wheel, sdist and `SHA256SUMS` to a GitHub release (`research self-update` verifies the wheel against `SHA256SUMS`). Create the release as a draft with the assets, then publish it.
+6. publishing the release runs `.github/workflows/publish.yml`: it downloads that release's wheel and sdist, re-checks them against `SHA256SUMS`, requires the tag to match the wheel's version, runs `twine check --strict`, and uploads exactly those files to PyPI as `research-panel` through Trusted Publishing (a `pypi` environment, an OIDC token, no stored credentials). A PyPI version can never be re-uploaded, so a bad release is fixed by the next patch version. The workflow can be re-run for a tag with *Run workflow*.
 
 ## Repository layout
 

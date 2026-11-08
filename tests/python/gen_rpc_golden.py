@@ -106,6 +106,10 @@ STEPS = [
 
 
 def _norm(s, roots):
+    # probes of the HOST's tools (installed or not, where, which version) are not part of the wire contract: mask them so the golden is the same on any machine
+    s = re.sub(r'"quarto": \{"hints": \[.*?\], "html": .*?"version": (?:null|"[^"]*")\}', '"quarto": "<HOST>"', s)
+    s = re.sub(r'"uv": (?:null|\{[^{}]*\})', '"uv": "<HOST>"', s)
+    s = re.sub(r"git version [0-9][^\"\\]*", "git version <V>", s)
     s = re.sub(r"(?<=: )-?\d+(\.\d+)?e-\d+", "0", s)   # tiny float ages ("5e-06") change every run
     s = re.sub(r'"since_checkpoint": \{[^{}]*\}', '"since_checkpoint": {}', s)   # compares timestamps at second granularity: flaky
     return norm(s, roots)

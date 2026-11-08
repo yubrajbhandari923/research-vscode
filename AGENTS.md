@@ -23,8 +23,13 @@ Release artifacts go on the GitHub release, not in git.
    git checkout main && git merge --no-ff --no-commit development
    git rm -rqf --ignore-unmatch AGENTS.md CLAUDE.md .claude   # plus any other dev-only path
    git commit -m "Merge development: <version>" && git push origin main
-   git tag vX.Y.Z && git push origin vX.Y.Z   # then gh release create with VSIX, wheel, sdist, SHA256SUMS
+   git tag -a vX.Y.Z -m "Research OS X.Y.Z" && git push origin vX.Y.Z
+   # build wheel/sdist/VSIX from a CLEAN worktree of the main commit (scripts/package.sh), write SHA256SUMS, then
+   gh release create vX.Y.Z --draft --title "Research OS X.Y.Z" --notes-file notes.md <wheel> <sdist> <vsix> SHA256SUMS
+   gh release edit vX.Y.Z --draft=false      # publishing triggers .github/workflows/publish.yml -> PyPI (research-panel)
    ```
+   PyPI versions cannot be re-uploaded: only publish a release you have already installed and smoke-tested. After the workflow succeeds,
+   check `uv tool install "research-panel==X.Y.Z"` in a clean environment.
 5. Check `git ls-tree -r --name-only main` shows no dev-only path. Push and release only when the user says so.
 
 ## Rules that apply to every change
