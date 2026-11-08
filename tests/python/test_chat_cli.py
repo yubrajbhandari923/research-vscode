@@ -43,7 +43,7 @@ def test_status_pair_and_failures(env):
     code, out = env("chat", "pair")
     assert code != 0 and "needs the code" in out
     code, out = env("chat", "setup", "discord")
-    assert code != 0 and "not available yet" in out
+    assert code != 0 and ("No token entered" in out or "discord.py" in out), "no terminal: asks for a token (or prints the install line without the extra)"
     code, out = env("telegram", "status")
     assert code == 0 and "no token" in out and env("telegram", "--help")[0] == 0
     import re

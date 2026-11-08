@@ -91,7 +91,14 @@ def control(action: str) -> Dict[str, Any]:
 def make_channels() -> Dict[str, Channel]:
     from .telegram import TelegramChannel
     t = TelegramChannel(commands.command_list())
-    return {"telegram": t} if t.ready() and commands.enabled_projects("telegram") else {}
+    out: Dict[str, Channel] = {"telegram": t} if t.ready() and commands.enabled_projects("telegram") else {}
+    from . import discord_bot
+    if discord_bot.credentials().get("token") and discord_bot.available() and commands.enabled_projects("discord"):
+        try:
+            out["discord"] = discord_bot.DiscordChannel()
+        except Exception:    # noqa: BLE001 - Discord failing to start must not take Telegram down
+            pass
+    return out
 
 
 class Gateway:
@@ -359,7 +366,7 @@ class Gateway:
             daemonlib.write_heartbeat(_hb(), platforms=sorted(self.channels), projects=sorted({r for pl in self.channels for r in self.projects(pl).values()}))
             if self.channels:
                 idle_since = self.now()
-            elif not self.projects("telegram") and self.now() - idle_since > self.idle_exit:
+            elif not self.projects("telegram") and not self.projects("discord") and self.now() - idle_since > self.idle_exit:
                 break
             try:
                 await asyncio.wait_for(stop.wait(), tick)

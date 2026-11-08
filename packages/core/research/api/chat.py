@@ -291,23 +291,25 @@ def chat_status(p) -> Dict[str, Any]:
 
 
 @op(sync=False, mutates=True)
-def chat_setup(p, platform: str = "telegram", token: str = "", chat_id: Optional[str] = None, discover: bool = False) -> Dict[str, Any]:
+def chat_setup(p, platform: str = "telegram", token: str = "", chat_id: Optional[str] = None, discover: bool = False, guild_id: Optional[str] = None) -> Dict[str, Any]:
     from ..chat import manage
+    if platform == "discord":
+        return manage.setup_discord(p, token, guild_id, channel_id=chat_id)
     if platform != "telegram":
-        raise ResearchError(f"{platform} is not available yet (Telegram only)")
+        raise ResearchError(f"unknown platform {platform} (telegram or discord)")
     return manage.setup_telegram(p, token, chat_id, discover, 45)
 
 
 @op(sync=False, mutates=True)
 def chat_remove(p, platform: str = "telegram") -> Dict[str, Any]:
     from ..chat import manage
-    return manage.remove_telegram(p)
+    return manage.remove_discord(p) if platform == "discord" else manage.remove_telegram(p)
 
 
 @op(mutates=True, needs_project=False)
 def chat_test(s, platform: str = "telegram") -> Dict[str, Any]:
     from ..chat import manage
-    return manage.test_telegram()
+    return manage.test_discord() if platform == "discord" else manage.test_telegram()
 
 
 @op(needs_project=False, mutates=True)

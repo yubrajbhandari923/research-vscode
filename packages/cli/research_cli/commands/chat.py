@@ -1,4 +1,4 @@
-"""`research chat ...`: chat gateway setup and pairing (Telegram today, Discord later). `research telegram ...` stays as a hidden alias."""
+"""`research chat ...`: chat gateway setup and pairing (Telegram and Discord). `research telegram ...` stays as a hidden alias."""
 from __future__ import annotations
 
 from typing import Any
@@ -31,14 +31,50 @@ def _status_lines(d):
               + f", {'enabled' if t['enabled'] else 'disabled'} for this project; stored at {t['stored_at']}")]
     lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in t["users"]] or ["  no paired users (message the bot to get a pairing code)"]
     lines.append("gateway: " + (f"running (pid {g['pid']}, {', '.join(g['platforms']) or 'no platform'})" + (" - restart needed (older version)" if g["stale"] else "") if g["running"] else "not running"))
-    lines.append("discord: not available yet")
+    dc = d["platforms"]["discord"]
+    lines.append("discord: " + ("token saved" if dc["token_set"] else "no token") + (", server linked" if dc["guild_set"] else ", no server")
+                 + (", home channel set" if dc["home_channel_set"] else ", no home channel (use /sethome)") + f", {'enabled' if dc['enabled'] else 'disabled'} for this project"
+                 + ("" if dc["library"] else f"; discord.py missing: {dc['install']}"))
+    lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in dc["users"]]
     return lines
+
+
+def _setup_discord(a, p) -> int:
+    import sys
+    from research.chat import discord_bot, manage, pairing
+    discord_bot.need_discord()                                  # a clear install line before anything is asked
+    print(discord_bot.PORTAL_STEPS)
+    token = a.token or AP.read_pin("Bot token (not shown): ")
+    if not token:
+        raise ResearchError("No token entered (a terminal is needed, or pass --token)")
+    info = manage.inspect_discord(token)                        # GET /users/@me, then /users/@me/guilds
+    print(green("✓ ") + f"token is valid for bot {info['name']}\nInvite URL (scopes bot + applications.commands, minimal permissions):\n  {info['invite_url']}")
+    gs, guild = info["guilds"], a.guild
+    tty = sys.stdin.isatty()
+    while not gs and not guild and tty:
+        input("Open the URL, add the bot to your server, then press Enter… ")
+        gs = discord_bot.guilds(token.strip())
+    if not guild and len(gs) > 1:
+        for i, g in enumerate(gs, 1):
+            print(f"  {i}. {g['name']} ({g['id']})")
+        guild = gs[int(input("Which server? number: ") or 0) - 1]["id"] if tty else None
+    r = manage.setup_discord(p, token, guild, channel_id=a.channel)
+    print(green("✓ ") + f"Discord connected to {r['guild']}; token stored only on this machine (0600)")
+    print(green("✓ ") + "chat gateway " + ("running" if r["gateway"].get("running") or r["gateway"].get("action") in ("none", "start") else "will start with the supervisor"))
+    print("Now send the bot a direct message; it replies with a pairing code. Run /sethome in the channel that should receive alerts.")
+    code = input("Pairing code (blank to do it later with `research chat pair CODE`): ").strip() if tty else ""
+    if code:
+        u = pairing.approve(code, a.role)
+        print(green("✓ ") + f"{u.get('label') or u['user_id']} paired as {u['role']}")
+    return _emit(a, {k: v for k, v in r.items() if k not in ("supervisor", "gateway")}, None)
 
 
 def _setup(a, p, platform: str) -> int:
     from research.chat import manage
+    if platform == "discord":
+        return _setup_discord(a, p)
     if platform != "telegram":
-        raise ResearchError(f"{platform} is not available yet; Telegram is")
+        raise ResearchError(f"unknown platform {platform} (telegram or discord)")
     token = a.token or AP.read_pin("Bot token (from @BotFather; not shown): ")
     if not token:
         raise ResearchError("No token entered (a terminal is needed, or pass --token)")
@@ -73,11 +109,12 @@ def cmd_chat(a, p) -> int:
             raise ResearchError("unpair needs PLATFORM and USER_ID")
         return _emit(a, {"removed": pairing.remove_user(args[0], args[1])}, lambda d: [green("✓ ") + "removed" if d["removed"] else yellow("no such user")])
     if act == "test":
-        r = manage.test_telegram()
+        r = manage.test_discord() if args[:1] == ["discord"] else manage.test_telegram()
         return _emit(a, r, lambda d: [green("✓ ") + "sent" if d["sent"] else yellow("not configured")])
     if act == "remove":
-        manage.remove_telegram(p)
-        return _emit(a, {"removed": True}, lambda d: [green("✓ ") + "credentials deleted and Telegram disabled"])
+        dc = args[:1] == ["discord"]
+        (manage.remove_discord if dc else manage.remove_telegram)(p)
+        return _emit(a, {"removed": True}, lambda d: [green("✓ ") + "credentials deleted and " + ("Discord" if dc else "Telegram") + " disabled"])
     if act == "gateway":
         sub = args[0] if args else "status"
         if sub == "run":
@@ -105,14 +142,16 @@ cmd_telegram = mut(cmd_telegram)
 
 
 def attach(sub, add, group) -> None:
-    x = add(sub, "chat", cmd_chat, "chat gateway (opt-in): setup [telegram] | status | pair CODE | unpair PLATFORM USER | test | remove | gateway start|stop|restart|status|run")
+    x = add(sub, "chat", cmd_chat, "chat gateway (opt-in): setup [telegram|discord] | status | pair CODE | unpair PLATFORM USER | test [PLATFORM] | remove [PLATFORM] | gateway start|stop|restart|status|run")
     x.add_argument("action", choices=["setup", "status", "pair", "unpair", "test", "remove", "gateway"])
     x.add_argument("args", nargs="*", help="setup: the platform · pair: the code · gateway: start|stop|restart|status|run")
     x.add_argument("--token", help="setup: the bot token (prefer the hidden prompt; arguments are visible in process lists)")
     x.add_argument("--chat-id", dest="chat_id", help="setup: the chat id (default: the first chat that messages the bot)")
     x.add_argument("--role", choices=["viewer", "operator", "approver"], help="pair: the role (default: operator for the first user, viewer after)")
+    x.add_argument("--guild", help="setup discord: the server id (default: the one the bot is in)")
+    x.add_argument("--channel", help="setup discord: the channel id for this project's alerts (also the home channel)")
     x = add(sub, "telegram", cmd_telegram, None)
     x.add_argument("action", choices=["setup", "status", "test", "remove", "poll"])
     x.add_argument("--token")
     x.add_argument("--chat-id", dest="chat_id")
-    x.set_defaults(role=None, args=[])
+    x.set_defaults(role=None, args=[], guild=None, channel=None)

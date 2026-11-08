@@ -39,6 +39,16 @@ def _reap_daemons(tmp_path_factory):
                 os.kill(int(pid), signal.SIGTERM)
             except OSError:
                 pass
+    # Chat gateways started under a test's private config dir (XDG_CONFIG_HOME inside the tmp root) linger ~10 minutes: their heartbeat names them.
+    cmds = {l.strip().partition(" ")[0]: l for l in subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout.splitlines()}
+    for dirpath, _, files in os.walk(base):
+        if "daemon.json" in files and os.path.basename(dirpath) == "gateway":
+            try:
+                pid = str(__import__("json").load(open(os.path.join(dirpath, "daemon.json")))["pid"])
+                if "research.chat.gateway" in cmds.get(pid, ""):
+                    os.kill(int(pid), signal.SIGTERM)
+            except (OSError, ValueError, KeyError):
+                pass
 
 
 @pytest.fixture(autouse=True)

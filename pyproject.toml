@@ -19,6 +19,7 @@ classifiers = [
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-xdist>=3"]
 tui = ["textual>=0.80; python_full_version >= '3.8.1'"]
+discord = ["discord.py>=2.4,<3; python_version >= '3.10'"]  # aiohttp needs 3.10; chat setup prints the install line
 
 [project.scripts]
 research = "research_cli.main:main"
