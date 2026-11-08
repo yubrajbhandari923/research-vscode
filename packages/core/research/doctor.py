@@ -214,7 +214,7 @@ def _agents(r: _Report, p) -> None:
         r.add("approval.pin", "Agents", "ok", "Approval PIN is set (stored on this machine only)")
     else:
         r.add("approval.pin", "Agents", "info", "No approval PIN set",
-              "Approving agent proposals, changing policy and promoting to main are not PIN-gated until you set one. Agents still cannot do them.",
+              "Approving agent proposals, changing policy and promoting to main need a PIN. In a terminal you are asked to create one the first time; the VS Code panel and other non-interactive tools refuse until you do. Agents can never do them.",
               {"command": "research approval set-pin"})
     from . import mcp as MCP
     st = MCP.status(p.root)

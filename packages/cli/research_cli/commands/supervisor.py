@@ -363,7 +363,7 @@ def cmd_proposal(a, p) -> int:
 def cmd_approval(a, p) -> int:
     from research import approval as AP
     if a.action == "status":
-        return _emit(a, AP.status(), lambda d: [("PIN is set" if d["set"] else "No PIN set (protected actions are not PIN-gated yet): research approval set-pin")])
+        return _emit(a, AP.status(), lambda d: [("PIN is set" if d["set"] else "No PIN set: protected actions are refused outside a terminal until you run `research approval set-pin` (in a terminal you are asked to create one the first time)")])
     if a.action == "chat-status":
         st = AP.chat_status()
         return _emit(a, st, [("authenticator enrolled" if st["chat_enrolled"] else "no authenticator enrolled (research approval chat-enroll)")
