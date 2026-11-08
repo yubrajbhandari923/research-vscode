@@ -10,10 +10,11 @@ import json
 import os
 import re
 import shutil
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
 from ..util import ResearchError, as_list
-from .base import Adapter, merge_json, run, server_cmd
+from .base import Adapter, LimitInfo, merge_json, run, server_cmd
 
 # Level pack. UNVERIFIED defaults (no account was available to run a model): anthropic/* ids follow the claude pack and `--variant high`
 # is Anthropic's documented reasoning variant. Override with agents.profiles.opencode-<level>.model, e.g. `opencode/big-pickle`
@@ -200,6 +201,34 @@ def mcp_registered(root: str) -> Optional[bool]:
     return False
 
 
+# ------------------------------------------------------------------------------------------------ usage limits
+_ERROR_KINDS = {"QuotaExceeded": "usage", "RateLimit": "rate", "ProviderInternal": "overload"}   # session-error.ts / errors.ts taxonomy
+RETRY_LIMIT_SECONDS = 300   # UNVERIFIED threshold: ordinary retries wait 2-30 s; a `retry` event waiting 5+ min is a limit, not a blip
+
+
+def limit_info(out: str, err: str, exit_code: Optional[int]) -> Optional[LimitInfo]:
+    """`{"type":"error","error":{type,message,status?,retryAfterMs?}}` (v1 puts the text in error.data.message) and `retry` events with epoch-ms
+    `nextRetryAt`. Shapes come from opencode source, not from a live limit (REALISTIC): UNVERIFIED how each provider's 429/quota body maps
+    to QuotaExceeded vs RateLimit. A long `retry` wait also counts, because older builds retry for hours without a terminal event."""
+    from . import limits as L
+    c: List[Optional[LimitInfo]] = []
+    for d in L.json_lines(out):
+        e = d.get("error") if isinstance(d.get("error"), dict) else {}
+        msg = e.get("message") or (e.get("data") or {}).get("message") or ""
+        text = f"{e.get('type') or e.get('name') or ''} {msg} {e.get('status') or ''}"
+        kind = _ERROR_KINDS.get(str(e.get("type"))) or L.classify(text) or ("rate" if e.get("status") == 429 else None)
+        if d.get("type") == "error" and kind:
+            ms = e.get("retryAfterMs")
+            c.append(LimitInfo(kind, L.now() + timedelta(milliseconds=ms) if isinstance(ms, (int, float)) and ms > 0 else L.reset_in(text), text.strip()[:300]))
+        elif d.get("type") == "retry" and kind:
+            at = L.from_epoch(d.get("nextRetryAt"))
+            if at and (at - L.now()).total_seconds() >= RETRY_LIMIT_SECONDS:
+                c.append(LimitInfo(kind, at, text.strip()[:300]))
+    if L.failing(exit_code):
+        c += [L.info(line) for line in L.plain_lines(err, out)]
+    return L.best(c)
+
+
 # ------------------------------------------------------------------------------------------------ doctor
 def checks(root: str, command: str) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
@@ -235,4 +264,4 @@ ADAPTER = Adapter(
           "usage": True, "resume": True, "mcp": "opencode.json", "instructions": "AGENTS.md", "watchdog": True},
     profile={"provider": "opencode", "command": "opencode", "args": [], "model": None, "effort": None},
     usage_parser="opencode_jsonl", resume_probe=resume_probe, resume_argv=resume_argv, session_id=session_id_of, list_models=list_models,
-    mcp_install=mcp_install, mcp_registered=mcp_registered, version_info=version_info, final_event=is_final_event, env=extra_env, checks=checks)
+    mcp_install=mcp_install, mcp_registered=mcp_registered, version_info=version_info, final_event=is_final_event, env=extra_env, checks=checks, limit_info=limit_info)

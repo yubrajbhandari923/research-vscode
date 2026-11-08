@@ -207,3 +207,10 @@ def session_id_of(kind: str, output: str) -> Optional[str]:
     """The provider's own session id from headless output, if the format reports one."""
     a = ADAPTERS.get(kind)
     return a.session_id(output) if a and a.session_id else None
+
+
+def limit_info(provider: str, out: str, err: str, exit_code: Optional[int]) -> Optional[LimitInfo]:
+    """Is this finished run a usage/rate/overload/credit refusal, and when does it reset? None = not a limit (or the adapter cannot tell).
+    Not yet used by the supervisor (WP18)."""
+    a = ADAPTERS.get(provider)
+    return a.limit_info(out or "", err or "", exit_code) if a and a.limit_info else None

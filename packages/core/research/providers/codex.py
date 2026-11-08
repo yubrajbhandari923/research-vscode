@@ -7,7 +7,7 @@ import shutil
 from typing import Any, Dict, List, Optional
 
 from ..util import ResearchError, as_list
-from .base import Adapter, last_json_value, run, server_cmd
+from .base import Adapter, LimitInfo, last_json_value, run, server_cmd
 
 # Level pack. Source: developers.openai.com/codex/config-reference (`model_reasoning_effort`: minimal|low|medium|high).
 # UNVERIFIED defaults: no model id is pinned (the CLI's own configured model is used, which can never name a model that does not
@@ -82,6 +82,21 @@ def mcp_registered(root: str) -> Optional[bool]:
     return bool(r and r.returncode == 0 and "research" in r.stdout)
 
 
+def limit_info(out: str, err: str, exit_code: Optional[int]) -> Optional[LimitInfo]:
+    """Source of truth: codex-rs/protocol/src/error.rs (UsageLimitReachedError) and exec's JSONL events (`turn.failed.error.message`, `error.message`).
+    'Try again at 3:41 PM.' is host-local with no zone; 'Try again later.' means unknown. Plain stderr only counts for a failed run.
+    UNVERIFIED: whether `exec --json` also exposes `resets_at` epoch seconds, and the exact JSON form of the per-minute 429."""
+    from . import limits as L
+    c: List[Optional[LimitInfo]] = []
+    for d in L.json_lines(out):
+        msg = (d.get("error") or {}).get("message") if d.get("type") == "turn.failed" else d.get("message") if d.get("type") == "error" else None
+        if msg:
+            c.append(L.info(str(msg)))
+    if L.failing(exit_code):
+        c += [L.info(line) for line in L.plain_lines(err, out)]
+    return L.best(c)
+
+
 ADAPTER = Adapter(
     name="codex", label="OpenAI Codex", build=build, levels=LEVELS,
     blurb="OpenAI Codex CLI. Interactive and headless (`codex exec`), model and reasoning effort, runs in a sandbox.",
@@ -90,4 +105,4 @@ ADAPTER = Adapter(
     profile={"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
     resume_probe=resume_probe, resume_argv=resume_argv,
     session_id=lambda out: last_json_value(out, "thread_id", reverse=False),   # codex --json: {"type":"thread.started","thread_id":…}
-    mcp_install=mcp_install, mcp_registered=mcp_registered)
+    mcp_install=mcp_install, mcp_registered=mcp_registered, limit_info=limit_info)
