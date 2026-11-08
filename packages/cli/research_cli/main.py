@@ -14,7 +14,7 @@ import research
 from research.store import Project
 from research.util import ResearchError, detect_author
 
-from .commands import MUTATING, agents, guide, hpc, plans, project, records, skills, supervisor
+from .commands import MUTATING, agents, decide, guide, hpc, plans, project, records, skills, supervisor
 from .output import dim, red
 
 def build_parser() -> argparse.ArgumentParser:
@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
             g.set_defaults(fn=None, _group=g)
         return groups[name]
 
-    for mod in (project, records, plans, supervisor, agents, skills, guide, hpc):
+    for mod in (project, records, plans, supervisor, decide, agents, skills, guide, hpc):
         mod.attach(sub, add, group)
     return ap
 

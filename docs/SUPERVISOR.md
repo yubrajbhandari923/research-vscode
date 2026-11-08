@@ -373,3 +373,27 @@ proposed and wait for your PIN in VS Code or the terminal.
 (or any RPC client) records it in `~/.config/research-os/projects.json` and, when Telegram is enabled or a plan is running, starts the supervisor if it is down, or replaces one running older code
 (agents and HPC jobs are untouched). `research self-update` does the same restart for every known project after installing. After a reboot with VS Code closed, run `research supervisor start`.
 `.research/bin/research` is a short launcher that execs the Python recorded when it was written, so agents always run the installed version; `research bin install` refreshes it and removes any old vendored `lib/` copy.
+
+## 19. Decision requests
+
+Whenever the system needs you (a halted task, a diagnosis with alternatives, a question an agent cannot settle) it asks **one** structured question, stored in
+`.research/supervisor/requests/DR-n.json`, and shows it on every surface: `research decisions`, `research decide DR-001`, chat (buttons), VS Code, the TUI.
+
+```bash
+research decisions                    # open requests
+research decide DR-001                # show the question, the options and exactly what each does
+research decide DR-001 2              # pick option 2: its prepared action runs, no model call
+research decide DR-001 "skip T-7 and carry on"    # free text: the supervisor plans it (see below)
+```
+
+Each option is `{key, label, consequence, action, protected}`. The **action** is prepared when the request is created: an `intervention` (the actions and classes of §17),
+an `op` from a short allow-list (`plan_control` run/pause/resume, `supervisor_task` approve/continue/retry/unblock/completed/failed; `plan_promote` and `plan_control stop` are protected),
+an `instruct` (a sentence the §17 planner turns into actions: what the diagnosis options are), or nothing. `protected` is **computed**, never taken from whoever created the
+request: science, resources, frozen tests, agent roles and promotion are protected. A protected option never runs from chat: the request is flagged for your computer and you
+choose it there with the PIN. Everything else runs the moment it is chosen.
+
+* **Agents may ask, never answer.** The MCP tool `decision_request` creates a request; `decision_answer` is human only (and refuses agent shells).
+* **Answer once, anywhere.** The first answer closes the request on every surface; a second one gets the first answer back (`already`). A refused PIN reopens it.
+* **Expiry** (`expires_hours`, default 72) closes a request without choosing anything: it never picks a default and never chooses a protected option.
+* **Chat approval of protected options** uses the authenticator flow in GOVERNANCE.md, not this command.
+* `/options` and `/choose N` are aliases: the debug agent's options are stored as a request (`decisions.from_diagnosis`) and `/choose N` answers option N of the latest open one.

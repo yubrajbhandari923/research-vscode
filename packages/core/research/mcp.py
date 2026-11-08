@@ -66,6 +66,9 @@ TOOLS = [
     ("agent_propose", "Propose a plan change as a YAML patch (same schema as plan YAML, scope partial). Operational "
              "additions may apply automatically; scientific changes wait for the researcher.",
      {"task": S, "yaml": S, "rationale": S}, ["task", "yaml", "rationale"]),
+    ("decision_request", "Ask the researcher a decision with options. Each option: key, label, consequence, and an optional prepared action "
+             "(kind intervention|instruct|op); protected ones need the researcher's PIN. You can only ask: you can never answer or approve.",
+     {"question": S, "options": {"type": "array", "items": O}, "subject": S, "default": S, "expires_hours": N}, ["question", "options"]),
     ("plan_status", "Supervised status of a plan: task phases, attempts, budgets, pending proposals.",
      {"plan": S}, ["plan"]),
     ("task_start", "Claim a task and mark it running. Fails if another agent holds it.",

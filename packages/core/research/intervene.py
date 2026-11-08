@@ -91,7 +91,7 @@ def classify_action(a: Dict[str, Any]) -> str:
     f = set(a.get("fields") or {})
     if f & SCIENTIFIC_FIELDS:
         return "scientific"
-    if f & RESOURCE_FIELDS:
+    if f & (RESOURCE_FIELDS | {"execution", "resources"}):   # nested resource/execution blocks are resource changes too
         return "resource"
     return "implementation"
 
@@ -256,8 +256,7 @@ def preview(p, it: Dict[str, Any]) -> List[str]:
 
 
 # ----------------------------------------------------------------------------------------------- lifecycle
-def request(p, tid: str, message: str, interrupt: bool = False, source: str = "human", plan_now: bool = True) -> Dict[str, Any]:
-    """Create the intervention (persisted first, so a crash leaves a visible `requested` record) and, by default, plan it now."""
+def _create(p, tid: str, message: str, interrupt: bool, source: str) -> Dict[str, Any]:
     from . import supervisor as SV
     SV.require_human(p, "Instructing the supervisor")
     if not (message or "").strip():
@@ -272,7 +271,21 @@ def request(p, tid: str, message: str, interrupt: bool = False, source: str = "h
           "created": now_iso(), "history": [{"ts": now_iso(), "state": "requested"}], "protected": []}
     save(p, it)
     p.event("task", ctx["task"], "intervention_requested", f"{it['id']}: {message.strip()[:200]}")
+    return it
+
+
+def request(p, tid: str, message: str, interrupt: bool = False, source: str = "human", plan_now: bool = True) -> Dict[str, Any]:
+    """Create the intervention (persisted first, so a crash leaves a visible `requested` record) and, by default, plan it now."""
+    it = _create(p, tid, message, interrupt, source)
     return plan_it(p, it["id"]) if plan_now else it
+
+
+def create_planned(p, tid: str, instruction: str, raw_actions: Any, summary: str = "", rationale: str = "", source: str = "decision") -> Dict[str, Any]:
+    """An intervention whose actions are already known (a decision option's prepared action, the investigator's plan): no planning-agent call.
+    Same validation, classification and approval rules as a planned one: unprotected actions are approved under the researcher's own authority,
+    protected ones wait in `proposed` for ONE approval with the PIN (`research intervention approve`)."""
+    prop = validate_proposal({"summary": summary, "rationale": rationale, "actions": raw_actions})   # raises before anything is stored
+    return _propose(p, _create(p, tid, instruction, False, source), prop)
 
 
 def plan_it(p, iid: str) -> Dict[str, Any]:
@@ -288,6 +301,11 @@ def plan_it(p, iid: str) -> Dict[str, Any]:
         _set(it, "failed", error=f"could not plan: {ex}")
         save(p, it)
         return it
+    return _propose(p, it, prop)
+
+
+def _propose(p, it: Dict[str, Any], prop: Dict[str, Any]) -> Dict[str, Any]:
+    iid = it["id"]
     prot = protected(prop["actions"])
     _set(it, "proposed", summary=prop["summary"], rationale=prop["rationale"], actions=prop["actions"], protected=prot, preview=preview(p, {"actions": prop["actions"]}))
     save(p, it)
