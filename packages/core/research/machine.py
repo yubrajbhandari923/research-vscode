@@ -49,4 +49,5 @@ def remember(root: str) -> None:
 def known_projects() -> List[str]:
     """Registered roots that still look like projects, most recently seen first."""
     items = sorted(_load()["projects"].items(), key=lambda kv: (kv[1] or {}).get("last_seen", 0) if isinstance(kv[1], dict) else 0, reverse=True)
-    return [r for r, _ in items if os.path.isdir(os.path.join(r, ".research"))]
+    from . import workspace
+    return [r for r, _ in items if os.path.isdir(os.path.join(r, ".research")) or workspace.locate(r) is not None]   # shared-ledger roots keep .research elsewhere

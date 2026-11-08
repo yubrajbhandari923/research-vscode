@@ -1620,6 +1620,8 @@ def daemon_start(p: Project, detach: bool = True, exit_when_idle: bool = False) 
     log = open(sdir(p, "daemon.log"), "ab")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([os.path.dirname(os.path.dirname(os.path.abspath(__file__))), os.environ.get("PYTHONPATH", "")])}
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=os.name == "posix", env=env)
+    from . import notify
+    notify.ensure_gateway(p)       # the machine's chat gateway delivers this supervisor's alerts (no-op when chat is off)
     for _ in range(50):
         time.sleep(0.1)
         s = daemon_status(p)
