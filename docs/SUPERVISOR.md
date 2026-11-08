@@ -4,7 +4,7 @@ You write (or have an AI write) a plan in YAML, import it, press **Run plan**, a
 checks their work itself, repairs failures within limits, watches HPC jobs, and stops for you when it must. It never needs an LLM to
 decide what to run next.
 
-If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first. **Set up your Python and cluster environments once: [SETUP.md](SETUP.md).**
+If you have never used Research OS, read [QUICKSTART.md](QUICKSTART.md) first. **Set up your Python and cluster environments once: [SETUP.md](SETUP.md).** The runtime is specified in [spec/08-supervisor.md](spec/08-supervisor.md).
 
 ## 1. Who does what
 
@@ -99,7 +99,7 @@ Apply saves its key map after every entity, so an interrupted apply is finished 
 
 ## 4. How a task moves (state machine)
 
-Task status keeps its Research OS v2 values (`todo`, `running`, `verify`, `done`, `blocked`). The supervisor adds a **phase** per task:
+Task status keeps its values (`todo`, `running`, `verify`, `done`, `blocked`). The supervisor adds a **phase** per task:
 
 ```
 waiting ─► ready ─► (awaiting_approval) ─► running ─► verifying ─► verified
@@ -129,7 +129,7 @@ engineering failure: checks decide, not the sign of the result.
 | Checks fail (incorrect implementation, ambiguous spec, weak oracle) | Repair attempt with the diagnostics, up to `max_attempts_per_task` and `max_total_attempts` |
 | Environment (missing module, permissions) or resource limit | Task blocked for a human: not repairable by retrying |
 | Agent process crashed | Counts as an attempt; repaired within limits |
-| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically |
+| Provider refusal (usage limit, overload, 429) | Task goes to *attention*; the attempt is kept as evidence but **not counted**; nothing is retried automatically, unless `agents.handoff` is enabled with `on_provider_unavailable: try_next`, which continues with the next provider in `fallback_order` |
 | Unknown process state | *Attention*; never retried automatically; you settle it (`supervisor resolve`, UI **Retry**) |
 | Scientific assumption reported by the agent | *Attention* and a proposal; nothing continues |
 
@@ -174,7 +174,7 @@ yourself; tests, review, approval and the explicit merge confirmation then follo
 existing definitions, hypotheses, checks, parameters or experiments is **scientific** and waits for you in Plans → *Proposed plan changes*.
 Approved changes go through the same `apply` engine, so revisions and history are preserved.
 
-Since 2.4 an operational proposal auto-applies only if `governance.tasks` allows it (type allow-list, per-experiment cap), `supervisor.auto_apply_operational` is on and `max_auto_tasks` holds; approving anything else needs your reason and PIN. Agents can also propose experiments. See [GOVERNANCE.md](GOVERNANCE.md).
+An operational proposal auto-applies only if `governance.tasks` allows it (type allow-list, per-experiment cap), `supervisor.auto_apply_operational` is on and `max_auto_tasks` holds; approving anything else needs your reason and PIN. Agents can also propose experiments. See [GOVERNANCE.md](GOVERNANCE.md).
 
 ## 10. Recovery and troubleshooting
 
@@ -236,7 +236,8 @@ Manual Research OS workflows are unchanged when no plan is running. Supervision 
 
 `supervisor.poll_seconds`, `max_parallel_agents`, `max_attempts_per_task`, `max_total_attempts`, `max_wall_minutes`,
 `attempt_timeout_minutes`, `on_failure`, `enforce_completion`, `auto_apply_operational`, `max_auto_tasks`,
-`require_approval_for_scientific_changes`, `session_resume`, `context_max_chars`, `hpc_poll_seconds`, `max_hpc_resubmissions`.
+`require_approval_for_scientific_changes`, `session_resume`, `context_max_chars`, `hpc_poll_seconds`, `max_hpc_resubmissions`, `launch_grace_seconds`, `escalation`,
+`commit_verified_work`, `commit_exclude`. The generated [settings reference](spec/10-configuration.md#reference-generated) lists defaults and help for each.
 All live in `.research/config.yaml`; a plan's `execution:` block overrides them for that plan.
 
 ## 14. Automatic code promotion (opt-in, unattended)
@@ -321,7 +322,7 @@ your PATH yourself, for example `ln -s "$PWD/research" ~/.local/bin/research` (i
   (the restart button is highlighted when the running supervisor is older than the installed version).
 * Concurrency: `supervisor.max_parallel_agents` (project) is overridden by a plan's `execution.max_parallel_agents`. Control Center and `plan status --json`
   (`concurrency`) show the effective number, where it comes from, and how many agents run or wait. Tasks in the same experiment worktree never run together.
-* Editing only a plan's `execution:` block and applying it now counts as a change (it used to be reported as "no changes" and ignored).
+* Editing only a plan's `execution:` block and applying it counts as a change.
 
 ## 17. Steering a task in words (supervisor intervention)
 

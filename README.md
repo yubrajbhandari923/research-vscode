@@ -339,7 +339,7 @@ research mcp serve
 The stdio MCP server exposes registered tools with schemas and structured errors. It does not expose
 every feature: strategy, orchestration, hooks, evidence, tuning and guide workflows use CLI/RPC.
 Re-run installation after moving a project if a client registration contains its old absolute path.
-See [MCP details](docs/SPEC.md#78-mcp-server) and `research mcp --help`.
+See [MCP details](docs/spec/09-interfaces.md#mcp-server) and `research mcp --help`.
 
 For SLURM on the workspace host, use `research run submit --help`. Remote HPC profiles specify SSH
 aliases, approved storage roots and resources:
@@ -354,7 +354,7 @@ Configure and inspect a profile before submission. SSH credentials stay in OpenS
 Compute-node jobs write per-run files, never the project SQLite index. Portable bundles support
 separate execution and result import; remote sync reconciles outcomes. Offline tests simulate
 clusters and execute portable bundles locally; they do not establish compatibility with every
-site's SLURM accounting, filesystem or scheduler policy. [HPC specification](docs/SPEC.md#14c-hpc-execution).
+site's SLURM accounting, filesystem or scheduler policy. [HPC specification](docs/spec/06-execution.md#hpc-execution).
 
 ## Recovery
 

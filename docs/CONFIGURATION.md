@@ -54,20 +54,28 @@ effect (for example, the sandbox profile table on Work) but does not yet edit th
 `auto_promotion.*`, `supervisor_assistant.*`, `intervention.*` and `notifications.*` are sparse: a project's `config.yaml`
 holds only what you changed, merged over the defaults at load, so upgrading needs no edits. They appear under Settings and in
 `research config`. The Telegram token and chat id are machine-level (`~/.config/research-os/telegram.json`, mode 0600), never in the
-project. See [SUPERVISOR.md](SUPERVISOR.md) sections 14-18.
+project. See [SUPERVISOR.md](SUPERVISOR.md) and the [reference](spec/10-configuration.md#reference-generated).
 
-## Layout and providers (added with Initialize Project)
+## Layout, providers and strategies
 
 ```yaml
 layout:                      # written by Initialize Project; paths are relative to the folder holding main/ and ledger/
   main_dir: main
   ledger_dir: ledger
-  experiments_dir: experiments   # new experiment worktrees are created here (null = legacy <name>-experiments beside the checkout)
+  experiments_dir: experiments   # new experiment worktrees are created here (null = <name>-experiments beside the checkout)
 agents:
   default_profile: claude        # claude | codex | agy | any profile you define
-  profiles:
-    codex: {provider: codex, command: codex, model: null, effort: null, sandbox: workspace-write}
-    agy:   {provider: agy,   command: agy,   model: null, effort: null}
+  profiles:                      # yours are merged over the ones generated for each installed provider
+    codex-checked: {provider: codex, command: codex, model: gpt-5, effort: medium}
+orchestration:
+  active_strategy: balanced_first   # balanced_first | deep_first | fast_max | balanced_heavy | your own (extends: ...)
 ```
 
-All of these appear in Settings (git category / agents) and round-trip with the file. See `docs/PROVIDERS.md`.
+Providers generate `<provider>-fast`, `-balanced` and `-deep` profiles, and a strategy maps those three levels to work; see [PROVIDERS.md](PROVIDERS.md). All of
+these appear in Settings (git category and agents) and round-trip with the file.
+
+## Reference
+
+Every registered setting (key, type, default, who may change it, meaning) is listed in the generated
+[settings reference](spec/10-configuration.md#reference-generated); the same list is `research config options`. The specification of layers, the registry
+and environment variables is [spec/10-configuration.md](spec/10-configuration.md).
