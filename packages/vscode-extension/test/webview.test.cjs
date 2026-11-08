@@ -124,7 +124,7 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     assert.ok(!fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8').split('\n').some((l) => !l.startsWith('#') && l.includes('max_runs')));
     await click(byText(el, 'button', 'Review changes'));
     await click(byText(q(el, '[role=dialog]'), 'button', 'Save changes'));
-    await pin(); await lib.tick(500);
+    await pin(); await waitFor(() => q(el, ".banner.ok"), 10000);
     assert.match(q(el, '.banner.ok').textContent, /Saved/);
     assert.match(fs.readFileSync(path.join(proj, '.research/config.yaml'), 'utf8'), /max_runs_without_synthesis: 8/);
     assert.match(fs.readFileSync(path.join(proj, '.research/context/policy.md'), 'utf8'), /Maximum runs without synthesis.*8/);
@@ -135,7 +135,7 @@ test('editing a setting: validation, diff review, save, audit, persists after re
     const row = qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     assert.equal(q(row, 'input').value, '8'); assert.ok(q(row, '.src-project'), 'shows it is a project override');
     // reset removes only the override
-    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await pin(); await lib.tick(500);
+    await click(byText(row, 'button', 'Reset')); await click(byText(q(el, '[role=dialog]'), 'button', 'Remove override')); await pin(); await waitFor(() => q(el, ".banner.ok"), 10000);
     const rowOf = () => qa(el, '.setting').find((r) => q(r, '.setting-label').textContent === 'Maximum runs without synthesis');
     await waitFor(() => q(rowOf(), 'input').value === '5');
     assert.equal(q(rowOf(), 'input').value, '5'); assert.ok(q(rowOf(), '.src-default'));

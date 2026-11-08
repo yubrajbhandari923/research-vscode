@@ -546,7 +546,7 @@
       },
       {
         "command": "research.setup.agents",
-        "title": "Set Up Claude Code Agents…",
+        "title": "Set Up Agent Files…",
         "category": "Research"
       },
       {
