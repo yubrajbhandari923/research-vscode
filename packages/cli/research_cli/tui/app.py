@@ -31,7 +31,7 @@ PENDING_RUN = ("running", "queued", "submitted", "pending", "created")
 
 
 def digit_binding(i: int) -> Binding:
-    return Binding(str(i), f"digit({i})", "Pick/Tab", key_display="1-9", show=(i == 1))
+    return Binding(str(i), f"digit({i})", "Pick", key_display="1-9", show=(i == 1))
 
 
 class ResearchTUI(App):
@@ -41,7 +41,7 @@ class ResearchTUI(App):
     #status { height: auto; padding: 0 1; background: $panel; }
     #dialog { width: 64; max-width: 95%; height: auto; max-height: 95%; border: round $accent; background: $surface; padding: 1 2; margin: 1 2; }
     .title { text-style: bold; color: $accent; }
-    TabbedContent Tab.-active { color: $accent; text-style: bold; }
+    TabbedContent Tab.-active { color: #ffffff; text-style: bold; }   /* white on the primary block: readable in both themes */
     Underline > .underline--bar { color: $accent; }
     .panel, DataTable, .detail { border: round $primary; border-title-color: $accent; border-title-style: bold; }
     .panel:focus-within, DataTable:focus { border: round $accent; }
@@ -60,7 +60,7 @@ class ResearchTUI(App):
     """
     TITLE = "ResearchOS"
     ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("k", "kill", "Cancel run"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
+    BINDINGS = [Binding("k", "kill", "Cancel"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
                 Binding("t", "answer_text", "Answer")] + [digit_binding(i) for i in range(1, 10)] + [
         Binding("left_square_bracket", "step(-1)", "Tabs", key_display="[ ]"), Binding("right_square_bracket", "step(1)", "Next tab", show=False),
         Binding("question_mark", "help", "Help"), Binding("q", "quit", "Quit"), Binding("slash", "filter", "Filter"),
@@ -118,7 +118,7 @@ class ResearchTUI(App):
             self.exit()
 
     def on_resize(self, event) -> None:
-        self.set_class(self.size.width < 100, "narrow")
+        self.set_class(self.size.width < 120, "narrow")
         self.draw_banner()
 
     def draw_banner(self) -> None:
@@ -149,7 +149,7 @@ class ResearchTUI(App):
         bg = (os.environ.get("COLORFGBG") or "").split(";")[-1]
         self.theme = "ansi-dark" if plain() else "researchos-light" if bg in ("7", "15") else "researchos"
         self.set_class(plain(), "plain")
-        self.set_class(self.size.width < 100, "narrow")
+        self.set_class(self.size.width < 120, "narrow")
         self.draw_banner()
         if not self.root:
             return
@@ -293,7 +293,7 @@ class ResearchTUI(App):
         self.open_count = self.load_decisions()
         self.sup = V.safe(self.call, 'managed_plans', default=[]) or []
         self.status = V.gather_status(self.call, self.sup, self.usage_records, self.open_count)
-        self._fill("runs", [(r["id"], r["id"], badge(r["status"]), r["started_at"], r["label"] or (r["command"] or "")[:60]) for r in runs])
+        self._fill("runs", [(r["id"], r["id"], badge(r["status"]), V.when(r["started_at"]) if r["started_at"] else "", r["label"] or (r["command"] or "")[:60]) for r in runs])
         self._fill("findings", [(f["id"], f["id"], badge(f["status"]), f["title"]) for f in T["findings"]])
         self._fill("plans", [(p["id"], p["id"], badge(p["status"]), p["title"]) for p in T["plans"]])
         self._fill("approvals", V.proposal_rows(self.proposals))
@@ -349,7 +349,11 @@ class ResearchTUI(App):
                 text = self.record_detail(table, key)
         except Exception as e:
             text = Text(f"Could not load {key}: {e}")
-        self.query_one(f"#{pane}", Static).update(text)
+        from textual.css.query import NoMatches
+        try:   # the base screen, not the active one: a dialog may be open; at start-up and shutdown there may be no screen or pane yet
+            self.screen_stack[0].query_one(f"#{pane}", Static).update(text)
+        except (NoMatches, IndexError):
+            return
 
     def record_detail(self, table: str, key: str) -> Text:
         prop = table == "approvals"

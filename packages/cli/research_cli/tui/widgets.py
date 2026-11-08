@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Any, Dict, Optional
 
@@ -105,14 +106,65 @@ class Help(ModalScreen):
         yield Vertical(Label("ResearchOS keys", classes="title"), Static(t), Label("Esc closes"), id="dialog")
 
 
+_QUIET = ("author_type", "author_name", "author_model", "created_at", "updated_at", "claimed_by", "claimed_at", "completed_by")
+_TS = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}")
+
+
+def _pairs(x: Dict[str, Any]) -> str:
+    return "  ".join(f"{a}={b}" for a, b in x.items() if b not in (None, "", [], {}) and not isinstance(b, (dict, list)))
+
+
+def _record_line(x: Dict[str, Any]) -> Text:
+    """One line for a record inside a list (a plan's tasks, a run's checks): id, status badge, title."""
+    t = Text()
+    ident = x.get("id") or x.get("key") or x.get("name")
+    title = x.get("title") or x.get("label") or x.get("goal")
+    if ident:
+        t.append(f"{ident} ", style="bold")
+    if x.get("status"):
+        t.append_text(badge(x["status"]))
+        t.append("  ")
+    if title:
+        t.append(str(title))
+    if not (ident or title):
+        t.append(_pairs(x)[:160])
+    return t
+
+
+def _value(k: str, v: Any) -> Text:
+    from .views import when
+    if k == "status":
+        return badge(v)
+    if isinstance(v, str) and _TS.match(v):
+        return Text(when(v))
+    if isinstance(v, list):
+        if v and all(isinstance(x, dict) for x in v):
+            t = Text()
+            for x in v:
+                t.append("\n  ")
+                t.append_text(_record_line(x))
+            return t
+        return Text(", ".join(str(x) for x in v))
+    if isinstance(v, dict):
+        return Text(_pairs(v))
+    return Text(str(v))
+
+
 def render(d: Dict[str, Any], skip=("events", "links", "type")) -> Text:
-    """Read-only detail pane for a record dict."""
-    out = Text.assemble((f"{d.get('id', '')}  {d.get('title') or d.get('label') or ''}".strip(), "bold"), "\n\n")
+    """Read-only detail pane for a record dict: headline, one quiet provenance line, then the meaningful fields (empty ones hidden,
+    times formatted, nested records one per line)."""
+    from .views import when
+    out = Text.assemble((f"{d.get('id', '')}  {d.get('title') or d.get('label') or ''}".strip(), "bold"), "\n")
+    who = d.get("author_name") or d.get("claimed_by")
+    bits = [f"{who} ({d['author_type']})" if who and d.get("author_type") else (who or "")]
+    bits += [f"created {when(d['created_at'])}" if d.get("created_at") else "", f"updated {when(d['updated_at'])}" if d.get("updated_at") else ""]
+    quiet = " · ".join(b for b in bits if b)
+    out.append(quiet + "\n\n" if quiet else "\n", style="dim")
     for k, v in d.items():
-        if k in skip or k in ("id", "title") or v in (None, "", [], {}):
+        if k in skip or k in _QUIET or k in ("id", "title") or v in (None, "", [], {}):
             continue
         out.append(f"{k}: ", style="bold")
-        out.append_text(badge(v) if k == "status" else Text(str(v)))
+        out.append_text(_value(k, v))
         out.append("\n")
     return out
 
