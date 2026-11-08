@@ -81,3 +81,8 @@ export function sh(s: string): string {
   if (/^[\w@%+=:,./-]+$/.test(s)) return s;
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
+
+/** `research self-update` exists from core 3.0 on; older CLIs must be reinstalled from the release wheel. */
+export function canSelfUpdate(found?: string): boolean {
+  return parseInt((found || '0').split('.')[0], 10) >= 3;
+}
