@@ -25,3 +25,11 @@ def test_record_detail_is_readable_not_a_dict_dump():
     assert "demo (human)" in text and "created " in text and "T09:32" not in text      # provenance line, formatted times
     assert "T-001" in text and "Implement learned prior" in text and "T-002" in text   # tasks one per line
     assert "init=fbp  seed=1" in text                                                  # nested dict compact
+
+
+def test_show_detail_before_any_screen_exists_is_a_noop():
+    # a row-highlight event can arrive at start-up or shutdown, before/after any screen or pane exists: it must not crash the app
+    from research_cli.tui import ResearchTUI
+    app = ResearchTUI("/nonexistent-project")
+    assert app.show_detail("records", "EXP-001") is None
+    assert app.show_detail("runs", "RUN-0001") is None
