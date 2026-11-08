@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from . import yamlio
+from . import providers, strategy as _strategy, yamlio
 from .util import ResearchError
 
 SCHEMA = 1
@@ -36,13 +36,13 @@ git:
   remote_url: null              # https://..., git@... or ssh://...; added as `origin`, never pushed
 
 agents:
-  enabled: [claude]             # any of: claude, codex, agy
+  enabled: [claude]             # any of: @KNOWN@
   default: claude
-  strategy: sonnet_first        # sonnet_first | opus_first | haiku_max | sonnet_heavy (model allocation)
+  strategy: balanced_first      # @STRATEGIES@ (model allocation; levels come from the default agent's level pack)
   models: {}                    # optional per-provider model, e.g. {claude: claude-sonnet-5-5}
   handoff:                      # continue a task with another provider
     enabled: false              # opt-in automatic fallback; the "Continue with another agent" action always works
-    fallback_order: [claude, codex, agy]
+    fallback_order: [@KNOWN_LIST@]
     on_provider_unavailable: pause     # pause | try_next
     on_unknown_execution_state: pause  # always pause
 
@@ -100,6 +100,9 @@ guide:
 workspace:
   create: true                  # write <name>.code-workspace
 """
+
+TEMPLATE = (TEMPLATE.replace("@KNOWN@", ", ".join(providers.KNOWN)).replace("@KNOWN_LIST@", ", ".join(providers.KNOWN))
+            .replace("@STRATEGIES@", " | ".join(_strategy.NAMES)))
 
 # top-level section -> allowed keys (None = free-form, validated elsewhere)
 _ALLOWED = {
@@ -214,7 +217,7 @@ def export(p) -> str:
     for sec in ("supervisor", "governance"):
         cur = c.get(sec) or {}
         doc[sec] = {k: cur.get(k, v) if not isinstance(v, dict) else {**v, **(cur.get(k) or {})} for k, v in doc[sec].items()}
-    doc["agents"]["default"] = c["agents"].get("default_profile") or "claude"
+    doc["agents"]["default"] = c["agents"].get("default_profile") or providers.KNOWN[0]
     doc["agents"]["handoff"] = {**doc["agents"]["handoff"], **(c["agents"].get("handoff") or {})}
     doc["tools"]["packs"] = [x for x in ((c.get("skills") or {}).get("packs") or []) if x != "core-research"]
     doc["verification"]["independent_review"] = bool((c.get("verification") or {}).get("independent_reviewer", True))

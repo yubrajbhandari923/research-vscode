@@ -30,6 +30,9 @@ export class CoreClient implements vscode.Disposable {
   private ready?: Promise<any>;
   private restarts = 0;
   public readyInfo: any;
+  /** Variables that mark a process as an agent's. The core's `ping` is the source (util.AGENT_ENV_STRIP); this seed covers the first spawn only. */
+  public agentEnv: string[] = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
+    'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE'];
 
   constructor(
     public readonly root: string,
@@ -44,8 +47,7 @@ export class CoreClient implements vscode.Disposable {
       const python = this.cliPath;
       const env = { ...process.env, PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' };
       // UI actions are the human's, even when VS Code itself was launched from an agent's shell.
-      for (const k of ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
-        'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE']) delete (env as any)[k];
+      for (const k of this.agentEnv) delete (env as any)[k];
       this.out.appendLine(`[core] starting ${python} rpc --root ${this.root}`);
       let proc: cp.ChildProcessWithoutNullStreams;
       try {

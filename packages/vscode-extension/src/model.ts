@@ -54,6 +54,7 @@ export class Model implements vscode.Disposable {
     this.inflight = (async () => {
       try {
         const info = await this.client.request('ping');
+        if (Array.isArray(info.agent_env)) this.client.agentEnv = info.agent_env;
         this.initialized = !!info.initialized;
         await vscode.commands.executeCommand('setContext', 'research.ready', true);
         await vscode.commands.executeCommand('setContext', 'research.initialized', this.initialized);

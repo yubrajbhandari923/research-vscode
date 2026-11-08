@@ -1,0 +1,70 @@
+"""Google Antigravity CLI (`agy`) adapter."""
+from __future__ import annotations
+
+import shutil
+from typing import Any, Dict, List, Optional
+
+from ..util import as_list
+from .base import Adapter, json_has_research, last_json_value, run, server_cmd
+
+# Level pack. Source: `agy --help` (agy 1.5.0): `--effort` takes low|medium|high. UNVERIFIED defaults: no model id is pinned (`agy models`
+# lists what the account may use) and the levels differ by effort only. Pin `model` in agents.profiles.agy-<level> to taste.
+LEVELS = {"fast": {"model": None, "effort": "low"},
+          "balanced": {"model": None, "effort": "medium"},
+          "deep": {"model": None, "effort": "high"}}
+
+
+def build(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
+    # agy has no -C: the subprocess cwd is the working directory.
+    argv = [prof.get("command") or "agy", *[str(a) for a in as_list(prof.get("args"))]]
+    for d in dirs:
+        argv += ["--add-dir", d]
+    if model:
+        argv += ["--model", str(model)]
+    if effort:
+        argv += ["--effort", str(effort)]
+    if headless:
+        # nobody can answer a permission prompt in print mode: accept edits (the same stance as claude's acceptEdits), never --dangerously-skip-permissions
+        return argv + ["--mode", str(prof.get("permission_mode") or "accept-edits"), "--output-format", "json", "-p", prompt]
+    return argv + ["-i", prompt]
+
+
+def resume_probe(command: str) -> bool:
+    r = run([command, "--help"], timeout=20) if shutil.which(command) else None
+    return bool(r and "--conversation" in (r.stdout + r.stderr))   # agy prints its usage on stderr / non-zero
+
+
+def resume_argv(argv: List[str], session_id: str) -> Optional[List[str]]:
+    """Verified against agy 1.5.0: `agy --conversation ID --output-format json -p PROMPT`."""
+    if "-p" not in argv:
+        return None
+    i = argv.index("-p")
+    return argv[:i] + ["--conversation", session_id] + argv[i:]
+
+
+def list_models(command: str) -> Optional[List[Dict[str, str]]]:
+    r = run([command, "models"], timeout=30) if shutil.which(command) else None
+    if r and r.returncode == 0:
+        rows = [l.split("\t", 1) for l in r.stdout.splitlines() if "\t" in l]
+        if rows:
+            return [{"id": a.strip(), "label": b.strip()} for a, b in rows]
+    return None
+
+
+def mcp_install(root: str, cmd: Optional[str] = None) -> Dict[str, Any]:
+    import os
+    from .. import mcp
+    argv = server_cmd(root)
+    mcp._merge_json(os.path.join(root, ".agents", "mcp_config.json"), "mcpServers", "research", {"command": argv[0], "args": argv[1:]})
+    return {"provider": "agy", "where": ".agents/mcp_config.json", "scope": "project"}
+
+
+ADAPTER = Adapter(
+    name="agy", label="Google Antigravity", build=build, levels=LEVELS,
+    blurb="Google Antigravity CLI (`agy`). Interactive and headless, model and effort, JSON output. Not the same tool as Gemini CLI.",
+    caps={"interactive": True, "headless": True, "model": True, "effort": True, "structured_output": "json",
+          "usage": False, "resume": True, "mcp": ".agents/mcp_config.json", "instructions": "AGENTS.md"},
+    profile={"provider": "agy", "command": "agy", "args": [], "model": None, "effort": None},
+    resume_probe=resume_probe, resume_argv=resume_argv, session_id=lambda out: last_json_value(out, "conversation_id"),
+    list_models=list_models, mcp_install=mcp_install,
+    mcp_registered=lambda root: json_has_research(root, ".agents/mcp_config.json", "mcpServers"))

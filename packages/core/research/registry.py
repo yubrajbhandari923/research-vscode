@@ -20,7 +20,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import configfile, yamlio
+from . import configfile, providers as _providers, yamlio
 from .util import ResearchError, now_iso
 
 CATEGORIES = [
@@ -118,12 +118,12 @@ OPTIONS: List[Option] = [
        why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
     _o("layout.ledger_dir", "str", "git", "Ledger folder", "Folder name of the shared-ledger worktree (informational; set by Initialize Project).", nullable=True,
        why="Documents the project layout for people and tools.", effect="Does not move anything on disk."),
-    _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (claude, codex, gemini, or one you define) `research dispatch` starts when a role names none.",
+    _o("agents.default_profile", "str", "agents", "Default agent CLI", "Which agent profile (" + ", ".join(_providers.KNOWN) + ", gemini, or one you define) `research dispatch` starts when a role names none.",
        why="Lets you hand work to your usual agent without choosing each time.", effect="Only affects new dispatches. The CLI must be installed on the machine that runs it."),
     _o("orchestration.enabled", "bool", "agents", "Model routing", "Route work to cheaper or stronger models by level (fast, balanced, deep) instead of one model for everything.",
        why="Spends the expensive model only where it matters.", effect="Off: dispatch uses the default profile. Run `research setup agents --apply` to refresh generated agent files.",
        affects=[".claude/agents/"]),
-    _o("orchestration.active_strategy", "str", "agents", "Allocation strategy", "Which named strategy maps task levels to models (for example sonnet_first or opus_first). Empty uses the legacy tier routing.",
+    _o("orchestration.active_strategy", "str", "agents", "Allocation strategy", "Which named strategy maps task levels to models (for example balanced_first or deep_first). Empty uses the legacy tier routing.",
        why="Strategies make cost/quality trade-offs explicit and auditable.", effect="Changes which model each new dispatch uses. Running sessions keep the policy recorded at dispatch.",
        nullable=True, affects=[".claude/agents/"]),
     _o("orchestration.limits.haiku_attempts", "int", "agents", "Fast-model attempts", "How many times the fast model may retry a task before work escalates.", min_=1, max_=20,
@@ -188,7 +188,7 @@ OPTIONS: List[Option] = [
     _o("governance.approval.confirm_human_experiment_creation", "bool", "governance", "Confirm my own experiments", "Ask for the PIN when you create an experiment yourself. Off by default: creating one interactively needs no PIN.", why="Optional extra care.", effect="Applies to the CLI and the panel."),
     _o("agents.handoff.enabled", "bool", "agents", "Automatic provider fallback", "When a provider is unavailable or hits its limit, continue the same task with the next provider in the fallback order. Off: the task pauses for you (you can still press Continue with another agent).",
        why="Keeps long plans moving when one provider runs out of credit.", effect="Bounded by the attempt limits; never used when an attempt's state is unknown.", risk="policy"),
-    _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: claude, codex, agy. Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=["claude", "codex", "agy"]),
+    _o("agents.handoff.fallback_order", "list", "agents", "Fallback order", "Providers to try, in order: " + ", ".join(_providers.KNOWN) + ". Each must have a profile with that provider and be installed.", why="Explicit order, no surprises.", effect="Used only when automatic fallback is on.", choices=list(_providers.KNOWN)),
     _o("agents.handoff.on_provider_unavailable", "enum", "agents", "When a provider is unavailable", "try_next continues with the next provider; pause stops the task for you.", choices=["pause", "try_next"], why="Opt-in.", effect="Needs automatic fallback on."),
     _o("agents.handoff.on_unknown_execution_state", "enum", "agents", "When an attempt's state is unknown", "Always pause: a task is never relaunched while its previous process might still be running.", choices=["pause"], why="Prevents two agents editing one worktree.", effect="Fixed."),
     _o("supervisor.session_resume", "enum", "supervisor", "Continue the agent's own session", "auto continues the provider's native conversation for repairs when the installed CLI proves it can; never always starts fresh with a generated hand-off.",

@@ -19,13 +19,12 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 
-from . import gitinfo, providers
+from . import gitinfo, providers, strategy as _strategy
 from . import workspace as W
 from .util import ResearchError
 
 DEFAULT_LAYOUT = {"main_dir": "main", "ledger_dir": "ledger", "experiments_dir": "experiments"}
-PROVIDER_PROFILES = {"claude": "claude", "codex": "codex", "agy": "agy"}
-STRATEGIES = ("sonnet_first", "opus_first", "haiku_max", "sonnet_heavy")
+DEFAULT_STRATEGY = "balanced_first"
 
 
 def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
@@ -64,9 +63,10 @@ def environment(root: str) -> Dict[str, Any]:
     entries = sorted(e for e in os.listdir(root) if e not in (".vscode", ".DS_Store")) if os.path.isdir(root) else []   # editor folders do not make a folder non-empty
     profs = DEFAULT_CONFIG["agents"]["profiles"]
     provs = []
-    for name, key in PROVIDER_PROFILES.items():
+    for key in providers.KNOWN:
         r = providers.readiness(profs[key], key)
         r["models"] = providers.available_models(r["provider"], r["command"], profs)
+        r["blurb"] = providers.ADAPTERS[key].blurb
         provs.append(r)
     from . import configfile, packs as _packs
     mc, mpath = configfile.machine_config()   # a pack list in the machine file is this computer's default for every new project
@@ -81,10 +81,22 @@ def environment(root: str) -> Dict[str, Any]:
             or any(os.path.isfile(os.path.join(root, d, ".research", "config.yaml")) for d in ("ledger", "main")),
             "git": {"available": gitinfo.available(), "version": providers.version("git"),
                     "user_configured": bool(_git(root if os.path.isdir(root) else ".", "config", "user.name").stdout.strip())},
-            "providers": provs, "strategies": list(STRATEGIES), "ssh_hosts": ssh_hosts(),
+            "providers": provs, "strategies": list(_strategy.NAMES), "ssh_hosts": ssh_hosts(),
             "uv": {"path": shutil.which("uv"), "version": providers.version("uv")},
-            "defaults": {"provider": "claude", "strategy": "sonnet_first", "create_workspace": True, "local_execution": True,
+            "defaults": {"provider": providers.KNOWN[0], "strategy": DEFAULT_STRATEGY, "create_workspace": True, "local_execution": True,
                          "independent_review": True, "hpc": False}}
+
+
+def orchestration_config(provider: str, strategy: str) -> Dict[str, Any]:
+    """The working orchestration for a default provider (H.2): the strategy on, its three levels pointing at the provider's level
+    profiles, and every role resolved. Mixed-provider levels are a later edit of these keys; nothing here is provider-specific."""
+    cfg: Dict[str, Any] = {"orchestration.enabled": True, "orchestration.active_strategy": strategy}
+    for lv, prof in providers.levels_for(provider).items():
+        cfg[f"orchestration.strategies.{strategy}.levels.{lv}"] = prof
+    pf = providers.level_profile_name
+    cfg.update({"agents.roles.planner": pf(provider, "balanced"), "agents.roles.implementer": pf(provider, "balanced"),
+                "agents.roles.verifier": pf(provider, "balanced"), "agents.roles.analyst": pf(provider, "deep")})
+    return cfg
 
 
 def _layout(root: str, spec: Dict[str, Any]) -> Dict[str, str]:
@@ -129,16 +141,16 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             if a != b and (os.path.realpath(a) + os.sep).startswith(os.path.realpath(b) + os.sep):
                 problems.append(f"{a} is inside {b}; keep the three folders side by side.")
     ag = spec.get("agents") or {}
-    enabled = ag.get("enabled") or ["claude"]
+    enabled = ag.get("enabled") or [providers.KNOWN[0]]
     default = ag.get("default") or enabled[0]
-    unknown = [x for x in enabled + [default] if x not in PROVIDER_PROFILES]
+    unknown = [x for x in enabled + [default] if x not in providers.KNOWN]
     if unknown:
         problems.append(f"Unknown agent(s): {', '.join(unknown)}.")
     if default not in enabled:
         problems.append("The default agent must be one of the enabled agents.")
-    if ag.get("strategy") and ag["strategy"] not in STRATEGIES:
+    if ag.get("strategy") and ag["strategy"] not in _strategy.BUILTIN:
         problems.append(f"Unknown allocation strategy {ag['strategy']!r}.")
-    missing = [x for x in enabled if x in PROVIDER_PROFILES and not next(p for p in env["providers"] if p["name"] == x)["installed"]]
+    missing = [x for x in enabled if x in providers.KNOWN and not next(p for p in env["providers"] if p["name"] == x)["installed"]]
     if missing:
         notes.append(f"{', '.join(missing)} not installed on this machine: configured now, but cannot run tasks until installed.")
     hpc = spec.get("hpc") or {}
@@ -184,7 +196,7 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
                     f"Create the research ledger worktree at {rel(lay['ledger_path'])}/ on branch research/ledger",
                     f"Create {rel(lay['experiments_path'])}/ (empty; each experiment gets {rel(lay['experiments_path'])}/EXP-NNN/ when you create it)",
                     "Write AGENTS.md (the one set of project rules every agent reads) and CLAUDE.md that imports it, and commit those two files",
-                    f"Save layout, default agent ({default}), allocation ({ag.get('strategy') or 'sonnet_first'}) and review policy in the ledger config"]
+                    f"Save layout, default agent ({default}), allocation ({ag.get('strategy') or DEFAULT_STRATEGY}, levels from {default}'s level pack) and review policy in the ledger config"]
         for x in enabled:
             actions.append({"claude": "Register the Research MCP server for Claude Code in main/.mcp.json",
                             "agy": "Register the Research MCP server for Antigravity in main/.agents/mcp_config.json",
@@ -243,7 +255,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
     main, ledger, exps = lay["main_path"], lay["ledger_path"], lay["experiments_path"]
     name, goal = spec["name"], spec.get("goal") or ""
     ag = spec.get("agents") or {}
-    enabled = ag.get("enabled") or ["claude"]
+    enabled = ag.get("enabled") or [providers.KNOWN[0]]
     default = ag.get("default") or enabled[0]
     done: List[str] = []
     created: List[str] = []
@@ -280,9 +292,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
         try:
             cfg: Dict[str, Any] = {"layout.main_dir": lay["main_dir"], "layout.ledger_dir": lay["ledger_dir"],
                                    "layout.experiments_dir": lay["experiments_dir"],
-                                   "agents.default_profile": PROVIDER_PROFILES[default],
-                                   "orchestration.enabled": bool(ag.get("strategy", "sonnet_first")),
-                                   "orchestration.active_strategy": ag.get("strategy", "sonnet_first"),
+                                   "agents.default_profile": default,
                                    "verification.independent_reviewer": bool((spec.get("verification") or {}).get("independent_review", True))}
             if (spec.get("hpc") or {}).get("enabled"):
                 h = spec["hpc"]
@@ -319,6 +329,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
                             "guide.draft.max_sections": int(gs.get("max_sections", 3)), "guide.draft.max_figures": int(gs.get("max_figures", 1)),
                             "guide.auto_log": bool(gs.get("auto_log", True)), "guide.highlights": gs.get("highlights", "supported"),
                             "guide.publish.workflow": bool(gs.get("publish", True))})
+            cfg.update(orchestration_config(default, ag.get("strategy") or DEFAULT_STRATEGY))
             cfg.update(spec.get("config") or {})   # bootstrap-file settings (supervisor, governance, handoff), validated by bootstrap.to_spec
             p.save_config(cfg)
             p.config = p.load_config()
@@ -359,7 +370,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
             tracked += ["docs/scientist-guide", ".github"]
         for x in enabled:
             try:
-                mi = providers.mcp_install(PROVIDER_PROFILES[x], main)
+                mi = providers.mcp_install(x, main)
                 done.append(f"MCP registered for {x}: {mi['where']}")
                 if mi["scope"] == "project":
                     tracked.append(mi["where"])

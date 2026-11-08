@@ -627,7 +627,7 @@ def _provider_profiles(p: Project) -> Dict[str, str]:
             d = pv.detect(prof, name)
         except ResearchError:
             continue
-        if d["installed"] and d["provider"] in ("claude", "codex", "agy") and d["provider"] not in out and name == d["provider"]:
+        if d["installed"] and d["provider"] in pv.KNOWN and d["provider"] not in out and name == d["provider"]:
             out[d["provider"]] = name
     return out
 
@@ -637,7 +637,8 @@ def provider_status(p: Project, tid: Optional[str] = None) -> Dict[str, Any]:
     pv = _providers()
     profs = (p.config.get("agents") or {}).get("profiles") or {}
     rows = []
-    for kind, name in (("claude", "claude"), ("codex", "codex"), ("agy", "agy")):
+    for kind in pv.KNOWN:
+        name = kind
         prof = profs.get(name) or {"command": kind}
         d = pv.detect(prof, name)
         rows.append({"provider": kind, "profile": name, "installed": d["installed"], "headless": d["capabilities"]["headless"],
@@ -1234,10 +1235,6 @@ def void_attempts(p: Project, tid: str, reason: str, attempts: Optional[List[int
         P.update_task(p, tid, status="todo", blockers=None)
     p.event("task", tid, "supervisor_voided", f"{n} attempt(s) voided: {reason}")
     return {"task": tid, "voided": n}
-
-
-def retry_task(p: Project, tid: str, note: Optional[str] = None) -> Dict[str, Any]:
-    return resolve(p, tid, "retry", note)
 
 
 # ----------------------------------------------------------------------------------------------- agent reporting

@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 from . import gitinfo, mirrors, schema, yamlio, durability
 from .util import deep_merge as _deep_merge
+from . import providers as _providers
 from .strategy import BUILTIN as _BUILTIN_STRATEGIES
 from .schema import ENTITIES, format_id, parse_id
 from .util import IncompatibleProject, NotFound, NotInitialized, PolicyBlocked, ResearchError, detect_author, jdump, jload, now_iso, sha256_bytes
@@ -73,18 +74,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "agents": {
         "default_profile": "claude",
         # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
-        "handoff": {"enabled": False, "fallback_order": ["claude", "codex", "agy"], "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
+        "handoff": {"enabled": False, "fallback_order": list(_providers.KNOWN), "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
         "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
-        "profiles": {
-            "claude": {"command": "claude", "args": [], "model": None, "model_flag": "--model", "prompt_flag": None},
-            "codex": {"command": "codex", "args": [], "model": None, "model_flag": "-m", "prompt_flag": None},
-            "agy": {"provider": "agy", "command": "agy", "args": [], "model": None, "effort": None},
-            "gemini": {"command": "gemini", "args": [], "model": None, "model_flag": "-m", "prompt_flag": "-i"},
-            # Model profiles the built-in strategies point at (levels fast/balanced/deep). Swap a model here, not in routing.
-            "claude-fast": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-haiku-5-5", "model_flag": "--model", "prompt_flag": None},
-            "claude-balanced": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-sonnet-5-5", "model_flag": "--model", "prompt_flag": None},
-            "claude-deep": {"command": "claude", "args": [], "headless_args": ["-p", "--output-format", "json"], "usage_parser": "claude_json", "model": "claude-opus-5-5", "model_flag": "--model", "prompt_flag": None},
-        },
+        # Generated from the provider registry: one plain profile per provider, `<provider>-fast|balanced|deep` model profiles
+        # (the strategies' levels point at these; swap a model here, not in routing) and `gemini`. A new provider needs no edit here.
+        "profiles": _providers.default_profiles(),
     },
     "verification": {
         "require_review_for_supported": True,   # agents can't mark findings supported; a review must

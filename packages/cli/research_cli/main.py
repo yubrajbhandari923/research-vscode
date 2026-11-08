@@ -1677,24 +1677,18 @@ def cmd_strategy(a, p) -> int:
         return 0
     # use
     if not name:
-        raise ResearchError("use needs a strategy name: research strategy use sonnet_first")
-    v = S.validate(p, name)
-    prev = S.active_name(p)
-    if not v["ok"]:
+        raise ResearchError("use needs a strategy name: research strategy use balanced_first")
+    try:
+        r = S.use(p, name, a.dry_run)
+    except ResearchError as e:   # an invalid strategy is reported (exit 1), never activated
+        v = S.validate(p, name)
         if a.json:
             out_json({"applied": False, **v})
         else:
-            for e in v["errors"]:
-                print(red("✗ ") + e)
+            for err in v["errors"] or [str(e)]:
+                print(red("✗ ") + err)
         return 1
-    if not a.dry_run and prev != name:
-        p.save_config({"orchestration.active_strategy": name})
-        p.config.setdefault("orchestration", {})["active_strategy"] = name
-        p.event("project", None, "strategy_changed",
-                f"allocation strategy {prev or 'legacy'} → {name}@{S.fingerprint(p, name)} (applies to future dispatches only)")
-    r = {"applied": not a.dry_run and prev != name, "dry_run": a.dry_run, "previous": prev, "active": name if not a.dry_run else prev,
-         "would_activate": name, **{k: v[k] for k in ("warnings",)}}
-    _done(a, r, msg=f"{'would switch' if a.dry_run else 'strategy'}: {prev or 'legacy'} → {name}" + dim("  (running sessions keep their snapshot)"))
+    _done(a, r, msg=f"{'would switch' if a.dry_run else 'strategy'}: {r['previous'] or 'legacy'} → {name}" + dim("  (running sessions keep their snapshot)"))
     return 0
 
 
@@ -2860,8 +2854,7 @@ def cmd_provider(a, p) -> int:
     from research import providers as PR, workspace as W
     profs = (p.config.get("agents") or {}).get("profiles") or {}
     if a.action == "list":
-        rows = [{**PR.readiness(prof, name, p.root), "models": PR.available_models(PR.provider_of(prof, name), prof.get("command") or name, profs)}
-                for name, prof in profs.items() if name in ("claude", "codex", "agy") or prof.get("provider")]
+        rows = PR.table(p)
         default = (p.config.get("agents") or {}).get("default_profile")
         if a.json:
             out_json({"default": default, "providers": rows})
@@ -3245,7 +3238,7 @@ def build_parser() -> argparse.ArgumentParser:
     x = add(sub, "project-init", cmd_project_init, "initialize an empty folder: main/ + ledger/ + experiments/ + workspace (preview unless --apply)")
     x.add_argument("folder", nargs="?")
     x.add_argument("--name"); x.add_argument("--goal")
-    x.add_argument("--agents", default="claude", help="comma list from claude,codex,agy; first is the default")
+    x.add_argument("--agents", default="claude", help="comma list from " + ",".join(__import__("research.providers", fromlist=["x"]).KNOWN) + "; first is the default")
     x.add_argument("--spec", help="JSON file with the full wizard spec")
     x.add_argument("--apply", action="store_true")
     add(sub, "agents", cmd_agents, "agent profiles and roles (config.yaml → agents)")
@@ -3420,7 +3413,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--dry-run", action="store_true")
     x.add_argument("--approve", nargs="+", choices=["ponytail"], help="approve third-party skill imports")
     x.add_argument("--probe", action="store_true", help="also make one tiny live call per model")
-    x.add_argument("--strategy", help="also select this allocation strategy for the project (e.g. sonnet_first)")
+    x.add_argument("--strategy", help="also select this allocation strategy for the project (e.g. balanced_first)")
 
     x = add(sub, "orchestrate", cmd_orchestrate,
             "route | dispatch | freeze | attempt | correct-test | delegate | status | contract | verify | pin")

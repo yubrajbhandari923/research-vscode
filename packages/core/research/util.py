@@ -169,6 +169,11 @@ def human_size(n: Optional[int]) -> str:
 
 # --------------------------------------------------------------------------- authorship
 
+# Environment variables that mean "an agent is running this process". The one list: approval.py refuses a PIN under any of them, and
+# the extension strips AGENT_ENV_STRIP from the core it spawns (it reads the list from `ping`), so a UI click is always the human's.
+AGENT_ENV_VARS = ("RESEARCH_AGENT", "RESEARCH_EXECUTION", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED")
+AGENT_ENV_STRIP = AGENT_ENV_VARS + ("RESEARCH_AGENT_ROLE", "RESEARCH_AGENT_MODEL", "RESEARCH_AUTHOR_TYPE")
+
 def detect_author(agent: Optional[str] = None, model: Optional[str] = None,
                   author_type: Optional[str] = None) -> Dict[str, Optional[str]]:
     """Resolve who is acting.

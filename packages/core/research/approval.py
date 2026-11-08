@@ -18,10 +18,9 @@ import sys
 import time
 from typing import Any, Dict, Optional
 
-from .util import PolicyBlocked, ResearchError
+from .util import AGENT_ENV_VARS as _AGENT_ENV, PolicyBlocked, ResearchError
 
 MAX_FAILS, LOCK_SECONDS = 5, 60
-_AGENT_ENV = ("RESEARCH_AGENT", "RESEARCH_EXECUTION", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED")
 
 
 def _path() -> str:

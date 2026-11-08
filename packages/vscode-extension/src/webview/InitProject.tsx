@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { State, useAsync } from './common';
 import type { Host } from './host';
 
-interface Prov { name: string; provider: string; installed: boolean; version: string | null; capabilities: any; models: { source: string; models: { id: string; label: string }[] }; problem?: string }
+interface Prov { name: string; label: string; blurb: string; provider: string; installed: boolean; version: string | null; capabilities: any; models: { source: string; models: { id: string; label: string }[] }; problem?: string }
 interface Env {
   uv?: { path?: string | null; version?: string | null };
   root: string; folder_name: string; entries: string[]; empty: boolean; existing_project: boolean;
@@ -13,12 +13,6 @@ interface Env {
 
 const STEPS = ['Learn', 'Project', 'Folders', 'Agents', 'Execution', 'Skills', 'Guide', 'Review'];
 const REVIEW = STEPS.length - 1;
-const BLURB: Record<string, string> = {
-  claude: 'Anthropic’s Claude Code. Default. Interactive and headless, per-task model choice, reports token usage.',
-  codex: 'OpenAI Codex CLI. Interactive and headless (`codex exec`), model and reasoning effort, runs in a sandbox.',
-  agy: 'Google Antigravity CLI (`agy`). Interactive and headless, model and effort, JSON output. Not the same tool as Gemini CLI.',
-};
-const LABEL: Record<string, string> = { claude: 'Claude Code', codex: 'OpenAI Codex', agy: 'Google Antigravity' };
 
 /** A short "what is this and why" box. Every step has one so the wizard teaches as it asks. */
 const Learn = ({ title, children }: { title: string; children: any }) => (
@@ -78,9 +72,9 @@ function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) 
   const [lay, setLay] = useState({ main_dir: 'main', ledger_dir: 'ledger', experiments_dir: 'experiments' });
   const [wsFile, setWsFile] = useState(true);
   const [remote, setRemote] = useState('');
-  const [enabled, setEnabled] = useState<string[]>(['claude']);
-  const [dflt, setDflt] = useState('claude');
-  const [strategy, setStrategy] = useState('sonnet_first');
+  const [enabled, setEnabled] = useState<string[]>(env.providers.slice(0, 1).map((x) => x.name));
+  const [dflt, setDflt] = useState(env.providers[0]?.name || '');
+  const [strategy, setStrategy] = useState('balanced_first');
   const [review, setReview] = useState(true);
   const [hpc, setHpc] = useState(false);
   const [h, setH] = useState({ ssh_host: '', workspace_root: '', shared_data: '', scratch: '', partition: '', setup: '', python: '', required_packages: '' });
@@ -98,7 +92,7 @@ function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) 
 
   const spec = () => ({
     name, goal, layout: lay, create_workspace: wsFile, git: remote ? { remote_url: remote } : {},
-    agents: { enabled, default: dflt, strategy: dflt === 'claude' || enabled.includes('claude') ? strategy : undefined },
+    agents: { enabled, default: dflt, strategy },
     verification: { independent_review: review }, hpc: hpc ? { enabled: true, ...h } : undefined,
     python: py.mode === 'none' ? undefined : py, guide, tools: { packs, link_skills: true, starter_hooks: starter },
   });
@@ -191,14 +185,14 @@ function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) 
           </Learn>
           {env.providers.map((p) => (
             <div key={p.name} className="card" style={{ margin: '8px 0', padding: 10 }}>
-              <label className="check"><input type="checkbox" checked={enabled.includes(p.name)} onChange={() => toggle(p.name)} aria-label={`Enable ${LABEL[p.name]}`} />
-                <b> {LABEL[p.name]}</b> {p.installed ? <span className="badge k-ok">installed {p.version || ''}</span> : <span className="badge k-warn">not installed: configurable, cannot run yet</span>}</label>
-              <p className="muted small">{BLURB[p.name]}</p>
+              <label className="check"><input type="checkbox" checked={enabled.includes(p.name)} onChange={() => toggle(p.name)} aria-label={`Enable ${p.label}`} />
+                <b> {p.label}</b> {p.installed ? <span className="badge k-ok">installed {p.version || ''}</span> : <span className="badge k-warn">not installed: configurable, cannot run yet</span>}</label>
+              <p className="muted small">{p.blurb}</p>
               {enabled.includes(p.name) && <label className="check"><input type="radio" name="dflt" checked={dflt === p.name} onChange={() => setDflt(p.name)} /> Use as the default agent</label>}
             </div>))}
-          <label htmlFor="ip-strat">Model allocation (Claude)</label>
-          <select id="ip-strat" value={strategy} onChange={(e) => setStrategy(e.target.value)}>{env.strategies.map((s) => <option key={s} value={s}>{s}{s === 'sonnet_first' ? ' (recommended)' : ''}</option>)}</select>
-          <p className="muted small">“sonnet_first” plans and implements with Sonnet, uses a faster model for simple steps and escalates to Opus for hard scientific synthesis. Codex and Antigravity use the model you pick per dispatch or in their profile.</p>
+          <label htmlFor="ip-strat">Model allocation</label>
+          <select id="ip-strat" value={strategy} onChange={(e) => setStrategy(e.target.value)}>{env.strategies.map((s) => <option key={s} value={s}>{s}{s === 'balanced_first' ? ' (recommended)' : ''}</option>)}</select>
+          <p className="muted small">“balanced_first” plans and implements with the default agent’s balanced level, uses its fast level for simple steps and escalates to its deep level for hard scientific synthesis. Each agent’s fast, balanced and deep levels are listed in its profiles (<code>agents.profiles.&lt;agent&gt;-fast</code>…) and can be changed there.</p>
           <label className="check"><input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} /> A finding needs an independent review before it counts as “supported” (recommended)</label>
         </section>)}
 
