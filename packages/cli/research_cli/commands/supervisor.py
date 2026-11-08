@@ -338,69 +338,6 @@ def cmd_intervention(a, p) -> int:
 
 cmd_intervention = mut(cmd_intervention)
 
-
-def cmd_telegram(a, p) -> int:
-    from research import approval as AP, notify
-    act = a.action
-    if act == "status":
-        return _emit(a, notify.status(p), lambda d: [("token saved" if d["token_set"] else "no token") + ", " + ("chat linked" if d["chat_id_set"] else "no chat linked")
-                                                      + f", {'enabled' if d['enabled'] else 'disabled'} for this project; stored at {d['stored_at']}"])
-    if AP.agent_environment() or (p.author or {}).get("author_type") == "agent":
-        raise PolicyBlocked("Only the researcher can configure Telegram")
-    if act == "setup":
-        token = a.token or AP.read_pin("Bot token (from @BotFather; not shown): ")
-        if not token:
-            raise ResearchError("No token entered (a terminal is needed, or pass --token)")
-        chat = a.chat_id
-        if chat is None:
-            print("Now open your bot in Telegram and send it any message (waiting up to 60 s)…")
-            chat = notify.discover_chat(token.strip(), 60)
-            if chat is None:
-                raise ResearchError("No message reached the bot; send one and run setup again")
-        notify.set_credentials(token, chat)
-        p.save_config({"notifications.telegram.enabled": True, "notifications.auto_debug": True})
-        notify.send("Research OS is connected. Send /help for commands.")
-        p.config = p.load_config()               # pick up the setting just written
-        sup = notify.ensure_running(p)
-        return _emit(a, {**notify.status(p), "supervisor": sup}, lambda d: [green("✓ ") + "Telegram connected; token and chat id are stored only on this machine",
-                     green("✓ ") + "supervisor " + ("started: it answers your chat and alerts you on halts" if sup["action"] == "start" else "is running: it answers your chat and alerts you on halts")
-    if a.action == "chat-status":
-        st = AP.chat_status()
-        return _emit(a, st, [("authenticator enrolled" if st["chat_enrolled"] else "no authenticator enrolled (research approval chat-enroll)")
-                                                                                + ("; chat approval is DISABLED until you log in with `research approval verify`" if st["chat_disabled"] else "")])
-                     if not sup.get("error") else yellow("! start it with `research supervisor start`: " + sup["error"])])
-    if act == "test":
-    if a.action in ("chat-enroll", "chat-revoke"):
-        if not AP.interactive():
-            raise PolicyBlocked("This needs an interactive terminal", hint="Run it in your own terminal.")
-        pin = AP.read_pin()
-        if a.action == "chat-revoke":
-            AP.chat_revoke(pin)
-            return _emit(a, {"chat_enrolled": False}, [green("✓ ") + "authenticator removed; chat approval is off"])
-
-        def show(uri, secret):
-            print(f"Add this to your authenticator app (once):\n  {uri}\n  secret: {secret}", file=sys.stderr)
-            if a.qr:
-                try:
-                    import qrcode
-                    q = qrcode.QRCode()
-                    q.add_data(uri)
-                    q.print_ascii(out=sys.stderr)
-                except ImportError:
-                    print("(--qr needs the `qrcode` package; use the URI or secret above)", file=sys.stderr)
-        AP.chat_enroll(pin, lambda: AP.read_pin("Current 6-digit code: "), show)
-        return _emit(a, {"chat_enrolled": True}, [green("✓ ") + "authenticator enrolled. Also set governance.approval.chat.enabled: true to use it."])
-        return _emit(a, {"sent": notify.send("Research OS test message. Send /help for commands.")}, lambda d: [green("✓ ") + "sent" if d["sent"] else yellow("not configured")])
-    if act == "remove":
-        notify.clear_credentials()
-        p.save_config({"notifications.telegram.enabled": False})
-        return _emit(a, {"removed": True}, lambda d: [green("✓ ") + "credentials deleted and Telegram disabled"])
-    if act == "poll":
-        return _emit(a, {"handled": notify.poll(p)}, lambda d: [f"{d['handled']} message(s) handled"])
-    raise ResearchError(f"unknown telegram action {act}")
-
-
-cmd_telegram = mut(cmd_telegram)
 cmd_supervisor = mut(cmd_supervisor)
 
 
@@ -427,8 +364,32 @@ def cmd_approval(a, p) -> int:
     from research import approval as AP
     if a.action == "status":
         return _emit(a, AP.status(), lambda d: [("PIN is set" if d["set"] else "No PIN set (protected actions are not PIN-gated yet): research approval set-pin")])
+    if a.action == "chat-status":
+        st = AP.chat_status()
+        return _emit(a, st, [("authenticator enrolled" if st["chat_enrolled"] else "no authenticator enrolled (research approval chat-enroll)")
+                                                                                + ("; chat approval is DISABLED until you log in with `research approval verify`" if st["chat_disabled"] else "")])
     if p is not None and (p.author or {}).get("author_type") == "agent" or AP.agent_environment():
         raise PolicyBlocked("Only the researcher can set or check the PIN", hint="Submit a proposal; the researcher approves it.")
+    if a.action in ("chat-enroll", "chat-revoke"):
+        if not AP.interactive():
+            raise PolicyBlocked("This needs an interactive terminal", hint="Run it in your own terminal.")
+        pin = AP.read_pin()
+        if a.action == "chat-revoke":
+            AP.chat_revoke(pin)
+            return _emit(a, {"chat_enrolled": False}, [green("✓ ") + "authenticator removed; chat approval is off"])
+
+        def show(uri, secret):
+            print(f"Add this to your authenticator app (once):\n  {uri}\n  secret: {secret}", file=sys.stderr)
+            if a.qr:
+                try:
+                    import qrcode
+                    q = qrcode.QRCode()
+                    q.add_data(uri)
+                    q.print_ascii(out=sys.stderr)
+                except ImportError:
+                    print("(--qr needs the `qrcode` package; use the URI or secret above)", file=sys.stderr)
+        AP.chat_enroll(pin, lambda: AP.read_pin("Current 6-digit code: "), show)
+        return _emit(a, {"chat_enrolled": True}, [green("✓ ") + "authenticator enrolled. Also set governance.approval.chat.enabled: true to use it."])
     old = AP.read_pin("Current PIN: ") if AP.is_set() and a.action == "set-pin" else None
     if a.action == "verify":
         AP.verify(AP.read_pin())
@@ -574,10 +535,6 @@ def attach(sub, add, group) -> None:
     x.add_argument("action", choices=["list", "show", "approve", "reject", "cancel", "plan"])
     x.add_argument("id", nargs="?", help="INT-001 (list: optionally a task id to filter)")
     x.add_argument("--note", help="approve: why · reject: reason")
-    x = add(sub, "telegram", cmd_telegram, "Telegram alerts and chat commands (opt-in): setup | status | test | remove | poll")
-    x.add_argument("action", choices=["setup", "status", "test", "remove", "poll"])
-    x.add_argument("--token", help="setup: the bot token (prefer the hidden prompt; arguments are visible in process lists)")
-    x.add_argument("--chat-id", dest="chat_id", help="setup: the chat id (default: the first chat that messages the bot)")
     x = add(sub, "env", cmd_env, "the project's Python environment: check | create (uv) | install")
     x.add_argument("action", choices=["check", "create", "install"])
     x.add_argument("--path", help="create: where to create the venv (default: .venv next to main/)")

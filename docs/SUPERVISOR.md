@@ -354,7 +354,7 @@ keeps its `originals`, and a Decision records before/after, your instruction, th
 
 `research intervention list|show|approve|reject|cancel|plan`.
 
-## 18. Halts, the debug agent and Telegram
+## 18. Halts, the debug agent and chat
 
 **Status tells the truth.** A plan whose run state is `running` but where nothing is running, ready, repairing or promoting is reported **HALTED (needs you)**
 (`WAITING FOR YOUR APPROVAL` if only start approvals are pending), in `plan status`, `supervisor status --json` (`health`) and Control Center.
@@ -363,13 +363,10 @@ keeps its `originals`, and a Decision records before/after, your instruction, th
 and logs and returns a few sentences plus up to four options. `research supervisor debug --choose N` (or *Use this option*) turns one into an intervention (§17); or write your own.
 `notifications.auto_debug: true` runs it automatically after `notifications.halt_grace_seconds` (default 120) of the same halt. Off by default.
 
-**Telegram** (opt-in): `research telegram setup` (hidden token prompt; then message your bot once) or Control Center → Plans → *Telegram alerts*; enable with
-`notifications.telegram.enabled`. The token and chat id live in `~/.config/research-os/telegram.json` (0600), never in the project, git, prompts or events; only that chat is obeyed.
-You get one message per halt (what is blocked, the diagnosis and options) and one when the plan moves again. Commands: `/status /blocked /task T-12 /logs T-12 /debug /options /choose N
-/say [T-12] <text> /interventions /pause /resume /help`; plain text goes to the only blocked task. Chat can request and apply **unprotected** changes; protected ones are
-proposed and wait for your PIN in VS Code or the terminal.
+**Chat** (opt-in, Telegram): alerts, buttons and commands from your phone, run by one gateway process per machine; setup, pairing, roles, the threat model and the command list are in
+[CHAT.md](CHAT.md). Supervisors only write alerts to `.research/supervisor/outbox.jsonl`; the gateway delivers them. The old `research telegram` command still works as an alias of `research chat`.
 
-**Starting after a reboot or an upgrade.** The supervisor (and with it Telegram alerts) is a separate process: it keeps running when VS Code closes. Opening a project in VS Code
+**Starting after a reboot or an upgrade.** The supervisor (and with it chat alerts) is a separate process: it keeps running when VS Code closes. Opening a project in VS Code
 (or any RPC client) records it in `~/.config/research-os/projects.json` and, when Telegram is enabled or a plan is running, starts the supervisor if it is down, or replaces one running older code
 (agents and HPC jobs are untouched). `research self-update` does the same restart for every known project after installing. After a reboot with VS Code closed, run `research supervisor start`.
 `.research/bin/research` is a short launcher that execs the Python recorded when it was written, so agents always run the installed version; `research bin install` refreshes it and removes any old vendored `lib/` copy.
@@ -394,6 +391,9 @@ choose it there with the PIN. Everything else runs the moment it is chosen.
 
 * **Agents may ask, never answer.** The MCP tool `decision_request` creates a request; `decision_answer` is human only (and refuses agent shells).
 * **Answer once, anywhere.** The first answer closes the request on every surface; a second one gets the first answer back (`already`). A refused PIN reopens it.
+* **Expiry** (`expires_hours`, default 72) closes a request without choosing anything: it never picks a default and never chooses a protected option.
+* **Chat approval of protected options** uses the authenticator flow in GOVERNANCE.md, not this command.
+* `/options` and `/choose N` are aliases: the debug agent's options are stored as a request (`decisions.from_diagnosis`) and `/choose N` answers option N of the latest open one.
 
 ## 20. The investigator (on demand)
 
@@ -418,6 +418,3 @@ structured outcome that Research OS validates against the closed action vocabula
 
 When the budget or run limit is used up (or the agent cannot start), nothing is called and the reply is a plain-text note telling you how to instruct the supervisor yourself;
 a decision request you answered in text stays open.
-* **Expiry** (`expires_hours`, default 72) closes a request without choosing anything: it never picks a default and never chooses a protected option.
-* **Chat approval of protected options** uses the authenticator flow in GOVERNANCE.md, not this command.
-* `/options` and `/choose N` are aliases: the debug agent's options are stored as a request (`decisions.from_diagnosis`) and `/choose N` answers option N of the latest open one.

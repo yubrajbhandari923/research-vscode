@@ -177,6 +177,26 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
   } finally { await unmount(); core.stop(); }
 });
 
+test('chat box: gateway and pairing state, Connect needs a token, a wrong pairing code is explained', async () => {
+  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-xdg-chat-'));
+  const core = startCore(proj, xdg); const host = hostFor(core);
+  const { el, unmount } = await lib.mount(host, { page: 'plans' });
+  try {
+    await ready(el);
+    await waitFor(() => /Chat \(Telegram\)/.test(el.textContent), 8000);
+    assert.match(el.textContent, /no token/); assert.match(el.textContent, /gateway stopped/); assert.match(el.textContent, /Nobody yet/);
+    const connect = byText(el, 'button', 'Connect');
+    assert.ok(connect.disabled, 'Connect waits for a token');
+    await type(q(el, '#tg-token'), '123456:ABCDEFGHIJKLMNOPQRSTUVWX'); assert.equal(connect.disabled, false);
+    const approve = byText(el, 'button', 'Approve');
+    assert.ok(approve.disabled, 'a pairing code has 8 characters');
+    await type(q(el, '#chat-code'), 'abcd2345'); assert.equal(approve.disabled, false); assert.equal(q(el, '#chat-code').value, 'ABCD2345');
+    await click(approve);
+    await waitFor(() => /wrong or expired/.test(el.textContent), 8000);
+    assert.match(el.textContent, /wrong or expired/);
+  } finally { await unmount(); core.stop(); }
+});
+
 test('empty and error states are explained, not blank', async () => {
   const bad = { call: async () => { throw new Error('core unavailable'); }, openEntity() {}, openDoc() {}, getState: () => ({}), setState() {} };
   const { el, unmount } = await lib.mount(bad);

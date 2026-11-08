@@ -54,7 +54,7 @@ effect (for example, the sandbox profile table on Work) but does not yet edit th
 `auto_promotion.*`, `supervisor_assistant.*`, `intervention.*` and `notifications.*` are sparse: a project's `config.yaml`
 holds only what you changed, merged over the defaults at load, so upgrading needs no edits. They appear under Settings and in
 `research config`. The Telegram token and chat id are machine-level (`~/.config/research-os/telegram.json`, mode 0600), never in the
-project. See [SUPERVISOR.md](SUPERVISOR.md) and the [reference](spec/10-configuration.md#reference-generated).
+project. See [SUPERVISOR.md](SUPERVISOR.md), [CHAT.md](CHAT.md) and the [reference](spec/10-configuration.md#reference-generated).
 
 ## Layout, providers and strategies
 

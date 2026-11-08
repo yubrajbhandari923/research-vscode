@@ -47,7 +47,7 @@ Nothing is pushed for you; add a remote in the wizard (or later) and push from `
 
 10. **Plans, the supervisor and approvals** (CLI-first): `research plan yaml validate FILE`, then `research plan run PLAN`; `research supervisor status` shows
     progress and says HALTED when a plan cannot continue. Steer with `research supervisor instruct T-12 "…"`. Protected actions (approving proposals, promotion,
-    scientific changes) ask for your approval PIN on the terminal; the first one offers to create it. Optional: `research telegram setup` for alerts and chat commands.
+    scientific changes) ask for your approval PIN on the terminal; the first one offers to create it. Optional: `research chat setup` for alerts and chat commands (see [CHAT.md](CHAT.md)).
     `./research` is linked in `main/` so you can run it from there. Details: [SUPERVISOR.md](SUPERVISOR.md), [GOVERNANCE.md](GOVERNANCE.md).
 
 Providers and configuration: `docs/PROVIDERS.md`, `docs/CONFIGURATION.md`.

@@ -58,7 +58,7 @@ export function PlansPage({ host }: { host: Host }) {
         </div>
         {sel.map((k) => <PlanDetail key={k} host={host} plan={k} act={act} />)}
       </>}</State>
-      <TelegramBox host={host} />
+      <ChatBox host={host} />
     </div>
   );
 }
@@ -281,25 +281,38 @@ function HaltPanel({ host, plan, health, act, onChanged, onInstruct }: { host: H
     </Banner>);
 }
 
-export function TelegramBox({ host }: { host: Host }) {
-  const a = useAsync<any>(() => host.call('telegram_status'), []);
+export function ChatBox({ host }: { host: Host }) {
+  const a = useAsync<any>(() => host.call('chat_status'), []);
   const [token, setToken] = useState('');
+  const [code, setCode] = useState('');
+  const [role, setRole] = useState('viewer');
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const run = async (fn: () => Promise<any>, ok: string) => { setBusy(true); try { await fn(); setMsg({ ok: true, text: ok }); setToken(''); a.reload(); } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); } };
+  const run = async (fn: () => Promise<any>, ok: string) => { setBusy(true); try { await fn(); setMsg({ ok: true, text: ok }); setToken(''); setCode(''); a.reload(); } catch (e: any) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); } };
   return (
-    <Section title="Telegram alerts" hint="Get a message when a plan halts, with a short diagnosis and options, and check on the supervisor from your phone. The bot token is stored on this machine only (never in the project or git). Protected changes still need your PIN here or in the terminal.">
-      <State a={a}>{(d) => <>
-        <p>{d.token_set ? <Badge kind="ok">token saved</Badge> : <Badge kind="warn">no token</Badge>} {d.chat_id_set ? <Badge kind="ok">chat linked</Badge> : <Badge kind="warn">no chat</Badge>} {d.enabled ? <Badge kind="ok">enabled</Badge> : <Badge>disabled</Badge>}</p>
+    <Section title="Chat (Telegram)" hint="Get a message when a plan halts, with a short diagnosis and buttons, and steer from your phone. One gateway process per machine talks to Telegram; the bot token stays on this machine (never in the project or git). Protected changes still need your PIN here or in the terminal. Discord arrives later.">
+      <State a={a}>{(d) => { const t = d.platforms.telegram; const g = d.gateway; return <>
+        <p>{t.token_set ? <Badge kind="ok">token saved</Badge> : <Badge kind="warn">no token</Badge>} {t.chat_id_set ? <Badge kind="ok">chat linked</Badge> : <Badge kind="warn">no chat</Badge>} {t.enabled ? <Badge kind="ok">enabled</Badge> : <Badge>disabled</Badge>} {g.running ? <Badge kind="ok">gateway running</Badge> : <Badge>gateway stopped</Badge>}{g.stale ? <Badge kind="warn">restart needed</Badge> : null}</p>
         <label htmlFor="tg-token">Bot token (from @BotFather)</label>
         <input id="tg-token" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="123456:ABC…" />
-        <p className="muted small">Open your bot in Telegram and send it any message first, then press Connect: the first chat that messages it becomes the only chat Research OS obeys.</p>
+        <p className="muted small">Open your bot in Telegram and send it any message first, then press Connect: that private chat becomes the first paired user (operator) and notifications are switched on for this project.</p>
         <div className="row">
-          <button type="button" className="primary" disabled={busy || !token.trim()} onClick={() => run(() => host.call('telegram_set', { token, discover: true }), 'Connected. Turn on "Telegram notifications" in Settings → Supervisor to start alerts.')}>{busy ? 'Waiting for your message…' : 'Connect'}</button>
-          <button type="button" disabled={busy || !d.chat_id_set} onClick={() => run(() => host.call('telegram_test'), 'Test message sent')}>Send test message</button>
-          <button type="button" disabled={busy || !d.token_set} onClick={() => run(() => host.call('telegram_clear'), 'Credentials deleted')}>Remove</button>
+          <button type="button" className="primary" disabled={busy || !token.trim()} onClick={() => run(() => host.call('chat_setup', { platform: 'telegram', token, discover: true }), 'Connected; alerts are on for this project.')}>{busy ? 'Waiting for your message…' : 'Connect'}</button>
+          <button type="button" disabled={busy || !t.chat_id_set} onClick={() => run(() => host.call('chat_test'), 'Test message sent')}>Send test message</button>
+          <button type="button" disabled={busy || !t.token_set} onClick={() => run(() => host.call('chat_remove'), 'Credentials deleted')}>Remove</button>
+          <button type="button" disabled={busy} onClick={() => run(() => host.call('chat_gateway', { action: g.running ? 'restart' : 'start' }), g.running ? 'Gateway restarted' : 'Gateway started')}>{g.running ? 'Restart gateway' : 'Start gateway'}</button>
+        </div>
+        <h4>Paired people</h4>
+        {t.users.length === 0 ? <p className="muted small">Nobody yet. Someone who messages the bot gets an 8-character code; enter it here (or run <code>research chat pair CODE</code>) to allow them.</p>
+          : <ul>{t.users.map((u: any) => <li key={u.user_id}><b>{u.label || u.user_id}</b> <Badge>{u.role}</Badge> <span className="muted small">id {u.user_id}</span></li>)}</ul>}
+        <div className="row">
+          <label htmlFor="chat-code">Pairing code</label>
+          <input id="chat-code" autoComplete="off" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="ABCD2345" />
+          <label htmlFor="chat-role">Role</label>
+          <select id="chat-role" value={role} onChange={(e) => setRole(e.target.value)}><option value="viewer">viewer (read)</option><option value="operator">operator (steer)</option></select>
+          <button type="button" disabled={busy || code.trim().length < 8} onClick={() => run(() => host.call('chat_pair', { code, role }), 'Paired')}>Approve</button>
         </div>
         {msg && <Banner kind={msg.ok ? 'ok' : 'bad'}>{msg.text}</Banner>}
-      </>}</State>
+      </>; }}</State>
     </Section>);
 }

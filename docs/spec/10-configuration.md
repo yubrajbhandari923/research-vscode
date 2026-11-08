@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-94 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+105 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -138,6 +138,9 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor.on_failure` | enum | `'diagnose_and_repair'` | human only | diagnose_and_repair dispatches a bounded repair attempt; pause stops the plan for you to look; stop ends the run. |
 | `supervisor.enforce_completion` | bool | `True` | human only | While a plan runs, only the supervisor's verification (or a human `supervisor accept`) can mark its tasks done, by any route: CLI, MCP, UI or a hand-edited file. |
 | `supervisor.auto_apply_operational` | bool | `True` | human only | Agent proposals that only add new tasks (diagnostics, follow-ups) are applied without asking, up to the limit below. |
+| `supervisor.investigator.auto` | bool | `False` | human only | When a task hits a failure the supervisor cannot classify, run the investigator agent once (read-mostly, never approves). Off: it only runs when you ask (`research investigate`, or a free-text answer to a decision request). |
+| `supervisor.investigator.max_per_plan` | int | `3` |  | Most investigator runs for one plan; after that the supervisor just asks you in plain text. |
+| `supervisor.investigator.budget_usd` | float | `2.0` |  | Total provider-reported cost the investigator may use for this project; runs with no reported cost count toward the per-plan limit only. |
 | `supervisor.max_auto_tasks` | int | `5` | human only | Most tasks agents may add to a plan through auto-applied proposals. |
 | `supervisor.require_approval_for_scientific_changes` | bool | `True` | human only | Proposals that change hypotheses, methods, checks, acceptance, parameters or existing task definitions always wait for you. |
 | `supervisor.session_resume` | enum | `'auto'` |  | auto continues the provider's native conversation for repairs when the installed CLI proves it can; never always starts fresh with a generated hand-off. |
@@ -149,7 +152,13 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor_assistant.profile` | str | `null` | human only | The agent profile used for the read-only planning agent (interventions) and the debug agent (halts). Empty uses `claude`. |
 | `supervisor_assistant.model` | str | `null` | human only | Model for the planning and debug agents. Empty uses the strongest Claude (claude-opus-5-5) when the profile is Claude, otherwise the profile's own model. |
 | `intervention.require_approval` | bool | `False` |  | Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN. |
-| `notifications.telegram.enabled` | bool | `False` |  | Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Telegram, or `research telegram setup`). |
+| `notifications.telegram.enabled` | bool | `False` |  | Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`). |
+| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
+| `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
+| `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
+| `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |
+| `notifications.digest.at` | str | `null` |  | Local time (HH:MM) for a daily summary of what changed. Empty turns the digest off. |
+| `notifications.digest.silent_if_unchanged` | bool | `True` |  | Skip the digest when nothing happened since the last one. |
 | `notifications.halt_grace_seconds` | int | `120` |  | How long a plan must stay halted before it is reported and diagnosed. |
 | `notifications.auto_debug` | bool | `False` |  | Run the debug agent when a plan halts and send its summary and options (Telegram, if enabled, and Control Center). Off (the default) sends only the halt notice; you can still ask for a diagnosis any time. |
 
@@ -165,6 +174,8 @@ dependency. A test checks that each option exists in the defaults with the right
 | `governance.approval.require_pin` | bool | `True` | human only | Protected actions (approving a proposal, changing policy, promoting to main) ask for your PIN once one is set. |
 | `governance.approval.require_rationale` | bool | `True` | human only | Approving a proposal needs a written reason, recorded in the audit trail. |
 | `governance.approval.record_rejections` | bool | `True` |  | Rejected and revision-requested proposals are written to the audit trail. |
+| `governance.approval.chat.enabled` | bool | `False` | human only | Lets an approver on a paired chat account approve some PIN-protected proposals by sending a 6-digit authenticator (TOTP) code. Also needs `research approval chat-enroll` on this machine. Frozen tests, scientific plan or hypothesis edits, governance/approval settings, the PIN/authenticator and the chat allow-list always stay computer-only. |
+| `governance.approval.chat_allow` | list | `[]` | human only | Narrows what chat may approve: experiment_proposal, plan_add_tasks, budget_increase, retry, role_change, promotion, resume, decision_option. Empty means all of these (never the computer-only ones). |
 | `governance.approval.confirm_human_experiment_creation` | bool | `False` |  | Ask for the PIN when you create an experiment yourself. Off by default: creating one interactively needs no PIN. |
 
 #### Execution & sandbox
