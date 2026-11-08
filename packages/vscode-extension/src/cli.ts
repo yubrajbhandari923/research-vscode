@@ -50,9 +50,12 @@ export function checkCli(ctx: vscode.ExtensionContext, out: vscode.OutputChannel
 
 export function showVersionInfo(ctx: vscode.ExtensionContext) {
   const s = cli.state;
+  const fix = { missing: 'The research CLI was not found. Install it from the GitHub release (pip install the wheel), or set "research.cliPath" if it lives elsewhere, then reload the window.',
+    older: 'The CLI is too old for this extension. Run `research self-update`, then reload the window.',
+    newer: 'This extension is older than your CLI. Install a newer VSIX from the GitHub releases page, then reload the window.', ok: 'Everything matches.' }[s?.status || 'missing'];
   vscode.window.showInformationMessage(
     `Research Panel ${ctx.extension.packageJSON.version} requires core ${ctx.extension.packageJSON.researchCore}.x. ` +
-    `Found: ${s?.found ? 'core ' + s.found : 'none'} (${s?.path || 'research'}).`, { modal: true });
+    `Found: ${s?.found ? 'core ' + s.found : 'none'} (${s?.path || 'research'}). ${fix}`, { modal: true });
 }
 
 /** One non-modal warning for a bad CLI state. */

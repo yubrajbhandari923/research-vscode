@@ -36,7 +36,7 @@ export function PlansPage({ host }: { host: Host }) {
       <State a={list}>{(plans) => plans.length === 0 ? (
         <EmptyState icon="tasks" title="No YAML plans yet." actions={<><button type="button" className="primary" onClick={() => host.run('research.plan.yaml.new')}>Create from template</button>
           <button type="button" onClick={() => host.run('research.plan.yaml.import')}>Import a plan</button></>}>
-          Ask a planning AI (Claude, ChatGPT) to write a plan in the Research OS YAML format, save it, and import it here. You can edit the file and apply it again at any time without losing results.</EmptyState>
+          Ask a planning AI to write a plan in the Research OS YAML format, save it, and import it here. You can edit the file and apply it again at any time without losing results.</EmptyState>
       ) : <>
         <div className="cards">{plans.map((pl) => (
           <section key={pl.key} className={'card' + (sel.includes(pl.key) ? ' sel' : '')} aria-label={pl.title || pl.key} style={{ margin: '8px 0', padding: 12 }}>

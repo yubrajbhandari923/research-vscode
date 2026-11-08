@@ -5,17 +5,17 @@ import { InitProject } from './InitProject';
 import { ProvidersPage } from './Providers';
 import { PlansPage } from './PlansPage';
 import { GuidePage } from './GuidePage';
-import { Banner, Icon, PinHost, useAsync } from './common';
+import { Banner, Icon, OpsContext, PinHost, useAsync, useHasOp } from './common';
 import { SettingsPage } from './SettingsPage';
 import type { Page } from './types';
 
-const TABS: { id: Page; label: string; hint: string }[] = [
+const ALL_TABS: { id: Page; label: string; hint: string; op?: string }[] = [
   { id: 'home', label: 'Home', hint: 'What needs you, what is running, what you learned' },
   { id: 'work', label: 'Work', hint: 'Plans, tasks, workspaces, runs, execution' },
   { id: 'research', label: 'Research', hint: 'Questions, experiments, findings, decisions' },
-  { id: 'plans', label: 'Plans', hint: 'YAML plans run by the supervisor' },
-  { id: 'guide', label: 'Guide', hint: 'The scientific story: key results, citations, a website' },
-  { id: 'agents', label: 'Agents', hint: 'Providers, models, sessions' },
+  { id: 'plans', label: 'Plans', hint: 'YAML plans run by the supervisor', op: 'managed_plans' },
+  { id: 'guide', label: 'Guide', hint: 'The scientific story: key results, citations, a website', op: 'guide_status' },
+  { id: 'agents', label: 'Agents', hint: 'Providers, models, sessions', op: 'providers' },
   { id: 'settings', label: 'Settings', hint: 'Policies, agents, git, sandbox, HPC' },
 ];
 
@@ -30,7 +30,7 @@ export function App({ host, initial }: { host: Host; initial?: { page?: Page; ta
   if (ping.error) return <div className="state error" role="alert"><b>Could not load.</b> {ping.error} <button className="link" onClick={ping.reload}>Try again</button></div>;
   if (ping.data?.incompatible) return <Incompatible message={ping.data.incompatible} />;
   if (ping.data && !ping.data.initialized) return <InitProject host={host} onDone={(r) => host.setState({ ...host.getState(), initialized: r })} />;
-  return <Shell host={host} initial={initial} name={ping.data?.name || 'Research'} />;
+  return <OpsContext.Provider value={ping.data?.ops}><Shell host={host} initial={initial} name={ping.data?.name || 'Research'} /></OpsContext.Provider>;
 }
 
 function Incompatible({ message }: { message: string }) {
@@ -47,8 +47,11 @@ function Incompatible({ message }: { message: string }) {
 function Shell({ host, initial, name }: { host: Host; initial?: { page?: Page; target?: string }; name: string }) {
   const [attention, setAttention] = useState(0);
   const [rev, setRev] = useState(0);
-  const [page, setPage] = useState<Page>(initial?.page || (host.getState().page as Page) || 'home');
+  const [stored, setPage] = useState<Page>(initial?.page || (host.getState().page as Page) || 'home');
   const [target, setTarget] = useState<string | undefined>(initial?.target);
+  const has = useHasOp();
+  const TABS = ALL_TABS.filter((t) => !t.op || has(t.op));
+  const page: Page = TABS.some((t) => t.id === stored) ? stored : 'home';   // a remembered page this core cannot serve falls back to Home
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   const go = (p: Page, t?: string) => { setPage(p); setTarget(t); host.setState({ ...host.getState(), page: p }); };
   useEffect(() => {

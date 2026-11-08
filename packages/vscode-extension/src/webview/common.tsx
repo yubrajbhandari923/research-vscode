@@ -1,4 +1,8 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react';
+
+/** Ops the core lists in its ready event (undefined = unknown, show everything). A feature whose op is missing is hidden, not broken. */
+export const OpsContext = createContext<string[] | undefined>(undefined);
+export const useHasOp = () => { const ops = useContext(OpsContext); return (op: string) => !ops || ops.includes(op); };
 
 export interface Async<T> { data?: T; error?: string; loading: boolean; reload: () => void }
 export function useAsync<T>(fn: () => Promise<T>, deps: any[]): Async<T> {

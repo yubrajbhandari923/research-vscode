@@ -137,7 +137,7 @@ function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) 
             <ol>
               <li><b>Ask</b> a research <em>question</em>, then register an <em>experiment</em> (hypothesis, method, parameters, success criteria).</li>
               <li><b>Plan</b>: break the work into small <em>tasks</em> with acceptance checks (a command that must pass, a file that must exist, a metric threshold).</li>
-              <li><b>Dispatch</b> a task to an AI agent (Claude, Codex or Antigravity). It works in that experiment’s own git worktree, so experiments never collide.</li>
+              <li><b>Dispatch</b> a task to an AI agent (any agent listed on the Agents page). It works in that experiment’s own git worktree, so experiments never collide.</li>
               <li><b>Run</b> everything through <code>research run exec</code>: each run records code version, parameters, metrics and artifacts.</li>
               <li><b>Verify</b>: finishing the agent’s session is not the same as the task passing. The task’s checks must pass, and findings need an independent review before they count as “supported”.</li>
               <li><b>Switch agents any time.</b> All records live in the shared ledger, not in any agent, so another agent continues with the same history.</li>
@@ -247,7 +247,7 @@ function Wizard({ host, env, onDone }: { host: Host; env: Env; onDone: (r: any) 
       {step === 5 && (
         <section aria-label="Skills">
           <Learn title="Skills and hooks: what your agents are equipped with">
-            <b>Skills</b> are short written procedures an agent follows (how to design a hypothesis, build validation oracles, triage a failed run, audit reproducibility…). They sit in the project and are linked for Claude Code and Codex, but a skill reaches an agent’s brief only when the task type or role matches, so a bigger toolbox does not mean a bigger prompt.
+            <b>Skills</b> are short written procedures an agent follows (how to design a hypothesis, build validation oracles, triage a failed run, audit reproducibility…). They sit in the project and are linked into each agent’s skills folder, but a skill reaches an agent’s brief only when the task type or role matches, so a bigger toolbox does not mean a bigger prompt.
             <b> Hooks</b> are deterministic checks <i>you</i> approve. The nine starter hooks are cheap, never block and never run your code: syntax, whitespace, git integrity, a secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity. Linters, formatters and test runs are offered later, once there is code to detect.
           </Learn>
           <fieldset className="stack"><legend>Skill packs</legend>

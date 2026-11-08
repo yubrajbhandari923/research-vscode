@@ -11,8 +11,6 @@ from research.mcp import TOOLS, _tools
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(ROOT, "packages", "vscode-extension", "src")
-# Allow-list entries in panels.ts that name no RPC method (dead strings; remove them from CONTROL_RPC/MUTATING_RPC, then from here).
-STALE_IN_EXTENSION = {"setup_environment", "setup_preview", "setup_apply"}
 
 # The methods that used to be listed in rpc.MUTATING (frozen: removing one from an op is a behaviour change).
 OLD_MUTATING = set("""pack_set skill_install skill_toggle skills_upgrade hook_install hook_install_starters skills_link hook_approve
@@ -37,14 +35,13 @@ def _extension_ops():
                 t = fh.read()
             found |= set(re.findall(r"\b(?:rpc|call)(?:<[^>(]*>)?\(\s*['\"]([a-z_]+)['\"]", t))
             if f == "panels.ts":
-                for name in ("CONTROL_RPC", "MUTATING_RPC"):
-                    found |= set(re.findall(r"'([a-z_]+)'", re.search(name + r" = new Set\(\[(.*?)\]\)", t, re.S).group(1)))
+                found |= set(re.findall(r"'([a-z_]+)'", re.search(r"CONTROL_RPC = new Set\(\[(.*?)\]\)", t, re.S).group(1)))
     return found
 
 
 def test_every_op_the_extension_calls_exists():
     missing = _extension_ops() - set(api.OPS)
-    assert missing == STALE_IN_EXTENSION, f"extension names an RPC method that does not exist: {sorted(missing - STALE_IN_EXTENSION)}; stale list now: {sorted(missing)}"
+    assert not missing, f"extension names an RPC method that does not exist: {sorted(missing)}"
 
 
 def test_mcp_schemas_fit_their_ops():

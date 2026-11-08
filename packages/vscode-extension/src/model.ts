@@ -32,7 +32,9 @@ export class Model implements vscode.Disposable {
   private disposed = false;
   private poll?: NodeJS.Timeout;
 
-  constructor(public client: CoreClient, private out: vscode.OutputChannel) {}
+  constructor(public client: CoreClient, private out: vscode.OutputChannel) {
+    client.onChanged = () => this.schedule(0);
+  }
 
   get root() {
     return this.client.root;

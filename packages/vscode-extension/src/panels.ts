@@ -5,11 +5,9 @@ import { Model } from './model';
 import { renderArtifact, renderCheckpoint, renderCompare, renderDecision, renderExperiment, renderFinding, renderPlan, renderQuestion, renderRun, renderTask, RenderCtx } from './render/detail';
 import { FormSpec, renderForm } from './render/form';
 import { renderOverviewHome } from './render/home';
-import { renderSetup } from './render/setup';
 import { esc, nonce } from './util';
 
-const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'interventions', 'debug_run', 'debug_latest', 'telegram_status', 'telegram_set', 'telegram_test', 'telegram_clear', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'init_yaml_template', 'init_yaml_check', 'init_yaml_apply', 'init_yaml_export', 'governance', 'approval_set_pin', 'provider_status', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'setup_environment', 'setup_preview', 'setup_apply', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
-const MUTATING_RPC = new Set(['plan_promote', 'plan_yaml_apply', 'plan_control', 'supervisor_task', 'proposal_decide', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'debug_run', 'telegram_set', 'telegram_test', 'telegram_clear', 'setup_apply', 'init_apply', 'init_yaml_apply', 'approval_set_pin', 'provider_default', 'provider_mcp', 'execution_stop', 'execution_retry', 'new_experiment', 'doctor', 'settings_apply', 'workspace_create', 'workspace_archive', 'promotion_action', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_add', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full']);
+const CONTROL_RPC = new Set(['env_check', 'env_probe', 'plan_promote', 'plan_yaml_template', 'plan_yaml_validate', 'plan_yaml_diff', 'plan_yaml_apply', 'plan_yaml_export', 'managed_plans', 'supervisor_status', 'supervisor_daemon', 'intervention_request', 'intervention_action', 'interventions', 'debug_run', 'debug_latest', 'telegram_status', 'telegram_set', 'telegram_test', 'telegram_clear', 'plan_control', 'supervisor_task', 'proposals', 'proposal_decide', 'attempt_detail', 'promotion_hint', 'hpc_status', 'ping', 'init_environment', 'init_preview', 'init_apply', 'init_yaml_template', 'init_yaml_check', 'init_yaml_apply', 'init_yaml_export', 'governance', 'approval_set_pin', 'provider_status', 'hpc_test', 'hpc_discover', 'providers', 'provider_default', 'provider_mcp', 'executions', 'execution_show', 'execution_logs', 'execution_stop', 'execution_retry', 'doctor', 'config_check', 'agent_setup', 'strategy_use', 'task_pin', 'new_experiment_preview', 'new_experiment', 'control', 'settings', 'settings_preview', 'settings_apply', 'workspaces', 'workspace_info', 'workspace_create', 'workspace_archive', 'sandbox_preview', 'promotions', 'promotion_diff', 'promotion_action', 'guide_status', 'guide_init', 'guide_build', 'guide_highlight', 'guide_log', 'guide_draft_done', 'guide_cite_list', 'guide_cite_add', 'guide_preview', 'tools', 'pack_set', 'skill_install', 'skill_toggle', 'skills_upgrade', 'skills_set', 'hook_install', 'hook_install_starters', 'skills_link', 'hook_approve', 'hook_toggle', 'hook_run', 'report', 'report_full', 'reports']);
 
 const TITLES: Record<string, string> = {
   experiment: 'beaker', finding: 'lightbulb', question: 'question', decision: 'law', checkpoint: 'bookmark', run: 'play-circle', artifact: 'file',
@@ -41,7 +39,7 @@ type Handler = (values: any, context: any) => Promise<string | void>;
 interface EntityPanel {
   panel: vscode.WebviewPanel;
   id: string;
-  kind: 'entity' | 'form' | 'compare' | 'setup' | 'control';
+  kind: 'entity' | 'form' | 'compare' | 'control';
   handler?: Handler;
   extraRoots: Set<string>;
   loaded?: boolean;
@@ -86,7 +84,6 @@ export class Panels implements vscode.Disposable {
       }
       if (kind === 'entity') this.renderEntity(ep).catch(() => undefined);
       else if (kind === 'compare') this.renderComparison(ep).catch(() => undefined);
-      else if (kind === 'setup') this.renderSetup(ep).catch(() => undefined);
     });
     panel.webview.onDidReceiveMessage((m) => this.onMessage(ep, m));
     return ep;
@@ -161,11 +158,11 @@ export class Panels implements vscode.Disposable {
         if (!CONTROL_RPC.has(m.method)) throw new Error(`Not available from the Control Center: ${m.method}`);
         const result = await this.model.client.request(m.method, m.params || {});
         if (m.method === 'settings') for (const f of [result?.machine_config, result?.project_config]) if (f) this.configFiles.add(path.resolve(String(f)));
-        if (MUTATING_RPC.has(m.method)) this.model.schedule(0);
         if ((m.method === 'init_apply' || m.method === 'init_yaml_apply') && result?.workspace_file) {   // the user approved the reviewed plan; open the new multi-root workspace
           await this.ctx.globalState.update('research.justInitialized', result.main);
           setTimeout(() => vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(result.workspace_file)), 4000);
         }
+        if (m.method === 'ping' && result && typeof result === 'object') result.ops = this.model.client.readyInfo?.ops;   // lets the page hide features this core lacks
         w.postMessage({ type: 'rpc-result', id: m.id, result });
       } catch (e: any) {
         w.postMessage({ type: 'rpc-result', id: m.id, error: String(e?.message || e) });
@@ -179,21 +176,7 @@ export class Panels implements vscode.Disposable {
       const uri = vscode.Uri.file(path.join(this.model.root, file));
       try { await vscode.workspace.fs.stat(uri); return void (await vscode.commands.executeCommand('markdown.showPreview', uri)); } catch { /* not in this workspace */ }
     }
-    vscode.window.showInformationMessage(`Documentation: ${rel} in the Research OS repository (docs/SPEC.md).`);
-  }
-
-  async openSetup() {
-    const ep = this.create('setup', 'Agent setup', 'hubot', 'setup');
-    if (!ep.panel.webview.html) ep.panel.webview.html = shell(ep.panel.webview, this.ctx.extensionUri, `<div class="page"><div class="row muted"><span class="spinner"></span> Loading…</div></div>`, { title: 'Agent setup' });
-    await this.renderSetup(ep);
-  }
-
-  private async renderSetup(ep: EntityPanel) {
-    try {
-      this.post(ep, renderSetup(await this.model.client.request('agent_setup')));
-    } catch (e: any) {
-      this.post(ep, `<div class="page"><div class="banner" style="--c:var(--red)"><i class="codicon codicon-error"></i><div class="grow">${esc(e.message)}</div></div></div>`);
-    }
+    vscode.window.showInformationMessage(`Documentation: ${rel} in the Research OS repository (docs/spec/).`);
   }
 
   async openEntity(id: string, side = false) {
@@ -242,7 +225,6 @@ export class Panels implements vscode.Disposable {
     for (const ep of this.panels.values()) {
       if (ep.kind === 'entity' && ep.panel.visible) this.renderEntity(ep).catch(() => undefined);
       else if (ep.kind === 'compare' && ep.panel.visible) this.renderComparison(ep).catch(() => undefined);
-      else if (ep.kind === 'setup' && ep.panel.visible) this.renderSetup(ep).catch(() => undefined);
     }
   }
 

@@ -169,6 +169,7 @@ test('navigation: tabs are a roving-tabindex tablist; attention items open the r
     assert.equal(tabs[0].getAttribute('aria-selected'), 'true'); assert.equal(tabs[1].tabIndex, -1);
     await lib.act(async () => { tabs[0].dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })); await lib.tick(300); });
     assert.equal(qa(el, '[role=tab]')[1].getAttribute('aria-selected'), 'true');
+    await waitFor(() => /Job isolation/.test(q(el, 'main').textContent), 15000);
     assert.match(q(el, 'main').textContent, /Job isolation/); assert.match(q(el, 'main').textContent, /Optional: try ideas on separate git branches/);
     await click(qa(el, '[role=tab]')[2]); await lib.tick(300);
     await click(byText(el, 'button.link', 'EXP-001')); assert.deepEqual(host.log.entities, ['EXP-001']);

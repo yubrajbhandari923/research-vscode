@@ -1181,7 +1181,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     const lines = Object.entries(r).map(([k, v]: any) => `${k}: ${v.linked.length} linked${v.skipped.length ? `, left alone: ${v.skipped.join(', ')}` : ''}`);
     vscode.window.showInformationMessage(lines.join(' · ') || 'Skill linking is off (config skills.link).');
   });
-  reg('research.setup.open', () => panels.openSetup());
+  reg('research.setup.open', () => panels.openControlCenter('agents'));
   const taskArg = async (a: any): Promise<string | undefined> => (typeof a === 'string' ? a : a?.id) || (await vscode.window.showQuickPick(
     ((await rpc('agent_setup')).tasks as any[]).map((t) => ({ label: t.title, description: t.id, id: t.id })), { placeHolder: 'Which task?' }) as any)?.id;
   reg('research.task.pin', async (a?: any) => {
@@ -1245,7 +1245,7 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
   reg('research.setup.agents', async () => {
     const plan = await rpc('setup_agents', { apply: false });
     const lines = plan.agent_files.map((f: any) => `${f.state.padEnd(15)} ${f.path}`).join('\n');
-    const go = await vscode.window.showInformationMessage('Set up Claude Code agents? Only Research OS-managed files are written; files you own are left alone. No MCP servers, plugins or hooks are installed.',
+    const go = await vscode.window.showInformationMessage('Set up the agent files for this project? Only Research OS-managed files are written; files you own are left alone. No MCP servers, plugins or hooks are installed.',
       { modal: true, detail: lines }, 'Apply');
     if (go !== 'Apply') return;
     await rpc('setup_agents', { apply: true });
@@ -1253,20 +1253,20 @@ export function registerCommands(ctx: vscode.ExtensionContext, model: Model, pan
     vscode.window.showInformationMessage('Agent files are up to date.');
   });
   reg('research.mcp.install', async () => {
-    const picks: any = await vscode.window.showQuickPick([
-      { label: 'claude', description: '.mcp.json (Claude Code)', picked: true },
-      { label: 'vscode', description: '.vscode/mcp.json (VS Code / Copilot agent mode)', picked: true },
-      { label: 'cursor', description: '.cursor/mcp.json' },
-      { label: 'gemini', description: '.gemini/settings.json' },
-      { label: 'codex', description: 'prints the `codex mcp add` command (per-user config)' },
-    ], { canPickMany: true, placeHolder: 'Register the research MCP server for which agents?' });
+    // Choices come from the core: the agent registry (`providers`) plus the editor files `agent_setup` reports.
+    const [prov, setup] = await Promise.all([rpc('providers'), rpc('agent_setup')]);
+    const items = new Map<string, any>();
+    for (const c of setup.mcp.clients) items.set(c.client, { label: c.client, description: `${c.file}${c.registered ? ' (registered)' : ''}`, picked: !c.registered });
+    for (const p of prov.providers) if (!items.has(p.name)) items.set(p.name, { label: p.name, description: p.label || p.name });
+    const picks: any = await vscode.window.showQuickPick([...items.values()], { canPickMany: true, placeHolder: 'Register the research MCP server for which agents?' });
     if (!picks || !picks.length) return;
     const r = await rpc('mcp_install', { clients: picks.map((x: any) => x.label) });
     model.schedule(0);
-    const codex = r.installed.codex;
-    const msg = Object.entries(r.installed).filter(([k]) => k !== 'codex').map(([k, v]) => `${k}: ${v}`).join(' · ');
-    const c = await vscode.window.showInformationMessage(`MCP server registered${msg ? ' — ' + msg : ''}. Agents started from a VS Code terminal find \`research\` on PATH.`, ...(codex ? ['Copy Codex command'] : []));
-    if (c === 'Copy Codex command') vscode.env.clipboard.writeText('codex mcp add research -- research mcp');
+    const manual = Object.entries(r.installed).filter(([, v]) => String(v).startsWith('run once:'));   // per-user configs the core cannot write: it returns the command
+    const msg = Object.entries(r.installed).filter(([, v]) => !String(v).startsWith('run once:')).map(([k, v]) => `${k}: ${v}`).join(' · ');
+    const c = await vscode.window.showInformationMessage(`MCP server registered${msg ? ' — ' + msg : ''}. Agents started from a VS Code terminal find \`research\` on PATH.`, ...manual.map(([k]) => `Copy ${k} command`));
+    const hit = manual.find(([k]) => c === `Copy ${k} command`);
+    if (hit) vscode.env.clipboard.writeText(String(hit[1]).replace(/^run once:\s*/, ''));
   });
 }
 

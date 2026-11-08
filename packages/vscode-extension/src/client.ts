@@ -30,6 +30,8 @@ export class CoreClient implements vscode.Disposable {
   private ready?: Promise<any>;
   private restarts = 0;
   public readyInfo: any;
+  /** Called when a response says the call wrote to the project database (`changed`): views refresh from it. */
+  public onChanged?: () => void;
   /** Variables that mark a process as an agent's. The core's `ping` is the source (util.AGENT_ENV_STRIP); this seed covers the first spawn only. */
   public agentEnv: string[] = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
     'RESEARCH_AGENT', 'RESEARCH_AGENT_ROLE', 'RESEARCH_AGENT_MODEL', 'RESEARCH_AUTHOR_TYPE'];
@@ -110,7 +112,10 @@ export class CoreClient implements vscode.Disposable {
             const e = msg.error;
             if (e.trace) this.out.appendLine(`[core] ${p.method} failed:\n${e.trace}`);
             p.reject(new RpcError(e.message, e.code, e.hint, e.kind, e.data));
-          } else p.resolve(msg.result);
+          } else {
+            if (msg.changed) this.onChanged?.();
+            p.resolve(msg.result);
+          }
         }
       });
       proc.on('exit', (code, sig) => {
@@ -157,6 +162,12 @@ export class CoreClient implements vscode.Disposable {
         reject(error);
       }
     });
+  }
+
+  /** False only when the core listed its ops and this one is missing (a newer extension on an older 3.x core). */
+  hasOp(name: string): boolean {
+    const ops = this.readyInfo?.ops;
+    return !Array.isArray(ops) || ops.includes(name);
   }
 
   private rejectPending(message: string) {

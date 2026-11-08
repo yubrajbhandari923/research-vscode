@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Badge, State, Status, useAsync } from './common';
+import { Badge, EmptyState, State, Status, useAsync, useHasOp } from './common';
 import type { Host } from './host';
+import { StrategySection } from './Strategy';
 import { ToolsSection } from './ToolsSection';
 
 const yes = (v: any) => (v === true ? 'yes' : v ? String(v) : 'no');
@@ -8,14 +9,15 @@ const yes = (v: any) => (v === true ? 'yes' : v ? String(v) : 'no');
 /** Agents & Providers: what is installed, which is default, whether the Research MCP server is reachable, and what has run. */
 export function ProvidersPage({ host }: { host: Host }) {
   const a = useAsync<any>(() => host.call('providers'), []);
+  const has = useHasOp();
   const [msg, setMsg] = useState('');
   const [log, setLog] = useState<{ id: string; text: string } | null>(null);
-  const act = async (fn: () => Promise<any>, ok: string) => { try { await fn(); setMsg(ok); a.reload(); } catch (e: any) { setMsg('✗ ' + e.message); } };
+  const act = async (fn: () => Promise<any>, ok: string) => { try { await fn(); setMsg(ok); a.reload(); } catch (e: any) { setMsg('Could not finish: ' + e.message); } };
   return (
     <div className="page-body">
       <h1>Agents &amp; Providers</h1>
       <p className="muted">Research OS keeps the plan, tasks and records. These are the agents that can do the work. Changes here affect <b>future</b> dispatches only.</p>
-      {msg && <div className="banner info" role="status">{msg}</div>}
+      {msg && (msg.startsWith('Could not finish') ? <div className="banner bad" role="alert">{msg}</div> : <div className="banner ok" role="status">{msg}</div>)}
       <p className="muted small">Continuing a task with another agent hands over a portable context document (task, checks, attempts, worktree changes), never provider session ids. Every listed agent supports headless runs.</p>
       <State a={a}>{(d) => <>
         <p>Allocation strategy: <b>{d.strategy || 'none (project profiles)'}</b> · default agent: <b>{d.providers.find((x: any) => x.name === d.default)?.label || d.default}</b>
@@ -42,10 +44,11 @@ export function ProvidersPage({ host }: { host: Host }) {
               </div>
             </section>))}
         </div>
-        <ToolsSection host={host} />
+        {has('agent_setup') && has('strategy_use') && <StrategySection host={host} onChange={a.reload} />}
+        {has('tools') && <ToolsSection host={host} />}
         <h2>Recent sessions</h2>
         <p className="muted small">Completed = the agent process exited successfully. It does not mean the task passed: run verification.</p>
-        {d.recent.length === 0 ? <p className="muted">Nothing dispatched yet. Open a task and choose Dispatch.</p> :
+        {d.recent.length === 0 ? <EmptyState icon="play" title="Nothing dispatched yet" inline>Open a task and choose Dispatch to start an agent session.</EmptyState> :
           <table><thead><tr><th>Task</th><th>State</th><th>Requested</th><th>Mode</th><th>Working in</th><th /></tr></thead><tbody>
             {d.recent.map((r: any) => (
               <tr key={r.id}><td>{r.task}</td><td><Status value={r.state} /></td><td>{r.profile}{r.model ? ` / ${r.model}` : ''}</td><td>{r.mode}</td><td><code>{String(r.cwd || '').split('/').slice(-2).join('/')}</code></td>
