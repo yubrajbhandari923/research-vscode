@@ -7,7 +7,7 @@ import sys
 from typing import Any, Dict
 
 import research
-from research import context as C
+from research import context as C, providers as PV
 from research import services as S
 from research import views as V
 from research.schema import normalize_id
@@ -251,6 +251,9 @@ def cmd_init(a) -> int:
         return 0
     if a.from_file:
         return cmd_init_from(a)
+    if a.layout == "ledger":                   # the old `project-init`: main/ + ledger/ + experiments/
+        a.folder = a.path
+        return cmd_project_init(a)
     p = Project.init(a.path or ".", name=a.name, goal=a.goal, description=a.description, agents_md=not a.no_agents_md)
     if a.json:
         out_json({"root": p.root, "name": p.name})
@@ -264,31 +267,24 @@ def cmd_init(a) -> int:
 
 
 def cmd_status(a, p) -> int:
+    """`status` (compact) or `status --full` (= the old `resume`)."""
     r = C.resume_context(p)
-    out_json(r) if a.json else print_status(r)
-    return 0
-
-
-def cmd_resume(a, p) -> int:
-    r = C.resume_context(p)
-    out_json(r) if a.json else print_resume(r)
-    return 0
-
-
-def cmd_context(a, p) -> int:
-    path = C.write_current_md(p)
-    if a.json:
-        out_json({"path": p.rel(path)})
-    elif a.print:
-        print(open(path, encoding="utf-8").read())
-    else:
-        print(green("✓ ") + p.rel(path))
+    out_json(r) if a.json else (print_resume if a.full_status else print_status)(r)
     return 0
 
 
 def cmd_current(a, p) -> int:
+    """`current` prints current.md; `current --quiet` (= the old `context`) only regenerates it."""
     path = C.write_current_md(p)
     text = open(path, encoding="utf-8").read()
+    if a.quiet:
+        if a.json:
+            out_json({"path": p.rel(path)})
+        elif getattr(a, "print", False):       # the old `context --print`
+            print(text)
+        else:
+            print(green("✓ ") + p.rel(path))
+        return 0
     out_json({"path": p.rel(path), "markdown": text}) if a.json else print(text)
     return 0
 
@@ -475,6 +471,15 @@ def cmd_log(a, p) -> int:
     return 0
 
 
+def _project_init_args(x, folder: bool = True) -> None:
+    if folder:
+        x.add_argument("folder", nargs="?")
+        x.add_argument("--name"); x.add_argument("--goal")
+        x.add_argument("--apply", action="store_true")
+    x.add_argument("--agents", default="claude", help="comma list from " + ",".join(PV.KNOWN) + "; first is the default")
+    x.add_argument("--spec", help="JSON file with the full wizard spec")
+
+
 def attach(sub, add, group) -> None:
     x = add(sub, "init", cmd_init, "initialize .research/ in a project (and AGENTS.md); or --from research-os.yaml for a whole project", needs_project=False)
     x.add_argument("--from", dest="from_file", metavar="YAML", help="set up a whole project from a bootstrap file (previews unless --apply)")
@@ -487,27 +492,30 @@ def attach(sub, add, group) -> None:
     x.add_argument("--goal")
     x.add_argument("--description")
     x.add_argument("--no-agents-md", action="store_true")
-    add(sub, "status", cmd_status, "compact project status")
-    add(sub, "resume", cmd_resume, "what were we doing? (latest checkpoint + current state)")
-    x = add(sub, "context", cmd_context, "regenerate .research/context/current.md")
+    x.add_argument("--layout", choices=["classic", "ledger"], default="classic",
+                   help="ledger: initialize an empty folder as main/ + ledger/ + experiments/ + workspace (preview unless --apply)")
+    _project_init_args(x, folder=False)
+    x = add(sub, "status", cmd_status, "compact project status; --full: latest checkpoint + current state")
+    x.add_argument("--full", dest="full_status", action="store_true", help="what were we doing? (the old `resume`)")
+    x = add(sub, "resume", cmd_status, None)                    # hidden alias of `status --full`
+    x.set_defaults(full_status=True)
+    x = add(sub, "current", cmd_current, "print the current research state for agents (regenerates current.md); --quiet only regenerates it")
+    x.add_argument("--quiet", action="store_true", help="regenerate .research/context/current.md and print only its path")
+    x = add(sub, "context", cmd_current, None)                  # hidden alias of `current --quiet`
+    x.set_defaults(quiet=True)
     x.add_argument("--print", action="store_true")
-    add(sub, "current", cmd_current, "print the current research state for agents (regenerates current.md)")
     x = add(sub, "search", cmd_search, "search everything recorded: research search \"dataset prep\"")
     x.add_argument("query", nargs="+")
     x.add_argument("--type", action="append", help="limit to a type (finding, experiment, task, run, note, skill, …)")
     x.add_argument("--limit", type=int, default=20)
-    x = add(sub, "project-init", cmd_project_init, "initialize an empty folder: main/ + ledger/ + experiments/ + workspace (preview unless --apply)", needs_project=False)
-    x.add_argument("folder", nargs="?")
-    x.add_argument("--name"); x.add_argument("--goal")
-    x.add_argument("--agents", default="claude", help="comma list from " + ",".join(__import__("research.providers", fromlist=["x"]).KNOWN) + "; first is the default")
-    x.add_argument("--spec", help="JSON file with the full wizard spec")
-    x.add_argument("--apply", action="store_true")
+    x = add(sub, "project-init", cmd_project_init, None, needs_project=False)   # hidden alias of `init --layout ledger`
+    _project_init_args(x)
     x = add(sub, "ledger", cmd_ledger, "shared research ledger for git worktrees: status | enable [--apply] | relink", needs_project=False)
     x.add_argument("action", choices=["status", "enable", "relink"])
     x.add_argument("path", nargs="?", help="enable: where to create the ledger worktree; relink: its new location")
     x.add_argument("--apply", action="store_true", help="enable: perform the migration (default is a dry run)")
     x.add_argument("--dry-run", action="store_true", help="enable: preview only (the default)")
-    add(sub, "rpc", cmd_rpc, "serve the JSON-RPC protocol on stdio (used by the VS Code extension)", needs_project=False)
+    add(sub, "rpc", cmd_rpc, None, needs_project=False)         # hidden: the extension's transport, not for people
     add(sub, "version", cmd_version, "print the core version and RPC protocol (--json for the extension)", needs_project=False)
     x = add(sub, "self-update", cmd_self_update, "install the newest GitHub release (sha256-verified)", needs_project=False)
     x.add_argument("--check", action="store_true", help="only report current vs latest")
@@ -527,7 +535,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("status")
     x.add_argument("--reason")
     add(sub, "sync", cmd_sync, "import hand-edited files, ingest job outputs, refresh run status")
-    add(sub, "rebuild", cmd_rebuild, "rebuild research.db from the text files (keeps a backup)")
+    add(sub, "rebuild", cmd_rebuild, None)                      # hidden: recovery (`doctor` points to it)
     x = add(sub, "config", cmd_config, "configuration: show [--effective|--sources] | check | options | explain | set | reset")
     x.add_argument("action", nargs="?", choices=["show", "check", "options", "explain", "set", "reset"], default="show")
     x.add_argument("key", nargs="?", help="explain/set/reset: setting key, e.g. agent_policy.max_runs_without_synthesis")

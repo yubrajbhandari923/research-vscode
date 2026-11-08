@@ -229,11 +229,13 @@ def cmd_skills_link(a, p) -> int:
     return 0
 
 
-def attach(sub, add, group) -> None:
-    x = add(sub, "agents-md", cmd_agents_md, "create/refresh the research block in AGENTS.md")
+def _agents_md_args(x) -> None:
     x.add_argument("--preview", action="store_true", help="print the managed block this version generates")
     x.add_argument("--diff", action="store_true", help="unified diff of the current vs. the new block")
     x.add_argument("--apply", action="store_true", help="write the managed region (the default action)")
+
+
+def attach(sub, add, group) -> None:
     g = group("skills", "agent skills (.research/skills/)", aliases=["skill"])
     add(g, "list", cmd_skills_list, "list skills", aliases=["ls"])
     x = add(g, "show", cmd_skills_show, "print a skill's SKILL.md")

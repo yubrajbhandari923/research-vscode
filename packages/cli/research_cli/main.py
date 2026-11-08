@@ -37,15 +37,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     def add(parent, name, fn, help_, aliases=(), **defaults):
         # defaults: needs_project=False (command needs no project; called as fn(a)), takes_tail=True (takes a `-- cmd` tail)
-        sp = parent.add_parser(name, help=help_, parents=[common], aliases=list(aliases))
+        # help_=None: a hidden alias (argparse prints "==SUPPRESS==" for help=SUPPRESS on subparsers, so no help at all is used)
+        sp = parent.add_parser(name, parents=[common], aliases=list(aliases), **({"help": help_} if help_ else {}))
         sp.set_defaults(fn=fn, **defaults)
         return sp
 
+    groups = {}
+
     def group(name, help_, aliases=()):
-        g = sub.add_parser(name, help=help_, parents=[common], aliases=list(aliases))
-        gs = g.add_subparsers(dest="sub", metavar="<action>")
-        g.set_defaults(fn=None, _group=g)
-        return gs
+        if name not in groups:          # idempotent: several modules add subcommands to one group (`agent`)
+            g = sub.add_parser(name, help=help_, parents=[common], aliases=list(aliases))
+            groups[name] = g.add_subparsers(dest="sub", metavar="<action>")
+            g.set_defaults(fn=None, _group=g)
+        return groups[name]
 
     for mod in (project, records, plans, supervisor, agents, skills, guide, hpc):
         mod.attach(sub, add, group)

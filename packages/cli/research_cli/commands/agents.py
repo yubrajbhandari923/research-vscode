@@ -5,12 +5,14 @@ import json
 import os
 import sys
 
-from research import supervisor as SV
+from research import providers as PV, supervisor as SV
 from research.schema import normalize_id
 from research.store import Project
 from research.util import ResearchError, detect_author
 
 from . import mut
+from .guide import _setup_args, cmd_setup
+from .skills import _agents_md_args, cmd_agents_md
 from .supervisor import _emit, _read
 from ..output import _done, bold, dim, green, out_json, red, section, yellow
 
@@ -479,25 +481,67 @@ def cmd_agent(a, p) -> int:
 cmd_agent = mut(cmd_agent)
 
 
-def attach(sub, add, group) -> None:
-    x = add(sub, "dispatch", cmd_dispatch, "hand work to an agent CLI: research dispatch verifier F-003")
+def _dispatch_cmd_args(x) -> None:
     x.add_argument("role", choices=["planner", "implementer", "verifier", "analyst"])
     x.add_argument("target", nargs="?", help="T-, F-, EXP-, PLAN- … id")
     _dispatch_args(x)
-    x = add(sub, "execution", cmd_execution, "launched agent sessions: list | show | logs | stop | retry (completed ≠ verified)", aliases=["exec"])
+
+
+def _execution_args(x) -> None:
     x.add_argument("action", choices=["list", "show", "logs", "stop", "retry"])
     x.add_argument("id", nargs="?", help="execution id (a unique prefix is enough)")
     x.add_argument("--task", help="list: only this task")
     x.add_argument("--profile", help="retry: continue with this agent profile instead")
     x.add_argument("--agent-model", help="retry: model for the new session")
     x.add_argument("--headless", action="store_true", help="retry: run non-interactively")
-    x = add(sub, "provider", cmd_provider, "agent providers: list | set-default NAME | mcp NAME [--apply]")
+
+
+def _provider_args(x) -> None:
     x.add_argument("action", choices=["list", "set-default", "mcp"])
     x.add_argument("name", nargs="?")
     x.add_argument("--apply", action="store_true", help="mcp: write the registration (then verify it)")
     x.add_argument("--cwd", help="mcp: directory to verify from (default: first experiment worktree)")
-    add(sub, "agents", cmd_agents, "agent profiles and roles (config.yaml → agents)")
-    x = add(sub, "bin", cmd_bin, "project-local CLI at .research/bin/research (no install needed for agents)")
+
+
+def _usage_args(x) -> None:
+    x.add_argument("action", nargs="?", choices=["summary", "import"], default="summary")
+    x.add_argument("file", nargs="?")
+    x.add_argument("--by", default="strategy")
+    x.add_argument("--task")
+    x.add_argument("--parser", default="claude_json")
+    x.add_argument("--level")
+    x.add_argument("--strategy")
+    x.add_argument("--agent-model")
+
+
+def attach(sub, add, group) -> None:
+    ag = group("agent", "agent sessions: dispatch | profiles | providers | executions | instructions | setup | usage; "
+                        "and structured reports from a supervised agent (progress | milestone | … | finish)")
+    x = add(ag, "dispatch", cmd_dispatch, "hand work to an agent CLI: research agent dispatch verifier F-003")
+    _dispatch_cmd_args(x)
+    _dispatch_cmd_args(add(sub, "dispatch", cmd_dispatch, None))                 # hidden alias (old name)
+    x = add(ag, "executions", cmd_execution, "launched agent sessions: list | show | logs | stop | retry (completed ≠ verified)")
+    _execution_args(x)
+    _execution_args(add(sub, "execution", cmd_execution, None, aliases=["exec"]))
+    x = add(ag, "providers", cmd_provider, "agent providers: list | set-default NAME | mcp NAME [--apply]")
+    _provider_args(x)
+    _provider_args(add(sub, "provider", cmd_provider, None))
+    add(ag, "profiles", cmd_agents, "agent profiles and roles (config.yaml → agents)")
+    add(sub, "agents", cmd_agents, None)
+    _usage_args(add(ag, "usage", cmd_usage, "model usage: `agent usage [--by strategy|model|task|level]` · `agent usage import FILE`"))
+    _usage_args(add(sub, "usage", cmd_usage, None))
+    x = add(ag, "instructions", cmd_agents_md, "create/refresh the research block in AGENTS.md")
+    _agents_md_args(x)
+    _agents_md_args(add(sub, "agents-md", cmd_agents_md, None))
+    x = add(ag, "setup", cmd_setup, "set up agent files for a provider: research agent setup PROVIDER --preset scientific [--apply]")
+    x.set_defaults(what="agents")
+    x.add_argument("provider", nargs="?", choices=PV.KNOWN, default=PV.KNOWN[0], help="one of " + ", ".join(PV.KNOWN))
+    _setup_args(x)
+    x = add(sub, "setup", cmd_setup, None)                                     # hidden: `setup agents --provider NAME`
+    x.add_argument("what", choices=["agents"])
+    x.add_argument("--provider", default=PV.KNOWN[0])
+    _setup_args(x)
+    x = add(sub, "bin", cmd_bin, None)                       # hidden: `doctor --fix bin.stale` and the launcher use it
     x.add_argument("action", nargs="?", choices=["install", "status", "link", "unlink"], default="install",
                    help="link/unlink: the local ./research symlink in the main checkout (git-ignored); install also creates it")
     x.add_argument("--force", action="store_true", help="re-copy even if up to date")
@@ -556,16 +600,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("--task")
     x.add_argument("--experiment")
     x.add_argument("--limit", type=int, default=10)
-    x = add(sub, "usage", cmd_usage, "model usage: `usage [--by strategy|model|task|level]` · `usage import FILE`")
-    x.add_argument("action", nargs="?", choices=["summary", "import"], default="summary")
-    x.add_argument("file", nargs="?")
-    x.add_argument("--by", default="strategy")
-    x.add_argument("--task")
-    x.add_argument("--parser", default="claude_json")
-    x.add_argument("--level")
-    x.add_argument("--strategy")
-    x.add_argument("--agent-model")
-    g = group("agent", "structured reports from a supervised agent (run inside an agent session)")
+    g = ag
     for name, h in (("progress", "free-text progress"), ("milestone", "a named milestone"), ("artifact", "an output file (workspace-relative)"),
                     ("metric", "a metric value"), ("run", "a computational run id"), ("hpc-job", "an HPC job id"), ("code", "a commit / changed files"),
                     ("problem", "a problem with a failure category"), ("report", "summary of what was done and found"),

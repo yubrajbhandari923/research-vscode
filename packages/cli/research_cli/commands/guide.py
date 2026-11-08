@@ -392,6 +392,15 @@ def _cmd_report_full(a, p) -> int:
     return 0 if not (chk and not chk["ok"]) else 1
 
 
+def _setup_args(x) -> None:
+    x.add_argument("--preset", default="scientific")
+    x.add_argument("--apply", action="store_true")
+    x.add_argument("--dry-run", action="store_true")
+    x.add_argument("--approve", nargs="+", choices=["ponytail"], help="approve third-party skill imports")
+    x.add_argument("--probe", action="store_true", help="also make one tiny live call per model")
+    x.add_argument("--strategy", help="also select this allocation strategy for the project (e.g. balanced_first)")
+
+
 def attach(sub, add, group) -> None:
     x = add(sub, "report", cmd_report, "write a readable report (project, or one Q-/PLAN-/EXP-) to .research/reports/")
     x.add_argument("scope", nargs="?")
@@ -442,13 +451,4 @@ def attach(sub, add, group) -> None:
     x.add_argument("--notes", help="review record/approve")
     x.add_argument("--by", help="review approve: the researcher approving")
     x.add_argument("--force", action="store_true", help="review approve: approve despite provenance errors (recorded)")
-    x = add(sub, "setup", cmd_setup, "optional setup: `setup agents --provider claude --preset scientific [--apply]`")
-    x.add_argument("what", choices=["agents"])
-    x.add_argument("--provider", default="claude")
-    x.add_argument("--preset", default="scientific")
-    x.add_argument("--apply", action="store_true")
-    x.add_argument("--dry-run", action="store_true")
-    x.add_argument("--approve", nargs="+", choices=["ponytail"], help="approve third-party skill imports")
-    x.add_argument("--probe", action="store_true", help="also make one tiny live call per model")
-    x.add_argument("--strategy", help="also select this allocation strategy for the project (e.g. balanced_first)")
 
