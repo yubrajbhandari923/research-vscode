@@ -22,7 +22,7 @@ def test_init_creates_runnable_gitignored_launcher(proj, tmp_path):
     exe = os.path.join(proj.root, ".research", "bin", "research")
     assert os.access(exe, os.X_OK)
     assert os.path.exists(os.path.join(proj.root, ".research", "bin", "research.cmd"))
-    assert os.path.exists(os.path.join(proj.root, ".research", "bin", "lib", "research_cli", "__main__.py"))
+    assert not os.path.exists(os.path.join(proj.root, ".research", "bin", "lib"))     # nothing vendored
     git(proj.root, "check-ignore", ".research/bin/research")  # raises if not ignored
     sub = os.path.join(proj.root, "sub")
     os.makedirs(sub)
@@ -77,28 +77,21 @@ def test_write_agents_md_refreshes_outdated_block(proj):
     assert ".research/bin/research" in text and "keep me" in text and "# mine" in text and "old block" not in text
 
 
-def test_the_project_binary_refuses_to_upgrade_itself(proj, repo):
-    """Copying .research/bin/lib onto itself changes the stamp but upgrades nothing — a silent no-op.
-
-    Hit for real while migrating: `research bin install --force` reported success while leaving a stale
-    copy in place, so an already-fixed bug appeared unfixed. Exercised through the installed launcher,
-    which is the only way a user meets it.
-    """
-    import os
-    import subprocess
-    from research import localbin
-    localbin.install(str(repo))
-    launcher = os.path.join(str(repo), ".research", "bin", "research")
-    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
-    r = subprocess.run([launcher, "bin", "install", "--force"], cwd=str(repo),
-                       capture_output=True, text=True, env=env)
-    assert r.returncode != 0
-    assert "cannot upgrade itself" in r.stderr
-    assert "bin install --force" in r.stderr          # and it says what does work
-
-
-def test_installing_from_a_real_source_still_works(proj, repo):
-    """The guard must only reject the self-copy, not ordinary installs."""
-    from research import localbin
-    first = localbin.install(str(repo), force=True)
-    assert first["updated"] and os.path.exists(first["path"])
+@pytest.mark.skipif(os.name == "nt", reason="POSIX launcher")
+def test_launcher_execs_the_recorded_interpreter_and_replaces_old_vendored_copy(proj, tmp_path):
+    """The launcher runs whatever interpreter was recorded (so a self-update is followed), and a missing one fails clearly."""
+    bd = os.path.join(proj.root, ".research", "bin")
+    os.makedirs(os.path.join(bd, "lib"), exist_ok=True)           # a 3.0-style vendored copy
+    fake = tmp_path / "py"
+    fake.write_text('#!/bin/sh\necho "ran:$@"\n')
+    fake.chmod(0o755)
+    assert localbin.install(proj.root, python=str(fake))["updated"] is True
+    assert not os.path.exists(os.path.join(bd, "lib"))
+    r = subprocess.run([os.path.join(bd, "research"), "version"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert r.stdout.strip() == "ran:-m research_cli version"
+    assert localbin.install(proj.root, python=str(fake))["updated"] is False
+    fake.unlink()
+    r = subprocess.run([os.path.join(bd, "research"), "version"], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert r.returncode == 127 and "is gone" in r.stderr
+    from research import machine
+    assert os.path.realpath(proj.root) in machine.known_projects()

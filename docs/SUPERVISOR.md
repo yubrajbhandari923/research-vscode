@@ -368,6 +368,7 @@ You get one message per halt (what is blocked, the diagnosis and options) and on
 /say [T-12] <text> /interventions /pause /resume /help`; plain text goes to the only blocked task. Chat can request and apply **unprotected** changes; protected ones are
 proposed and wait for your PIN in VS Code or the terminal.
 
-**Starting after a reboot or an upgrade.** The supervisor (and with it Telegram alerts) is a separate process: it keeps running when VS Code closes, and opening a project in VS Code does not start or restart it.
-After a reboot run `research supervisor start`; after `research self-update` run `research supervisor restart` so it runs the installed version (agents and HPC jobs are untouched). Agents started through `.research/bin/research`
-keep using the copy installed there until `research bin install --force`.
+**Starting after a reboot or an upgrade.** The supervisor (and with it Telegram alerts) is a separate process: it keeps running when VS Code closes. Opening a project in VS Code
+(or any RPC client) records it in `~/.config/research-os/projects.json` and, when Telegram is enabled or a plan is running, starts the supervisor if it is down, or replaces one running older code
+(agents and HPC jobs are untouched). `research self-update` does the same restart for every known project after installing. After a reboot with VS Code closed, run `research supervisor start`.
+`.research/bin/research` is a short launcher that execs the Python recorded when it was written, so agents always run the installed version; `research bin install` refreshes it and removes any old vendored `lib/` copy.

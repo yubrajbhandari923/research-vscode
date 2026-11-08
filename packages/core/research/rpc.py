@@ -14,6 +14,7 @@ import inspect
 import json
 import os
 import sys
+import threading
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
@@ -28,7 +29,7 @@ from . import services as S
 from . import views as V
 from .schema import ENTITIES, STATUSES, normalize_id
 from .store import Project, find_root
-from .util import NotInitialized, ResearchError, detect_author, human_size
+from .util import AGENT_ENV_STRIP, NotInitialized, ResearchError, detect_author, human_size
 
 
 class Server:
@@ -69,7 +70,8 @@ class Server:
     def m_ping(self) -> Dict[str, Any]:
         ok = self.initialized() and not self._compat()
         return {"version": __version__, "protocol": PROTOCOL, "root": self.root, "initialized": self.initialized(), "incompatible": self._compat(),
-                "name": self.project(sync=False).name if ok else os.path.basename(self.root), "python": sys.executable, "pid": os.getpid()}
+                "name": self.project(sync=False).name if ok else os.path.basename(self.root), "python": sys.executable, "pid": os.getpid(),
+                "agent_env": list(AGENT_ENV_STRIP)}
 
     def m_init(self, name: Optional[str] = None, goal: Optional[str] = None) -> Dict[str, Any]:
         self.p = Project.init(self.root, name=name, goal=goal)
@@ -820,16 +822,8 @@ class Server:
         from . import execution as EX, providers as PR, strategy as S
         p = self.project(sync=False)
         p.config = p.load_config()
-        profs = (p.config.get("agents") or {}).get("profiles") or {}
-        rows = []
-        for name, prof in profs.items():
-            if name in ("claude", "codex", "agy") or prof.get("provider"):
-                r = PR.readiness(prof, name, p.root)
-                r["models"] = PR.available_models(r["provider"], r["command"], profs)
-                r["profiles"] = sorted(n for n, x in profs.items() if PR.provider_of(x, n) == r["provider"] and n != name)
-                rows.append(r)
         return {"default": (p.config.get("agents") or {}).get("default_profile"), "strategy": S.active_name(p),
-                "providers": rows, "recent": [{**{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")},
+                "providers": PR.table(p), "recent": [{**{k: e.get(k) for k in ("id", "task", "state", "mode", "exit_code", "prepared_at", "cwd")},
                     "profile": (e.get("request") or {}).get("profile"), "model": (e.get("request") or {}).get("model")} for e in EX.list_all(p)[:15]],
                 "instructions": PR.instruction_files(p.root)}
 
@@ -1043,14 +1037,7 @@ class Server:
         from . import strategy as S
         p = self.project(sync=False)
         p.config = p.load_config()
-        v, prev = S.validate(p, name), S.active_name(p)
-        if not v["ok"]:
-            raise ResearchError(f"Strategy {name} is invalid: {v['errors'][0]}", hint="Fix it in .research/config.yaml.")
-        if not dry_run and prev != name:
-            p.save_config({"orchestration.active_strategy": name})
-            p.event("project", None, "strategy_changed",
-                    f"allocation strategy {prev or 'legacy'} → {name}@{S.fingerprint(p, name)} (applies to future dispatches only)")
-        return {"previous": prev, "active": name, "dry_run": dry_run, "warnings": v["warnings"]}
+        return S.use(p, name, dry_run)
 
     def m_setup_agents(self, apply: bool = False, strategy: Optional[str] = None) -> Dict[str, Any]:
         from . import setup_agents as SA
@@ -1087,6 +1074,20 @@ MUTATING = {
     "skills_update", "skills_set", "strategy_use", "setup_agents", "task_pin", "experiment_check"}
 
 
+def _on_open(root: str) -> None:
+    """Opening a project: remember it, and (as 2.6 did) start the supervisor if Telegram is enabled or a plan is running, or replace
+    one running older code. Background, best effort: never delays or breaks the RPC session."""
+    try:
+        from . import machine, notify
+        from .store import Project
+        machine.remember(root)
+        if os.path.isdir(os.path.join(root, ".research")):
+            with Project(root, sync=False) as p:
+                notify.ensure_running(p)
+    except Exception:
+        pass
+
+
 def serve(root: str, stdin=None, stdout=None) -> None:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
@@ -1097,6 +1098,7 @@ def serve(root: str, stdin=None, stdout=None) -> None:
         stdout.flush()
 
     send({"event": "ready", "version": __version__, "protocol": PROTOCOL, "root": srv.root, "initialized": srv.initialized()})
+    threading.Thread(target=_on_open, args=(srv.root,), daemon=True).start()
     for line in stdin:
         line = line.strip()
         if not line:

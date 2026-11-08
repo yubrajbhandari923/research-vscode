@@ -57,7 +57,7 @@ export function nonce(): string {
   return t;
 }
 
-/** Same rule as research.compat.core_satisfies: same major, core minor >= required minor. */
+/** Same rule as research.selfupdate.core_satisfies: same major, core minor >= required minor. */
 export function coreCompat(core: string, required: string): 'ok' | 'older' | 'newer' | 'invalid' {
   const p = (v: string) => (String(v).match(/^(\d+)\.(\d+)/) || []).slice(1).map(Number);
   const [cM, cm] = p(core), [rM, rm] = p(required);

@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 from research import selfupdate as SU
-from research.compat import core_satisfies
+from research.selfupdate import core_satisfies
 from research.store import Project
 
 WHEEL = b"wheel-bytes"
@@ -23,6 +23,7 @@ def _fake(latest, sums_hash=None):
 def _run(latest, **kw):
     calls, msgs = [], []
     kw.setdefault("fetch", _fake(latest))
+    kw.setdefault("restart", lambda root: "none")
     rc = SU.run(current="2.6.0", install=lambda w: calls.append(w) or 0, out=msgs.append, **kw)
     return rc, calls, msgs
 
@@ -80,3 +81,32 @@ def test_version_json_and_ping_from_subdir(tmp_path):
     assert ready["protocol"] == 1 and ready["initialized"] is True and os.path.realpath(ready["root"]) == os.path.realpath(str(tmp_path))
     pong = next(x for x in lines if x.get("id") == 1)["result"]
     assert pong["initialized"] is True and pong["protocol"] == 1
+
+
+def test_extras_are_reinstalled(monkeypatch, tmp_path):
+    cmds = []
+    monkeypatch.setattr(SU.shutil, "which", lambda n: "/x/uv" if n == "uv" else None)
+    monkeypatch.setattr(SU.sys, "prefix", "/h/.local/share/uv/tools/research-panel")
+    monkeypatch.setattr(SU.subprocess, "run", lambda cmd, **k: cmds.append(cmd) or type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(SU, "installed_extras", lambda: ["tui", "discord"])
+    w = tmp_path / "a.whl"
+    w.write_bytes(WHEEL)
+    assert SU._install(str(w)) == 0
+    assert cmds[0][:4] == ["uv", "tool", "install", "--force"] and cmds[0][4].startswith("research-panel[tui,discord] @ file://")
+    monkeypatch.setattr(SU, "installed_extras", lambda: [])
+    SU._install(str(w))
+    assert cmds[1][4] == str(w)
+
+
+def test_known_projects_are_restarted_after_install_and_failure_is_not_fatal(tmp_path):
+    from research import machine
+    Project.init(str(tmp_path / "p"), name="p")
+    machine.remember(str(tmp_path / "p"))
+    seen = []
+    rc, calls, msgs = _run("2.7.0", restart=lambda r: seen.append(r) or "restart")
+    assert rc == 0 and seen == [os.path.realpath(str(tmp_path / "p"))] and any("restarted" in m for m in msgs)
+    def boom(r):
+        raise RuntimeError("x")
+    rc, calls, msgs = _run("2.7.0", restart=boom)
+    assert rc == 0 and len(calls) == 1
+    assert _run("2.7.0", fetch=_fake("2.7.0", "0" * 64), restart=lambda r: seen.append("no"))[0] == 1 and "no" not in seen

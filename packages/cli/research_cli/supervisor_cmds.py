@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Any
 
-from research import planspec as PS, supervisor as SV
+from research import planspec as PS, providers as PV, supervisor as SV
 from research.util import PolicyBlocked, ResearchError
 
 from . import main as M
@@ -165,6 +165,8 @@ for _f in (cmd_plan_run, cmd_plan_pause, cmd_plan_resume, cmd_plan_stop, cmd_pla
 def cmd_supervisor(a, p) -> int:
     act = a.action
     if act == "start":
+        from research import machine
+        machine.remember(p.root)
         if a.foreground:
             return SV.run_forever(p.root, a.exit_when_idle)
         return _emit(a, SV.daemon_start(p, detach=True, exit_when_idle=a.exit_when_idle),
@@ -210,7 +212,7 @@ def cmd_supervisor(a, p) -> int:
                      lambda d: [M.green("✓ ") + f"{d['voided']} attempt(s) of {d['task']} voided (kept as evidence, not counted)"])
     if act == "continue":
         if not a.profile:
-            raise ResearchError("continue needs --profile (claude, codex or agy)")
+            raise ResearchError("continue needs --profile (" + ", ".join(PV.KNOWN) + ")")
         return _emit(a, SV.continue_with(p, a.target, a.profile, a.note), lambda d: [M.green("✓ ") + f"{d['task']} will continue with {d['profile']} as its next attempt, in the same worktree"])
     if act == "providers":
         return _emit(a, SV.provider_status(p, a.target), lambda d: [f"{r['provider']:<7} {'installed' if r['installed'] else 'NOT installed':<14} headless={r['headless']} native-resume={r['resume']}" for r in d["providers"]])
