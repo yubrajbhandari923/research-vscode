@@ -31,7 +31,7 @@ npm run package                # scripts/package.sh -> dist/
 `scripts/package.sh` builds the extension in production mode, runs `vsce package --no-dependencies` (`dist/research-panel-X.Y.Z.vsix`, a small
 client with no Python inside), then builds the wheel and sdist (`python -m build`, falling back to `pip wheel` or `uv build`).
 
-The optional extras are `tui` (Textual). The wheel has no required dependencies; PyYAML is vendored and used only when no system PyYAML is importable.
+The optional extras are `tui` (Textual), `discord` (discord.py, Python 3.10 or newer) and `dev` (pytest, pytest-xdist). The wheel has no required dependencies; PyYAML is vendored and used only when no system PyYAML is importable.
 
 ## Versioning
 
@@ -56,7 +56,7 @@ research-vscode/
 ├── docs/                      this specification (SPEC.md and spec/), user guides, screenshots
 ├── packages/
 │   ├── core/research/         the core (see architecture); templates/ holds AGENTS.block.md, skills, packs, catalog, agent files
-│   ├── cli/research_cli/      main.py, commands/*.py, output.py, tui.py
+│   ├── cli/research_cli/      main.py, commands/*.py, output.py, tui/
 │   └── vscode-extension/      package.json, src/ (client, model, trees, panels, commands, render/, webview/), media/, scripts/, test/
 ├── examples/                  alpha-sweep, auto-promotion-demo, custom-provider
 ├── tests/python/              pytest suites, fakes/, fixtures/

@@ -6,7 +6,7 @@ core; the CLI, the terminal UI, the VS Code extension, the MCP server and the su
 ## Layers
 
 ```
- presentation   research_cli/commands/*   research_cli/tui.py     VS Code extension (TypeScript, thin client)
+ presentation   research_cli/commands/*   research_cli/tui/       VS Code extension (TypeScript, thin client)
                       │ direct calls              │ api.call                │ JSON-RPC over stdio
                       │                           │                         ▼
  transport            │                           │             research/rpc.py            research/mcp.py (agents)
@@ -47,7 +47,7 @@ Rules the code follows:
 | Scientist Guide | `guide.py`, `guide_quarto.py`, `guide_review.py` |
 
 `packages/cli/research_cli/` holds the argparse CLI (`main.py` assembles the parser and dispatches; `commands/*.py` define the commands;
-`output.py` the shared printers) and the Textual TUI (`tui.py`). `packages/vscode-extension/` is the TypeScript client. Both are described in
+`output.py` the shared printers) and the Textual TUI (`tui/`). `packages/vscode-extension/` is the TypeScript client. Both are described in
 [interfaces](09-interfaces.md).
 
 ## Process model
