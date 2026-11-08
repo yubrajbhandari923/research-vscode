@@ -1,0 +1,477 @@
+{
+ "agent_policy": {
+  "enforce_for_humans": false,
+  "max_failed_runs_without_review": 3,
+  "max_runs_without_synthesis": 5,
+  "require_experiment_registration": true,
+  "require_synthesis_before_new_experiment": true
+ },
+ "agents": {
+  "default_profile": "claude",
+  "handoff": {
+   "enabled": false,
+   "fallback_order": [
+    "claude",
+    "codex",
+    "agy"
+   ],
+   "on_provider_unavailable": "pause",
+   "on_unknown_execution_state": "pause"
+  },
+  "profiles": {
+   "agy": {
+    "args": [],
+    "command": "agy",
+    "effort": null,
+    "model": null,
+    "provider": "agy"
+   },
+   "claude": {
+    "args": [],
+    "command": "claude",
+    "model": null,
+    "model_flag": "--model",
+    "prompt_flag": null
+   },
+   "claude-balanced": {
+    "args": [],
+    "command": "claude",
+    "headless_args": [
+     "-p",
+     "--output-format",
+     "json"
+    ],
+    "model": "claude-sonnet-5-5",
+    "model_flag": "--model",
+    "prompt_flag": null,
+    "usage_parser": "claude_json"
+   },
+   "claude-deep": {
+    "args": [],
+    "command": "claude",
+    "headless_args": [
+     "-p",
+     "--output-format",
+     "json"
+    ],
+    "model": "claude-opus-5-5",
+    "model_flag": "--model",
+    "prompt_flag": null,
+    "usage_parser": "claude_json"
+   },
+   "claude-fast": {
+    "args": [],
+    "command": "claude",
+    "headless_args": [
+     "-p",
+     "--output-format",
+     "json"
+    ],
+    "model": "claude-haiku-5-5",
+    "model_flag": "--model",
+    "prompt_flag": null,
+    "usage_parser": "claude_json"
+   },
+   "codex": {
+    "args": [],
+    "command": "codex",
+    "model": null,
+    "model_flag": "-m",
+    "prompt_flag": null
+   },
+   "gemini": {
+    "args": [],
+    "command": "gemini",
+    "model": null,
+    "model_flag": "-m",
+    "prompt_flag": "-i"
+   }
+  },
+  "roles": {
+   "analyst": null,
+   "implementer": null,
+   "planner": null,
+   "verifier": null
+  }
+ },
+ "artifacts": {
+  "hash_max_bytes": 67108864
+ },
+ "auto_promotion": {
+  "numerical_command": null,
+  "require_distinct_reviewer": true,
+  "reviewer_profile": null
+ },
+ "backends": {
+  "slurm": {
+   "account": null,
+   "cpus": null,
+   "extra_args": [],
+   "gpus": null,
+   "mem": null,
+   "partition": null,
+   "setup": [],
+   "time": "01:00:00"
+  }
+ },
+ "context": {
+  "max_chars": 12000
+ },
+ "coordination": {
+  "stale_task_hours": 4
+ },
+ "environment": {
+  "packages": [],
+  "python": null
+ },
+ "git": {
+  "commit_checkpoints": false
+ },
+ "governance": {
+  "approval": {
+   "confirm_human_experiment_creation": false,
+   "record_rejections": true,
+   "require_pin": true,
+   "require_rationale": true
+  },
+  "experiment_overrides": {},
+  "experiments": {
+   "agent_creation": "propose_only"
+  },
+  "scientific_changes": {
+   "require_human_approval": true
+  },
+  "tasks": {
+   "agent_creation": "bounded_auto",
+   "allowed_auto_types": [
+    "bugfix",
+    "diagnostic",
+    "verification"
+   ],
+   "max_auto_per_experiment": 3
+  }
+ },
+ "guide": {
+  "auto_log": true,
+  "dir": "docs/scientist-guide",
+  "draft": {
+   "max_figures": 1,
+   "max_sections": 3,
+   "max_words": 150,
+   "trigger": "result"
+  },
+  "enabled": true,
+  "highlights": "supported",
+  "model": "claude-opus-5-5",
+  "profile": null,
+  "publish": {
+   "workflow": true
+  }
+ },
+ "harness": {
+  "checks": [],
+  "context": [],
+  "hooks": {},
+  "hooks_approved": {},
+  "hooks_timeout_seconds": 300,
+  "instructions": null,
+  "name": null,
+  "require_seed": false,
+  "skills": []
+ },
+ "hpc": {
+  "bundle": {
+   "exclude": [
+    ".git",
+    ".research",
+    "__pycache__",
+    "*.pyc",
+    ".venv",
+    "venv",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".DS_Store",
+    "*.egg-info",
+    ".ipynb_checkpoints"
+   ],
+   "include": [],
+   "max_file_bytes": 8388608,
+   "max_total_bytes": 268435456
+  },
+  "clusters": {},
+  "collect": {
+   "max_artifact_bytes": 33554432
+  },
+  "default_cluster": null
+ },
+ "intervention": {
+  "require_approval": false
+ },
+ "layout": {
+  "experiments_dir": null,
+  "ledger_dir": null,
+  "main_dir": null,
+  "workspace_file": null
+ },
+ "notifications": {
+  "auto_debug": false,
+  "halt_grace_seconds": 120,
+  "telegram": {
+   "enabled": false
+  }
+ },
+ "orchestration": {
+  "active_strategy": null,
+  "available": [],
+  "enabled": false,
+  "limits": {
+   "escalations": 2,
+   "haiku_attempts": 3,
+   "max_turns": null,
+   "sonnet_attempts": 2,
+   "tuning_evaluations": 50
+  },
+  "strategies": {
+   "haiku_max": {
+    "attempts": {
+     "balanced": 2,
+     "fast": 4
+    },
+    "coordinator": "balanced",
+    "description": "Maximise verified fast-model execution; balanced model is orchestrator and escalation target; deep model only on explicit request.",
+    "escalate": {
+     "balanced": "human",
+     "deep": "human",
+     "fast": "balanced"
+    },
+    "extends": null,
+    "guide": "deep",
+    "levels": {
+     "balanced": "claude-balanced",
+     "deep": "claude-deep",
+     "fast": "claude-fast"
+    },
+    "max_escalations": 2,
+    "on_scientific_assumption": "human",
+    "route": {
+     "checked": "fast",
+     "mechanical": "fast",
+     "planning": "balanced",
+     "scientific": "balanced",
+     "unchecked": "balanced",
+     "verification": "balanced"
+    }
+   },
+   "opus_first": {
+    "attempts": {
+     "balanced": 2,
+     "fast": 3
+    },
+    "coordinator": "balanced",
+    "description": "Deep model plans and interprets; balanced translates to contracts and tests; fast implements.",
+    "escalate": {
+     "balanced": "deep",
+     "deep": "human",
+     "fast": "balanced"
+    },
+    "extends": null,
+    "guide": "deep",
+    "levels": {
+     "balanced": "claude-balanced",
+     "deep": "claude-deep",
+     "fast": "claude-fast"
+    },
+    "max_escalations": 2,
+    "on_scientific_assumption": "deep",
+    "route": {
+     "checked": "fast",
+     "mechanical": "fast",
+     "planning": "deep",
+     "scientific": "deep",
+     "unchecked": "balanced",
+     "verification": "balanced"
+    }
+   },
+   "sonnet_first": {
+    "attempts": {
+     "balanced": 2,
+     "fast": 3
+    },
+    "coordinator": "balanced",
+    "description": "Balanced model coordinates; fast model implements checkable work; deep model only for scientific synthesis. Preferred for new projects.",
+    "escalate": {
+     "balanced": "human",
+     "deep": "human",
+     "fast": "balanced"
+    },
+    "extends": null,
+    "guide": "deep",
+    "levels": {
+     "balanced": "claude-balanced",
+     "deep": "claude-deep",
+     "fast": "claude-fast"
+    },
+    "max_escalations": 2,
+    "on_scientific_assumption": "deep",
+    "route": {
+     "checked": "fast",
+     "mechanical": "fast",
+     "planning": "balanced",
+     "scientific": "deep",
+     "unchecked": "balanced",
+     "verification": "balanced"
+    }
+   },
+   "sonnet_heavy": {
+    "attempts": {
+     "balanced": 2,
+     "fast": 2
+    },
+    "coordinator": "balanced",
+    "description": "Balanced model coordinates and implements; fast model only for mechanical work; deep model for milestone synthesis. Fallback when tasks lack mature contracts or verifiers.",
+    "escalate": {
+     "balanced": "human",
+     "deep": "human",
+     "fast": "balanced"
+    },
+    "extends": null,
+    "guide": "deep",
+    "levels": {
+     "balanced": "claude-balanced",
+     "deep": "claude-deep",
+     "fast": "claude-fast"
+    },
+    "max_escalations": 2,
+    "on_scientific_assumption": "deep",
+    "route": {
+     "checked": "balanced",
+     "mechanical": "fast",
+     "planning": "balanced",
+     "scientific": "deep",
+     "unchecked": "balanced",
+     "verification": "balanced"
+    }
+   }
+  },
+  "tiers": {
+   "haiku": {
+    "fallback": [
+     "haiku"
+    ],
+    "model": "claude-haiku-5-5"
+   },
+   "opus": {
+    "fallback": [
+     "opus"
+    ],
+    "model": "claude-opus-5-5"
+   },
+   "sonnet": {
+    "fallback": [
+     "sonnet"
+    ],
+    "model": "claude-sonnet-5-5"
+   }
+  }
+ },
+ "project": {
+  "created_at": null,
+  "default_backend": "local",
+  "description": "",
+  "git_repo": null,
+  "goal": "",
+  "name": "",
+  "status": "active"
+ },
+ "promotion": {
+  "main_branch": "main",
+  "require_supported_finding": true,
+  "test_command": null,
+  "test_timeout_seconds": 1800
+ },
+ "resume": {
+  "stale_checkpoint_days": 14
+ },
+ "sandbox": {
+  "agent": {
+   "mode": "none"
+  },
+  "approved_roots": [],
+  "assign": {
+   "experiments": {},
+   "tasks": {}
+  },
+  "default_profile": "native",
+  "enabled": false,
+  "profiles": {
+   "custom": {
+    "runtime": "auto"
+   },
+   "gpu-research": {
+    "gpu": true,
+    "network": {
+     "mode": "disabled"
+    },
+    "runtime": "auto"
+   },
+   "native": {
+    "runtime": "native"
+   },
+   "restricted": {
+    "network": {
+     "mode": "disabled"
+    },
+    "runtime": "auto"
+   }
+  }
+ },
+ "skills": {
+  "disabled": [],
+  "link": [
+   "claude",
+   "agents"
+  ],
+  "packs": [
+   "core-research"
+  ]
+ },
+ "supervisor": {
+  "attempt_timeout_minutes": 90,
+  "auto_apply_operational": true,
+  "commit_exclude": [
+   "outputs/",
+   "results/",
+   "patch*.yaml",
+   "*.pyc",
+   "__pycache__/",
+   ".venv/"
+  ],
+  "commit_verified_work": true,
+  "context_max_chars": 24000,
+  "enforce_completion": true,
+  "hpc_poll_seconds": 30,
+  "max_attempts_per_task": 3,
+  "max_auto_tasks": 5,
+  "max_hpc_resubmissions": 1,
+  "max_parallel_agents": 1,
+  "max_total_attempts": 20,
+  "max_wall_minutes": 480,
+  "on_failure": "diagnose_and_repair",
+  "poll_seconds": 5,
+  "require_approval_for_scientific_changes": true,
+  "session_resume": "auto"
+ },
+ "supervisor_assistant": {
+  "model": null,
+  "profile": null,
+  "timeout_seconds": 900
+ },
+ "verification": {
+  "check_timeout_seconds": 600,
+  "checks_gate_task_completion": true,
+  "independent_reviewer": true,
+  "require_evidence_for_supported": true,
+  "require_review_for_supported": true
+ }
+}

@@ -1,0 +1,225 @@
+# Project skills: where each imported skill came from, and project settings for it.
+# always: list as always-on in current.md · applies_to: task types/roles/tags it is suggested for.
+clean-dataset:
+  catalog: clean-dataset
+  origin: first-party
+  license: MIT
+  installed_hash: dd384227a665d70f
+  applies_to: [data]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+engineering-loop:
+  catalog: engineering-loop
+  origin: first-party
+  license: MIT
+  installed_hash: 434eae46e0a9fceb
+  applies_to: [implementation, debug, implementer]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+experimental-design:
+  catalog: experimental-design
+  origin: bundled
+  license: MIT
+  installed_hash: 14eff38977a0b2eb
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  origin_url: https://github.com/k-dense-ai/scientific-agent-skills
+  packs: [core-research]
+  applies_to: [research, experiment]
+failure-triage:
+  catalog: failure-triage
+  origin: first-party
+  license: MIT
+  installed_hash: 7609ea0bd804ffdb
+  applies_to: [debug]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+hpc-setup:
+  catalog: hpc-setup
+  origin: first-party
+  license: MIT
+  installed_hash: a891608c62946ca5
+  applies_to: [hpc]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+hypothesis-design:
+  catalog: hypothesis-design
+  origin: first-party
+  license: MIT
+  installed_hash: a54dcb9d79bd2c7b
+  applies_to: [planner, research]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+hypothesis-generation:
+  catalog: hypothesis-generation
+  origin: bundled
+  license: MIT
+  installed_hash: d27bf2b01ebe7b78
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  origin_url: https://github.com/k-dense-ai/scientific-agent-skills
+  packs: [core-research]
+  applies_to: [research, planner]
+independent-review:
+  catalog: independent-review
+  origin: first-party
+  license: MIT
+  installed_hash: 2fe511ef05c054db
+  applies_to: [verifier, verification]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+literature-evidence:
+  catalog: literature-evidence
+  origin: first-party
+  license: MIT
+  installed_hash: a21937099451c1a0
+  applies_to: [research]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+parameter-tuning:
+  catalog: parameter-tuning
+  origin: first-party
+  license: MIT
+  installed_hash: 44389d42a11383cc
+  applies_to: [experiment]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:44-05:00'
+promote-validated-work:
+  catalog: promote-validated-work
+  origin: first-party
+  license: MIT
+  installed_hash: b55f3ee6bf2ce890
+  applies_to: [verifier]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+receiving-code-review:
+  catalog: receiving-code-review
+  origin: bundled
+  license: MIT
+  installed_hash: fe891912f9bd300c
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  origin_url: https://github.com/obra/superpowers
+  packs: [core-research]
+  applies_to: [implementation]
+reproduce-paper:
+  catalog: reproduce-paper
+  origin: first-party
+  license: MIT
+  installed_hash: 011eb21008c8d3d4
+  applies_to: [research]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+reproducibility-audit:
+  catalog: reproducibility-audit
+  origin: first-party
+  license: MIT
+  installed_hash: cbd4e7d271bef8c3
+  applies_to: [verification, verifier]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+requesting-code-review:
+  catalog: requesting-code-review
+  origin: bundled
+  license: MIT
+  installed_hash: 77ad91f2c7d067c1
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  origin_url: https://github.com/obra/superpowers
+  packs: [core-research]
+  applies_to: [implementation]
+research-context:
+  catalog: research-context
+  origin: first-party
+  license: MIT
+  installed_hash: 3bfa2c5c599ffb18
+  applies_to: []
+  packs: [core-research]
+  always: true
+  installed_at: '2026-11-07T21:30:45-05:00'
+run-experiment:
+  catalog: run-experiment
+  origin: first-party
+  license: MIT
+  installed_hash: d4ffb17aa0d961ff
+  applies_to: [experiment]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+scientific-briefing:
+  catalog: scientific-briefing
+  origin: first-party
+  license: MIT
+  installed_hash: d736b3785ce80164
+  applies_to: []
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+scientific-critical-thinking:
+  catalog: scientific-critical-thinking
+  origin: bundled
+  license: MIT
+  installed_hash: 332b6499b8157e7f
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: a25cf9ec00e2745d03f8704acf6f6919694ccd9a
+  origin_url: https://github.com/k-dense-ai/scientific-agent-skills
+  packs: [core-research]
+  applies_to: [analysis, verifier]
+scientific-handoff:
+  catalog: scientific-handoff
+  origin: first-party
+  license: MIT
+  installed_hash: 24c9265bd0f2c465
+  applies_to: [planner]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+scientific-visualization:
+  catalog: scientific-visualization
+  origin: first-party
+  license: MIT
+  installed_hash: 37cfbd1599b73801
+  applies_to: [analysis, synthesis]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+synthesize-experiment:
+  catalog: synthesize-experiment
+  origin: first-party
+  license: MIT
+  installed_hash: 5d7d2933b7294413
+  applies_to: [synthesis, analysis]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+systematic-debugging:
+  catalog: systematic-debugging
+  origin: bundled
+  license: MIT
+  installed_hash: f5e7d0475515d85a
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  origin_url: https://github.com/obra/superpowers
+  packs: [core-research]
+  applies_to: [debug]
+uncertainty-analysis:
+  catalog: uncertainty-analysis
+  origin: first-party
+  license: MIT
+  installed_hash: 9f5ba23be92e455c
+  applies_to: [analysis, experiment]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+validation-oracles:
+  catalog: validation-oracles
+  origin: first-party
+  license: MIT
+  installed_hash: cdcbcf794bc43b75
+  applies_to: [implementation, verification, verifier]
+  packs: [core-research]
+  installed_at: '2026-11-07T21:30:45-05:00'
+verification-before-completion:
+  catalog: verification-before-completion
+  origin: bundled
+  license: MIT
+  installed_hash: aa962f4d21d2a388
+  installed_at: '2026-11-07T21:30:45-05:00'
+  commit: 2ce8aa15d05bd57213e6f746f953aafb7ded7a8b
+  origin_url: https://github.com/obra/superpowers
+  packs: [core-research]
+  applies_to: [implementation, implementer]

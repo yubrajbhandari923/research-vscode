@@ -4041,7 +4041,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             rc = fn(a, p)
             if fn.__name__ in MUTATING:
                 try:
-                    C.write_current_md(p)
+                    p.refresh_context()
                 except Exception:
                     pass
             return rc or 0

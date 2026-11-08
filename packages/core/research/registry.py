@@ -8,7 +8,8 @@ metadata the editor and the CLI need, so validation, help text and approval rule
     apply(p, ...)      validate, enforce approval rules, write surgically, audit, regenerate agent context
     reset(p, ...)      remove an override so the inherited value applies again
 
-Defaults are NOT repeated here: they are read from `store.DEFAULT_CONFIG`, so a default can never disagree with the code.
+This module OWNS every default: `defaults()` builds the nested dict (`store.DEFAULT_CONFIG` is that dict), `section(p, name)` is the
+merged view modules read, and `default(key)` one value. No other module keeps a default of its own.
 Anything the registry does not describe keeps working and stays editable in YAML; it is simply not offered as a form.
 """
 from __future__ import annotations
@@ -20,8 +21,164 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import configfile, providers as _providers, yamlio
-from .util import ResearchError, now_iso
+import copy
+
+from . import configfile, providers as _providers, strategy as _strategy, yamlio
+from .util import ResearchError, deep_merge, now_iso
+
+# ------------------------------------------------------------------------------------------------ defaults (the only place)
+SUPERVISOR: Dict[str, Any] = {
+    "poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
+    "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
+    "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
+    "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
+    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
+}
+GOVERNANCE: Dict[str, Any] = {
+    "experiments": {"agent_creation": "propose_only"},
+    "tasks": {"agent_creation": "bounded_auto", "allowed_auto_types": ["bugfix", "diagnostic", "verification"], "max_auto_per_experiment": 3},
+    "scientific_changes": {"require_human_approval": True},
+    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False},
+    "experiment_overrides": {},
+}
+AUTO_PROMOTION: Dict[str, Any] = {
+    "test_command": None, "numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True,
+    "review_timeout_minutes": 120, "max_file_mb": 5,
+    "protected_test_globs": ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
+}
+NOTIFICATIONS: Dict[str, Any] = {"halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False}}
+
+_CONFIG: Dict[str, Any] = {
+    "project": {
+        "name": "", "description": "", "goal": "", "status": "active",
+        "created_at": None, "git_repo": None, "default_backend": "local",
+    },
+    # Where things live for projects made by `Initialize Project`; relative paths are under the container folder (the parent of
+    # the main checkout). null = legacy placement (<name>-ledger / <name>-experiments beside the checkout).
+    "layout": {"main_dir": None, "ledger_dir": None, "experiments_dir": None, "workspace_file": None},
+    "agent_policy": {
+        "max_runs_without_synthesis": 5,
+        "max_failed_runs_without_review": 3,
+        "require_experiment_registration": True,
+        "require_synthesis_before_new_experiment": True,
+        "enforce_for_humans": False,
+    },
+    "backends": {
+        "slurm": {
+            "partition": None, "account": None, "time": "01:00:00", "cpus": None, "mem": None,
+            "gpus": None, "extra_args": [],
+            "setup": [],
+        },
+    },
+    "artifacts": {"hash_max_bytes": 64 * 1024 * 1024},
+    # Remote HPC execution. Opt-in: with no clusters configured, every `research hpc` command says so and
+    # nothing else changes. Never put passwords, keys or tokens here — OpenSSH (~/.ssh/config) owns auth.
+    "hpc": {
+        "default_cluster": None,
+        "clusters": {},                      # name -> see hpc.CLUSTER_DEFAULTS
+        "bundle": {
+            # Dirty/untracked sources are packaged (a commit alone is not a snapshot), minus these.
+            "exclude": [".git", ".research", "__pycache__", "*.pyc", ".venv", "venv", "node_modules",
+                        ".mypy_cache", ".pytest_cache", ".DS_Store", "*.egg-info", ".ipynb_checkpoints"],
+            "max_file_bytes": 8 * 1024 * 1024,     # a bigger source file must be named in `include` explicitly
+            "max_total_bytes": 256 * 1024 * 1024,
+            "include": [],                          # extra paths to package (datasets stay on the cluster)
+        },
+        "collect": {
+            "max_artifact_bytes": 32 * 1024 * 1024,  # bigger outputs stay remote and are referenced
+        },
+    },
+    "resume": {"stale_checkpoint_days": 14},
+    # Who does what. A profile is an agent CLI; roles map to profiles (null → default_profile).
+    "agents": {
+        "default_profile": "claude",
+        # Cross-provider continuation (supervisor.continue_with / automatic fallback). Fallback is opt-in and bounded by the supervisor's attempt limits.
+        "handoff": {"enabled": False, "fallback_order": list(_providers.KNOWN), "on_provider_unavailable": "pause", "on_unknown_execution_state": "pause"},
+        "roles": {"planner": None, "implementer": None, "verifier": None, "analyst": None},
+        # Generated from the provider registry: one plain profile per provider, `<provider>-fast|balanced|deep` model profiles
+        # (the strategies' levels point at these; swap a model here, not in routing) and `gemini`. A new provider needs no edit here.
+        "profiles": _providers.default_profiles(),
+    },
+    "verification": {
+        "require_review_for_supported": True,   # agents can't mark findings supported; a review must
+        "independent_reviewer": True,           # the reviewer must not be the finding's author
+        "require_evidence_for_supported": True,
+        "checks_gate_task_completion": True,    # `task done` runs the task's checks; failures block agents
+        "check_timeout_seconds": 600,
+    },
+    "coordination": {"stale_task_hours": 4},
+    "context": {"max_chars": 12000},             # budget for context/current.md (~3k tokens)
+    "skills": {"link": ["claude", "agents"], "packs": ["core-research"], "disabled": []},    # expose .research/skills to .claude/skills and .agents/skills
+    # The Scientist Guide is a Quarto book on the main branch (docs/scientist-guide). `highlights` decides which findings count as
+    # important results; `draft.*` bounds what an agent may write into it (see guide.py).
+    "guide": {"enabled": True, "dir": "docs/scientist-guide", "profile": None, "model": "claude-opus-5-5",
+              "auto_log": True, "highlights": "supported",
+              "draft": {"trigger": "result", "max_words": 150, "max_sections": 3, "max_figures": 1},
+              "publish": {"workflow": True}},
+    # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
+    "orchestration": {
+        "enabled": False,
+        "tiers": {
+            "opus": {"model": "claude-opus-5-5", "fallback": ["opus"]},
+            "sonnet": {"model": "claude-sonnet-5-5", "fallback": ["sonnet"]},
+            "haiku": {"model": "claude-haiku-5-5", "fallback": ["haiku"]},
+        },
+        "available": [],
+        "active_strategy": None,    # null → legacy tier routing above; else a name from `strategies` (research strategy use)
+        "strategies": _strategy.BUILTIN,
+        "limits": {"haiku_attempts": 3, "sonnet_attempts": 2, "escalations": 2, "max_turns": None,
+                   "tuning_evaluations": 50},
+    },
+    # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
+    "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
+                "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300, "require_seed": False},   # hooks: see hooks.py (human approval required)
+    "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
+    # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
+    # profile other than `native` applies, and a restrictive profile never silently falls back to native.
+    # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
+    "environment": {"python": None, "packages": []},
+    "supervisor": SUPERVISOR,
+    "governance": GOVERNANCE,   # who may create experiments/tasks; PIN approvals (governance.py)
+    "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
+    # Opt-in unattended promotion (autopromote.py), supervisor interventions (intervene.py) and halt notifications (notify.py). Secrets (Telegram) are NOT here.
+    "auto_promotion": AUTO_PROMOTION,
+    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900},
+    "intervention": {"require_approval": False},
+    "notifications": NOTIFICATIONS,
+    "sandbox": {
+        "enabled": False,                         # true → `default_profile` applies to jobs that name no profile
+        "default_profile": "native",
+        "approved_roots": [],                     # when set, datasets and extra mounts must live under one of these
+        "agent": {"mode": "none"},                # none | advisory (written boundaries in briefs; NOT enforced)
+        "assign": {"experiments": {}, "tasks": {}},
+        "profiles": {
+            "native": {"runtime": "native"},
+            "restricted": {"runtime": "auto", "network": {"mode": "disabled"}},
+            "gpu-research": {"runtime": "auto", "gpu": True, "network": {"mode": "disabled"}},
+            "custom": {"runtime": "auto"},
+        },
+    },
+}
+
+
+def defaults() -> Dict[str, Any]:
+    """A fresh copy of the full default configuration (callers may edit it)."""
+    return copy.deepcopy(_CONFIG)
+
+
+def default(key: str) -> Any:
+    """One default by dotted key, e.g. `default("context.max_chars")`."""
+    present, v = configfile._get(_CONFIG, key)
+    if not present:
+        raise KeyError(key)
+    return copy.deepcopy(v)
+
+
+def section(p, name: str) -> Dict[str, Any]:
+    """The merged view of one top-level section: its defaults under whatever `p.config` holds (which may be a partial dict)."""
+    return deep_merge(_CONFIG[name], p.config.get(name) or {})
+
 
 CATEGORIES = [
     ("project", "Project"), ("policy", "Research policy"), ("verification", "Verification"),
@@ -40,10 +197,14 @@ class Option:
                  depends_on: Optional[str] = None, doc: Optional[str] = None, unit: Optional[str] = None, advanced: bool = False):
         self.key, self.type, self.category, self.label, self.help = key, type_, category, label, help_
         self.why, self.effect, self.risk = why, effect, risk
-        self.choices, self.min, self.max, self.nullable = choices, min_, max_, nullable
+        self._choices, self.min, self.max, self.nullable = choices, min_, max_, nullable
         self.affects = affects or []
         self.scopes, self.restart, self.depends_on, self.doc, self.unit = scopes, restart, depends_on, doc, unit
         self.advanced = advanced
+
+    @property
+    def choices(self) -> Optional[List[Any]]:
+        return self._choices() if callable(self._choices) else self._choices   # callable: resolved late (packs import the store)
 
     def meta(self) -> Dict[str, Any]:
         return {"key": self.key, "type": self.type, "category": self.category, "label": self.label, "help": self.help,
@@ -136,7 +297,7 @@ OPTIONS: List[Option] = [
     _o("harness.hooks_timeout_seconds", "int", "hooks", "Hook timeout", "How long an approved hook command may run before it is stopped.", min_=1, max_=86400, unit="seconds",
        why="Hooks run shell commands; a hung one must not stall dispatch.", effect="Applies to every hook without its own timeout."),
     _o("skills.packs", "list", "hooks", "Skill packs", "Which skill packs are on. Core Research is always on; the others add skills for a field (Scientific Python, Machine Learning, Physics, Medical Imaging, Quantum, HPC, Frontend, Scientific Writing). Put it in the machine file to choose the default for every new project.",
-       choices=[x["id"] for x in __import__("research.packs", fromlist=["x"]).pack_defs()], why="Skills only help when they fit the work; more is not better.",
+       choices=lambda: [x["id"] for x in __import__("research.packs", fromlist=["x"]).pack_defs()], why="Skills only help when they fit the work; more is not better.",
        effect="Enabling a pack installs its skills (yours are never overwritten). Disabling stops it being on.", affects=[".research/skills", ".research/skills.yaml"]),
     _o("skills.disabled", "list", "hooks", "Disabled skills", "Skills that stay on disk but are not suggested to agents or linked into .claude/skills and .agents/skills.",
        why="Switch a skill off without deleting it or its history.", effect="Takes effect on the next skills refresh.", affects=[".claude/skills", ".agents/skills"]),

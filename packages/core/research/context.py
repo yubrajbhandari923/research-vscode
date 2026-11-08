@@ -5,7 +5,7 @@ import datetime as _dt
 import os
 from typing import Any, Dict, List, Optional
 
-from . import gitinfo
+from . import gitinfo, registry
 from .schema import normalize_id
 from .services import baseline, experiment_state, experiments_needing_synthesis, list_notes, list_syntheses
 from .store import Project, _atomic_write
@@ -278,7 +278,7 @@ def resume_context(p: Project) -> Dict[str, Any]:
     last = p.q1("SELECT * FROM events WHERE action NOT IN ('restored','import_error','reconcile_error') ORDER BY id DESC LIMIT 1")
     cp_row = p.q1("SELECT id FROM checkpoints ORDER BY created_at DESC, id DESC LIMIT 1")
     cp = checkpoint_detail(p, cp_row["id"]) if cp_row else None
-    stale_days = float(p.config.get("resume", {}).get("stale_checkpoint_days") or 14)
+    stale_days = float(p.config.get("resume", {}).get("stale_checkpoint_days") or registry.default("resume.stale_checkpoint_days"))
     since: Dict[str, Any] = {"events": 0, "runs": 0, "findings": [], "experiments": [], "decisions": []}
     if cp:
         cp["age_days"] = _age_days(cp["created_at"])
@@ -504,7 +504,7 @@ _LIMITS = [(15, 12, 20, 15, 10, 10), (8, 6, 10, 8, 5, 6), (5, 3, 5, 5, 3, 4), (3
 def render_current_md(p: Project, r: Optional[Dict[str, Any]] = None) -> str:
     """Tier-1 agent context. Lists shrink step by step until the text fits `context.max_chars`."""
     r = r or resume_context(p)
-    budget = int((p.config.get("context") or {}).get("max_chars") or 12000)
+    budget = int((p.config.get("context") or {}).get("max_chars") or registry.default("context.max_chars"))
     extra = _extra_sections(p)
     text = ""
     for lim in _LIMITS:

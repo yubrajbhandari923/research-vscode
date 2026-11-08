@@ -30,14 +30,9 @@ import subprocess
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import promotion as PR, workspace as W
+from . import promotion as PR, registry, workspace as W
 from .util import PolicyBlocked, ResearchError, now_iso
 
-DEFAULTS: Dict[str, Any] = {
-    "test_command": None, "numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True,
-    "review_timeout_minutes": 120, "max_file_mb": 5,
-    "protected_test_globs": ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
-}
 TERMINAL = ("integrated", "noop", "cancelled")
 
 
@@ -46,7 +41,7 @@ def policy(p) -> Dict[str, Any]:
     """Canonical test command: `promotion.test_command` (the one Settings → Git & workspaces shows, used by manual and automatic promotion).
     `auto_promotion.test_command` is a legacy alias, honoured only when the canonical one is empty; if both are set and differ that is a
     configuration conflict (see `conflicts`). Everything else is under `auto_promotion`."""
-    c = {**DEFAULTS, **(p.config.get("auto_promotion") or {})}
+    c = registry.section(p, "auto_promotion")
     canon, legacy = (p.config.get("promotion") or {}).get("test_command"), c["test_command"]
     c["test_command"] = canon or legacy
     c["test_command_source"] = "promotion.test_command" if canon else "auto_promotion.test_command (legacy)" if legacy else None

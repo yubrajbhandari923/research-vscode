@@ -21,10 +21,10 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+from . import registry
 from .util import PolicyBlocked, ResearchError, now_iso
 
 API = "https://api.telegram.org"
-DEFAULTS = {"halt_grace_seconds": 120, "auto_debug": False, "telegram": {"enabled": False}}
 _threads: Dict[str, threading.Thread] = {}
 
 
@@ -156,8 +156,7 @@ def _write(path: str, d: Dict[str, Any]) -> None:
 
 
 def cfg(p) -> Dict[str, Any]:
-    n = p.config.get("notifications") or {}
-    return {**DEFAULTS, **n, "telegram": {**DEFAULTS["telegram"], **(n.get("telegram") or {})}}
+    return registry.section(p, "notifications")
 
 
 def latest_debug(p) -> Optional[Dict[str, Any]]:

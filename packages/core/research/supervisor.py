@@ -25,18 +25,10 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import autopromote as AP, durability, planspec as PS, taskprompt
+from . import autopromote as AP, durability, planspec as PS, registry, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
-DEFAULTS: Dict[str, Any] = {
-    "poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
-    "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
-    "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
-    "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
-    "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
-    "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
-}
 PHASES = ("waiting", "ready", "awaiting_approval", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
 REPAIRABLE = {"incomplete_deliverable", "incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
@@ -47,7 +39,7 @@ CATEGORIES = ("missing_prerequisite", "role_contradiction", "incomplete_delivera
 
 # ----------------------------------------------------------------------------------------------- config & paths
 def cfg(p: Project, plan_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    c = {**DEFAULTS, **(p.config.get("supervisor") or {})}
+    c = registry.section(p, "supervisor")
     ex = ((plan_state or {}).get("spec") or {}).get("execution") or {}
     for k in ("max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "on_failure", "max_hpc_resubmissions",
               "require_approval_for_scientific_changes", "escalation"):
@@ -128,7 +120,7 @@ def authority(tid: str, reason: str) -> Iterator[None]:
 
 
 def is_supervised(p: Project, tid: str) -> bool:
-    if not (p.config.get("supervisor") or {}).get("enforce_completion", DEFAULTS["enforce_completion"]):
+    if not (p.config.get("supervisor") or {}).get("enforce_completion", registry.default("supervisor.enforce_completion")):
         return False
     hit = PS.find_task_key(p, tid)
     if not hit:
@@ -311,7 +303,7 @@ def concurrency(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
     eff = int(cfg(p, st)["max_parallel_agents"])
     src = "plan YAML (execution.max_parallel_agents)" if plan else "project settings (supervisor.max_parallel_agents)" if proj else "built-in default"
     tasks = (rs or {}).get("tasks") or {}
-    return {"effective": eff, "source": src, "plan": plan, "project": proj, "default": DEFAULTS["max_parallel_agents"],
+    return {"effective": eff, "source": src, "plan": plan, "project": proj, "default": registry.default("supervisor.max_parallel_agents"),
             "running": len(_active(rs)) if rs else 0, "ready_waiting": sum(1 for e in tasks.values() if e.get("phase") == "ready"),
             "note": "Tasks in the same experiment worktree never run at the same time."}
 

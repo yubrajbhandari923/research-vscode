@@ -17,6 +17,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 
+from . import registry
 from .schema import REVIEW_VERDICTS, normalize_id, type_of
 from .store import Project, append_jsonl
 from .processes import shell_check
@@ -108,7 +109,7 @@ def run_check(p: Project, c: Dict[str, Any], task: Dict[str, Any]) -> Dict[str, 
     ws = W.for_task(p, task["id"]) if task.get("id") else None
     base = ws["path"] if ws else None
     if c["type"] == "command":
-        timeout = float(_policy(p).get("check_timeout_seconds") or 600)
+        timeout = float(_policy(p).get("check_timeout_seconds") or registry.default("verification.check_timeout_seconds"))
         from . import envcheck
         r = shell_check(envcheck.expand(p, c["run"]), cwd=base or p.root, timeout=timeout, output_limit=2000,
                         env={**os.environ, "RESEARCH_ROOT": p.root, "PATH": envcheck.path_with_python(p)})
@@ -237,7 +238,7 @@ def gate_task_completion(p: Project, task_id: str) -> List[str]:
 
 def check_finding_status(p: Project, status: Optional[str], via_review: bool = False) -> None:
     """Gate: agents can't set a finding to `supported` except through an independent review."""
-    if status != "supported" or via_review or not _policy(p).get("require_review_for_supported", True):
+    if status != "supported" or via_review or not _policy(p).get("require_review_for_supported", registry.default("verification.require_review_for_supported")):
         return
     if _enforced(p):
         raise PolicyBlocked(

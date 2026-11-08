@@ -12,21 +12,15 @@ from __future__ import annotations
 import contextlib
 from typing import Any, Dict, Iterator, Optional
 
-from .util import PolicyBlocked, ResearchError, deep_merge
+from . import registry
+from .util import PolicyBlocked, ResearchError
 
-DEFAULTS: Dict[str, Any] = {
-    "experiments": {"agent_creation": "propose_only"},
-    "tasks": {"agent_creation": "bounded_auto", "allowed_auto_types": ["bugfix", "diagnostic", "verification"], "max_auto_per_experiment": 3},
-    "scientific_changes": {"require_human_approval": True},
-    "approval": {"require_pin": True, "require_rationale": True, "record_rejections": True, "confirm_human_experiment_creation": False},
-    "experiment_overrides": {},
-}
 _STRICT = {"bounded_auto": 0, "propose_only": 1, "human_only": 2}
 _GRANTS: list = []   # in-process: set only while a human-approved proposal is being applied
 
 
 def cfg(p) -> Dict[str, Any]:
-    c = deep_merge(DEFAULTS, p.config.get("governance") or {})
+    c = registry.section(p, "governance")
     for sect, vals in (("experiments", ("human_only", "propose_only")), ("tasks", tuple(_STRICT))):
         v = c[sect]["agent_creation"]
         if v not in vals:

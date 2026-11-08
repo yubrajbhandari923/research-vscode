@@ -1,0 +1,70 @@
+# Research project configuration (human-editable).
+# Only settings that differ from the inherited defaults are listed here.
+#   research config show --effective    every value actually in force
+#   research config show --sources      where each value comes from
+#   research config check               validate this file
+# Comments and ordering are preserved: Research OS rewrites only the keys it is asked to change.
+
+project:
+  name: legacy
+  goal: g
+  description: ''
+  created_at: '2026-11-07T21:30:44-05:00'
+  git_repo: null
+
+# ── Commonly adjusted settings (uncomment a line to override it) ──
+# agent_policy:
+#   max_runs_without_synthesis: 5
+#   max_failed_runs_without_review: 3
+#   require_experiment_registration: true
+#   require_synthesis_before_new_experiment: true
+#   enforce_for_humans: false
+# backends:
+#   slurm:
+#     partition: null
+#     account: null
+#     time: 01:00:00
+#     cpus: null
+#     mem: null
+#     gpus: null
+#     setup: []
+# context:
+#   max_chars: 12000
+# coordination:
+#   stale_task_hours: 4
+# resume:
+#   stale_checkpoint_days: 14
+# verification:
+#   require_review_for_supported: true
+#   independent_reviewer: true
+#   checks_gate_task_completion: true
+#   check_timeout_seconds: 600
+# guide:
+#   enabled: true
+#   auto_log: true
+#   highlights: supported
+#   draft:
+#     trigger: result
+#     max_words: 150
+# git:
+#   commit_checkpoints: false
+# artifacts:
+#   hash_max_bytes: 67108864
+# hpc:
+#   default_cluster: duke   # ← set for every project in your machine config
+# orchestration:
+#   enabled: false
+# Everything else keeps its default. `research config show --effective` prints every
+# value in force, including the agent profiles and orchestration tiers not shown here.
+# Values marked ← come from /Users/yubraj/.config/research-os/config.yaml
+# Uncommenting one here overrides it for this project only.
+agents:
+  default_profile: codex
+orchestration:
+  active_strategy: sonnet_first
+  enabled: true
+  strategies:
+    mine:
+      extends: opus_first
+supervisor:
+  max_parallel_agents: 2
