@@ -603,3 +603,104 @@ def test_chat_doctor_names_each_problem_and_its_fix(tmp_path, wire, monkeypatch)
         D.save(guild_id="G1")
         live = {c["id"]: c for c in manage.doctor(p, live=True)["checks"]}
         assert live["discord.live"]["level"] == "ok" and live["discord.member"]["level"] == "error" and "oauth2/authorize" in live["discord.member"]["fix"]
+
+
+# ----------------------------------------------------------------------------------------------- /sethome, /say, /tasks, /health
+def _posts(monkeypatch):
+    posts = []
+    monkeypatch.setattr(D, "_rest", lambda token, method, route, body=None: posts.append((method, route, (body or {}).get("content"))) or {})
+    return posts
+
+
+def test_sethome_is_saved_in_discord_json_and_status_doctor_test_and_alerts_agree(env, monkeypatch):
+    from research.chat import Message, read_json, write_json
+    fake, ch = env
+    before = D.credentials()
+    ix = run(fake.slash_cmd(ch, "sethome", where={"channel": "300"}))
+    assert "now receives digests" in ix.impl.followups[0].embed["description"] and "research chat test discord" in ix.impl.followups[0].embed["description"]
+    c = D.credentials()
+    assert c["home_channel_id"] == "300"
+    assert {k: c[k] for k in ("token", "guild_id", "application_id", "project_channels")} == {k: before[k] for k in ("token", "guild_id", "application_id", "project_channels")}, \
+        "/sethome merges: credentials and project channel mappings stay"
+    assert not (read_json(gateway.gdir("chats.json")).get("home") or {}).get("discord"), "no second copy"
+    with Project(fake.roots[0]) as p:
+        assert D.status(p)["home_channel_set"] and manage.status(p)["platforms"]["discord"]["home_channel_set"]
+        assert {c["id"]: c["level"] for c in manage.doctor(p)["checks"]}["discord.home"] == "ok"
+    posts = _posts(monkeypatch)
+    assert manage.test_discord() == {"sent": True, "channel": "300"} and posts[0][:2] == ("POST", "/channels/300/messages")
+    run(ch.deliver(Message("an alert", chat=None)))                       # no project channel, no explicit chat: the home channel
+    assert any("an alert" in (t or "") for t in fake.texts("300"))
+    # a gateway restart: new channel and gateway objects read the same file
+    fake2 = FakeDiscord()
+    ch2 = D.DiscordChannel(fake2, gap=0)
+    assert gateway.Gateway()._home("discord", Message("x")).chat == "300"
+    run(ch2.deliver(Message("after restart")))
+    assert any("after restart" in (t or "") for t in fake2.texts("300"))
+    # a home set by an older version lived only in gateway/chats.json: it is adopted, not lost
+    c = D.credentials()
+    c.pop("home_channel_id")
+    write_json(D.path(), c)
+    write_json(gateway.gdir("chats.json"), {"home": {"discord": "400"}})
+    assert D.home_channel() == "400" and D.credentials()["home_channel_id"] == "400"
+
+
+def test_test_discord_says_what_is_missing(env):
+    from research.chat import write_json
+    fake, ch = env
+    c = D.credentials()
+    c.pop("home_channel_id")
+    write_json(D.path(), c)
+    r = manage.test_discord()
+    assert r["sent"] is False and "/sethome" in r["reason"]
+    D.clear_credentials()
+    assert "research chat setup discord" in manage.test_discord()["reason"]
+
+
+def test_say_without_a_task_picks_the_one_that_needs_you_or_lists_the_choices(env, monkeypatch):
+    from research import intervene
+    from research.api import chat as CHAT
+    fake, ch = env
+    sent = []
+    monkeypatch.setattr(intervene, "request", lambda p, task, text, source="": sent.append((task, text)) or {"state": "approved", "summary": "s", "id": "I-1"})
+    t = lambda tid, human: {"task": tid, "title": "Train model", "phase": "blocked" if human else "running", "plan": "main", "attempts": 2, "reason": None, "human": human}
+    with Project(fake.roots[0]) as p:
+        monkeypatch.setattr(CHAT, "_live", lambda p_: [t("T-3", True), t("T-5", False)])
+        CHAT._instruct(p, None, "lower the lr", "discord")
+        assert sent == [("T-3", "lower the lr")], "the task that needs a human wins"
+        monkeypatch.setattr(CHAT, "_live", lambda p_: [t("T-5", False)])
+        CHAT._instruct(p, None, "keep going", "discord")
+        assert sent[-1] == ("T-5", "keep going"), "the only running task is the default"
+        monkeypatch.setattr(CHAT, "_live", lambda p_: [t("T-3", True), t("T-4", True), t("T-5", False)])
+        with pytest.raises(ResearchError) as ei:
+            CHAT._instruct(p, None, "x", "discord")
+        msg = str(ei.value)
+        assert "Needs you:" in msg and "T-3 Train model [blocked, attempt 2]" in msg and "T-4" in msg and "Running: T-5" in msg and "/say T-3 <instruction>" in msg
+        monkeypatch.setattr(CHAT, "_live", lambda p_: [])
+        with pytest.raises(ResearchError, match="No task is running or waiting"):
+            CHAT._instruct(p, None, "x", "discord")
+        monkeypatch.setattr(CHAT, "_live", lambda p_: [t("T-3", True), t("T-5", False)])
+        r = CHAT.chat_cmd_tasks(p)
+        assert "Needs you:" in r["text"] and "/say T-3" in r["text"] and "Running:" in r["text"] and "/stop T-5" in r["text"]
+
+
+def test_slash_commands_in_a_task_thread_mean_that_task(env, monkeypatch):
+    fake, ch = env
+    D.save(threads={"alpha": {"T-9": "555"}})
+    seen = []
+    real = ch.inbox.command
+    monkeypatch.setattr(ch.inbox, "command", lambda inc: seen.append(inc.text) or real(inc))
+    run(fake.slash_cmd(ch, "say", text="lower the lr", where={"channel": "555"}))
+    assert seen[-1] == "/say alpha T-9 lower the lr"
+    run(fake.slash_cmd(ch, "stop", where={"channel": "555"}))
+    assert seen[-1] == "/stop alpha T-9"
+    run(fake.slash_cmd(ch, "say", text="other", task="T-1", where={"channel": "555"}))
+    assert seen[-1] == "/say alpha T-1 other", "an explicit task still wins"
+
+
+def test_health_command_and_tasks_are_registered(env):
+    assert "tasks" in commands.COMMANDS and "health" in commands.LOCAL
+    assert {"tasks", "health"} <= {c["name"] for c in D.slash_payload()}
+    fake, ch = env
+    ix = run(fake.slash_cmd(ch, "health"))
+    d = ix.impl.followups[0].embed["description"]
+    assert d.startswith("Chat health for") and "gateway" in d

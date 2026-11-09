@@ -89,7 +89,12 @@ def remove_discord(p) -> Dict[str, Any]:
 
 
 def test_discord() -> Dict[str, Any]:
-    return {"sent": discord_bot.send_rest("Research OS test message. Use /help for commands.")}
+    if not discord_bot.credentials().get("token"):
+        return {"sent": False, "reason": "no Discord token: run `research chat setup discord`"}
+    home = discord_bot.home_channel()
+    if not home:
+        return {"sent": False, "reason": "no home channel: type /sethome in the channel that should receive alerts (or `research chat setup discord --channel ID`)"}
+    return {"sent": discord_bot.send_rest("Research OS test message. Use /help for commands.", home), "channel": home}
 
 
 # ----------------------------------------------------------------------------------------------- doctor

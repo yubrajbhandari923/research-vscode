@@ -124,7 +124,11 @@ class Gateway:
 
     # --- delivery
     def _home(self, platform: str, m: Message) -> Message:
-        h = (read_json(gdir("chats.json")).get("home") or {}).get(platform)
+        if platform == "discord":
+            from . import discord_bot
+            h = discord_bot.home_channel()
+        else:
+            h = (read_json(gdir("chats.json")).get("home") or {}).get(platform)
         if h and not m.chat:
             m.chat = h
         return m

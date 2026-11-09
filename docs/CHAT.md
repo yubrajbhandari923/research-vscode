@@ -40,7 +40,8 @@ The bot connects **outbound** to Discord; nothing listens on a public URL.
 3. The setup lists the servers the bot is in (`GET /users/@me/guilds`) and asks which if there are several (`--guild ID` to say it up front).
    Optional `--channel ID` makes that channel this project's alert channel and the home channel.
 4. Send the bot a **direct message**. It answers with a pairing code; type it at the setup prompt (or later: `research chat pair CODE`).
-   Run `/sethome` in the channel that should receive digests and machine alerts.
+   Run `/sethome` in the channel (not a thread) that should receive digests and machine alerts. It is saved in `discord.json` (token, server and project
+   channels stay as they are), the one place `research chat status`, `doctor`, `test discord` and the alerts all read; a home chosen before 3.2.2 is picked up automatically.
    Discord answers HTTP 429 now and then (setup makes two requests to Discord). Research OS reads `Retry-After` and retries by itself when the wait is
    10 seconds or less (up to four attempts, saying so as it waits). A longer wait, or a limit that does not clear, stops with the time Discord asked for;
    nothing is saved at that point, so run the same command again afterwards.
@@ -48,8 +49,12 @@ The bot connects **outbound** to Discord; nothing listens on a public URL.
 
 What you get:
 
-* **Slash commands** (registered in your server, typed options, autocomplete for project, task and plan ids): `/status /blocked /task /logs /report /finding /usage /proposals /interventions /digest /decisions /options /whoami /help /project /say /choose /debug /pause /resume /stop /continue /approve-start /sethome`.
+* **Slash commands** (registered in your server, typed options, autocomplete for project, task and plan ids): `/status /blocked /tasks /task /logs /report /finding /usage /proposals /interventions /digest /decisions /options /whoami /health /help /project /say /choose /debug /pause /resume /stop /continue /approve-start /sethome`.
   Replies are private to you (ephemeral). A project channel (`--channel`) implies the project, so `/status` there needs no argument.
+  **Inside a task's thread, `/say`, `/task`, `/logs`, `/stop` and `/approve-start` mean that task**: no id to type. Elsewhere, `/tasks` lists what is running or
+  waits for you, each with the command to use. `/say text` with no task picks the one task that needs you, else the only running task; if it cannot choose
+  it lists the candidates (`Needs you: T-3 … Running: T-5 …`) and shows the exact command. `/health` is `research chat doctor` in the chat: what is set up,
+  what is missing and the command to run on your computer.
 * **Alerts as embeds**: color by severity (green ok, yellow warn, red error, blue info), fields (task, plus whatever the alert carries), project and time in the footer.
   With `notifications.discord.thread_per_task` (default on) alerts about a task go to one **thread** named after it; the channel gets a one-line pointer for errors and approvals.
 * **Buttons and menus**: one button per option of a decision request (a **select menu** when there are more than five), Reject, *Approve on my computer*, and an **Instruct** button that opens a text box and sends your words as `/say` for that task.
@@ -82,7 +87,7 @@ The allow-list is by **platform user id** (never display name), checked on every
 
 | Role | May |
 |---|---|
-| `viewer` | read: `/status /blocked /task /logs /report /finding /usage /proposals /interventions /digest /options /whoami /help /project` |
+| `viewer` | read: `/status /blocked /tasks /health /task /logs /report /finding /usage /proposals /interventions /digest /options /whoami /help /project` |
 | `operator` | plus steering: `/say /choose /debug /pause /resume /stop /continue /approve-start /sethome`, reject buttons |
 | `approver` | plus answering an authenticator-code prompt, if the owner enabled chat approval (see GOVERNANCE.md) |
 

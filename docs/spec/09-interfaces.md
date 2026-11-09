@@ -142,7 +142,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-214 operations.
+215 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -178,6 +178,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `chat_cmd_status` |  |  |  | read |
 | `chat_cmd_stop` | task | yes |  | decide |
 | `chat_cmd_task` | task |  |  | read |
+| `chat_cmd_tasks` |  |  |  | read |
 | `chat_cmd_usage` | period |  |  | read |
 | `chat_gateway` | action | yes |  |  |
 | `chat_pair` | code, role | yes |  |  |

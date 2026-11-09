@@ -1,7 +1,7 @@
 {
   "name": "research-vscode",
   "private": true,
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "Research Panel \u2014 VS Code extension + Python core/CLI for research provenance and memory.",
   "scripts": {
     "postinstall": "npm --prefix packages/vscode-extension install --no-audit --no-fund",

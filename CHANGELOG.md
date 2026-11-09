@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.2.2
+
+- **`/sethome` on Discord now sticks.** It saved the home channel only in `gateway/chats.json` while `status`, `doctor` and `chat test discord` read `discord.json`, so it said "done" and `test` said "not configured". `discord.json` is now the one place (merged, so the token, server and project channels are kept); a home set by an older version is adopted. `research chat test discord` says what is missing.
+- **`/say` is useful without a task id.** It picks the one task that needs you (else the only running task); when it cannot choose it lists the candidates with their state and the exact command, instead of "Which task? … Blocked: none". Inside a task's thread, `/say /task /logs /stop /approve-start` mean that thread's task.
+- **New Discord commands:** `/tasks` (what is running or waits for you, with the command for each) and `/health` (the chat doctor, in chat).
+
 ## 3.2.1
 
 - **Discord setup survives rate limits.** `GET /users/@me/guilds` answering HTTP 429 no longer ends setup: `Retry-After` (header or body) is honoured, waits of 10 s or less are retried automatically (four attempts, announced as they happen), a longer wait stops with the time Discord asked for, and nothing is saved on failure. Setup also stops asking Discord for the same server list twice.

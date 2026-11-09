@@ -30,6 +30,7 @@ COMMANDS: Dict[str, Tuple[str, Any, str]] = {
     "decisions": ("chat_cmd_decisions", lambda a: {}, "open decision requests, one button per option"),
     "options": ("chat_cmd_options", lambda a: {}, "show the latest diagnosis"),
     "debug": ("chat_cmd_debug", lambda a: {}, "diagnose the halt now"),
+    "tasks": ("chat_cmd_tasks", lambda a: {}, "what is running, what waits for you, with the command for each"),
     "say": ("chat_cmd_say", lambda a: {"text": a}, "[T-12] text: instruct the supervisor"),
     "choose": ("chat_cmd_choose", lambda a: {"n": a}, "N: pick a diagnosis option"),
     "pause": ("chat_cmd_pause", lambda a: {"plan": a or None}, "[plan]"),
@@ -39,7 +40,8 @@ COMMANDS: Dict[str, Tuple[str, Any, str]] = {
     "approve-start": ("chat_cmd_approve_start", lambda a: {"task": a}, "T-12: let the task start"),
 }
 LOCAL = {"whoami": "your role and the projects you can see", "help": "this list", "project": "use NAME | list: choose the project for this chat",
-         "sethome": "send digests and machine alerts to this chat", "pair": "get a pairing code (groups)"}
+         "sethome": "send digests and machine alerts to this chat", "health": "is chat set up and running? (what `research chat doctor` checks)",
+         "pair": "get a pairing code (groups)"}
 ALIASES = {"start": "help", "approve": "REFUSE", "accept": "REFUSE", "void": "REFUSE", "promote": "REFUSE", "restart": "REFUSE", "cancel": "REFUSE"}
 _now = time.time
 
@@ -236,6 +238,17 @@ class Inbox:
             return self._msg(inc, f"{inc.user_name or inc.user_id}: {role} on {self.platform} (id {inc.user_id})\nProjects: {', '.join(projs) or 'none'}")
         if cmd == "pair":
             return self._msg(inc, f"You are already paired as {role}.")
+        if cmd == "health":
+            from . import manage
+            from ..store import Project
+            label, root = self._project(inc)
+            with Project(root, sync=False) as p:
+                d = manage.doctor(p)
+            mark = {"ok": "✓", "info": "·", "warn": "!", "error": "✗"}
+            lines = [f"Chat health for {label}:"]
+            for c in d["checks"]:
+                lines.append(f"{mark[c['level']]} {c['message']}" + (f"\n    on your computer: {c['fix']}" if c["fix"] and c["level"] in ("warn", "error") else ""))
+            return self._msg(inc, "\n".join(lines), "ok" if d["ok"] else "warn")
         if cmd == "project":
             sub, _, name = rest.partition(" ")
             if sub == "use" and name.strip() in projs:
@@ -245,8 +258,13 @@ class Inbox:
         if cmd == "sethome":
             if not pairing.at_least(role, "operator"):
                 return self._msg(inc, "/sethome needs the operator role.", "warn")
-            self._set_chat(f"home|{self.platform}", inc.chat)
-            return self._msg(inc, "This chat now receives digests and machine alerts.", "ok")
+            if self.platform == "discord":
+                from . import discord_bot
+                discord_bot.set_home(inc.chat)           # discord.json is the one place status, doctor, test and alerts read
+            else:
+                self._set_chat(f"home|{self.platform}", inc.chat)
+            return self._msg(inc, "This chat now receives digests and machine alerts. Saved on this machine; `research chat test" + (" discord" if self.platform == "discord" else "")
+                             + "` posts here." + (" (Run /sethome in a channel, not in a thread.)" if self.platform == "discord" else ""), "ok")
         return self._msg(inc, "Unknown command. /help", "warn")
 
     def _run(self, root: str, op: str, params: Dict[str, Any], inc: Incoming) -> Any:
