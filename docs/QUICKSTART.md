@@ -269,7 +269,10 @@ that waits for your PIN (section 7).
 research tui
 ```
 
-It has eight tabs: Overview, Runs, Findings, Plans & Approvals, Decisions, Records, Doctor and **Inbox**. It refreshes by itself.
+It is the main interface: a left navigation with **Home**, **Inbox**, **Experiments**, **Runs**, **Findings**, **Decisions**, **Plans & approvals**, **Worktrees**
+(fork, archive, promotion), **Agents**, **Guide & site** (create, build, publish and unpublish experiments), **Settings** (every setting, with its help, default and where it is set;
+changes go through the same preview and approval path, PIN included) and **System** (doctor, chat, HPC). Digits `1`-`9` and `g`, `s`, `y` jump to a section; `Ctrl+P` finds any section,
+setting or inbox item by typing a few letters. It refreshes by itself, works in a narrow terminal (the navigation folds away and the status bar names your section), and has a light theme (`Ctrl+T`).
 
 **Start with the Inbox (`i`).** It gathers everything that needs a person, from every part of ResearchOS, and keeps three kinds apart:
 **Action** (something is waiting for you: a decision, an approval, a blocked task, evidence that changed or is missing), **Recommended follow-up** (a scientific step is due
@@ -289,7 +292,8 @@ here. Nothing is rewritten; *Re-check* and *Sync HPC runs* are offered. The Reco
 | `i` | open the Inbox |
 | `Enter` or `x` | actions for the selected Inbox row |
 | `w` | what does the selected status or item mean? |
-| `1`-`8`, or `[` and `]` | switch tab (on Decisions, the digits pick an option) |
+| `1`-`9`, `g`, `s`, `y`, or `[` and `]` | jump to a section (on Decisions, the digits pick an option) |
+| `Ctrl+P` | find a section, a setting or an inbox item |
 | `r` | refresh |
 | `/` | filter the rows (an empty filter clears it) |
 | `k` | cancel the selected run |

@@ -9,7 +9,7 @@ from rich.text import Text
 
 from .widgets import badge, plain
 
-SEP = " | " if plain() else "  │  "
+SEP = " | " if plain() else "  ·  "
 PLATFORMS = {"tui": "the TUI", "vscode": "VS Code", "local": "the CLI", "cli": "the CLI", "extension": "VS Code"}
 
 
@@ -68,10 +68,10 @@ def proposal_detail(x: Dict[str, Any]) -> Text:
     out = Text()
     o = chat_origin(x)
     if o:
-        out.append(f"Requested from {o['where']} by {o['by']} at {o['at']}\n", style="bold" if plain() else "bold dark_orange")
+        out.append(f"Requested from {o['where']} by {o['by']} at {o['at']}\n", style="bold" if plain() else "bold #F1B85B")
         out.append("Chat cannot approve this one: press a here and enter your PIN.\n\n", style="dim")
     if approved_via(x):
-        out.append(f"Approved {approved_via(x)}\n\n", style="bold" if plain() else "bold green")
+        out.append(f"Approved {approved_via(x)}\n\n", style="bold" if plain() else "bold #39D5C4")
     return out
 
 
@@ -97,7 +97,7 @@ def option_line(i: int, o: Dict[str, Any]) -> Text:
     t = Text()
     t.append(f"{i}  ", style="bold").append(str(o["label"]), style="bold")
     if o.get("protected"):
-        t.append("   needs your PIN", style="" if plain() else "bold dark_orange")
+        t.append("   needs your PIN", style="" if plain() else "bold #F1B85B")
     for k, v in (("", o.get("consequence")), ("does: ", "; ".join(o.get("effect") or []))):
         if v:
             t.append(f"\n   {k}{v}", style="" if k == "" else "dim")
@@ -111,12 +111,12 @@ def decision_detail(d: Dict[str, Any]) -> Text:
                                                                        + f"  asked by {d.get('created_by') or '?'}\n", style="dim")
     o = chat_origin(d)
     if o:
-        t.append(f"Chosen from {o['where']} by {o['by']} at {o['at']}: that option needs your PIN here.\n", style="bold" if plain() else "bold dark_orange")
+        t.append(f"Chosen from {o['where']} by {o['by']} at {o['at']}: that option needs your PIN here.\n", style="bold" if plain() else "bold #F1B85B")
     t.append("\n")
     for i, op in enumerate(d["options"], 1):
         t.append_text(option_line(i, op)).append("\n\n")
     if d.get("answer"):
-        t.append(answered_line(d) + "\n", style="" if plain() else "green")
+        t.append(answered_line(d) + "\n", style="" if plain() else "#39D5C4")
         t.append(f"-> {d['answer'].get('outcome') or ''}\n")
     elif d["status"] == "open":
         t.append(f"Press 1-{len(d['options'])} to choose, t to answer in your own words.", style="dim")
@@ -172,12 +172,30 @@ def inbox_chip(c: Dict[str, int]) -> Text:
     """First thing on the status bar: how many things need you, how many are recommended, never blurred together."""
     t = Text()
     if c.get("action"):
-        t.append(f"{'!' if plain() else '●'} {c['action']} need{'s' if c['action'] == 1 else ''} your action", style="bold" if plain() else "bold red")
+        t.append(f"{'!' if plain() else '●'} {c['action']} need{'s' if c['action'] == 1 else ''} your action", style="bold" if plain() else "bold #F07880")
     if c.get("followup"):
-        t.append(("  " if t.plain else "") + f"{'~' if plain() else '◐'} {c['followup']} recommended", style="" if plain() else "bold dark_orange")
+        t.append(("  " if t.plain else "") + f"{'~' if plain() else '◐'} {c['followup']} recommended", style="" if plain() else "bold #F1B85B")
     if not t.plain:
         t.append("nothing needs you" if not c.get("info") else f"nothing needs you ({c['info']} informational)", style="dim")
     t.append("  (i: Inbox)", style="dim")
+    return t
+
+
+def panel_need(items: List[Dict[str, Any]]) -> Text:
+    """Home: the top of the inbox, most important first. Nothing here is a decision request unless it says so."""
+    t = Text()
+    if not items:
+        t.append("Nothing needs you right now.", style="" if plain() else "#39D5C4")
+        t.append("\nWork continues without you. Press i for the full inbox, ? for the guide.", style="dim")
+        return t
+    mark = {"action": ("!" if plain() else "●", "bold #F07880"), "followup": ("~" if plain() else "◐", "#F1B85B"), "info": ("-" if plain() else "○", "dim")}
+    for it in items[:6]:
+        m, st = mark[it["level"]]
+        t.append(f"{m} ", style="" if plain() else st).append(it["title"][:90])
+        t.append(("  blocks work" if it["blocks"] else ""), style="" if plain() else "#F07880")
+        t.append("\n")
+    if len(items) > 6:
+        t.append(f"+ {len(items) - 6} more in the Inbox (i)", style="dim")
     return t
 
 
@@ -191,20 +209,20 @@ def status_line(s: Dict[str, Any]) -> Text:
     """Most urgent first, so a narrow terminal that wraps still shows what needs you."""
     t, mark = Text(), (lambda a, b: a if plain() else b)
     if s.get("decisions"):
-        _chip(t, f"{mark('*', '◆')} {s['decisions']} open decision{'s' if s['decisions'] != 1 else ''}", "bold dark_orange")
+        _chip(t, f"{mark('*', '◆')} {s['decisions']} open decision{'s' if s['decisions'] != 1 else ''}", "bold #F1B85B")
     for w in s["waiting"]:
         until = f" until {when(w['until'])}" if w.get("until") else ""
-        _chip(t, f"{mark('~', '⏳')} waiting for {str(w['provider']).capitalize()}{until}", "bold dark_orange")
+        _chip(t, f"{mark('~', '⏳')} waiting for {str(w['provider']).capitalize()}{until}", "bold #F1B85B")
     if s["unattended"]:
-        _chip(t, f"{mark('!', '⚠')} unattended: auto-promote on", "bold red")
-    _chip(t, f"{s['running']} agent{'s' if s['running'] != 1 else ''} running", "bold blue" if s["running"] else "dim")
+        _chip(t, f"{mark('!', '⚠')} unattended: auto-promote on", "bold #F07880")
+    _chip(t, f"{s['running']} agent{'s' if s['running'] != 1 else ''} running", "bold #958BFF" if s["running"] else "dim")
     _chip(t, "spend today " + (f"${s['spend']:.2f}" if s["spend"] is not None else "n/a"), "")
     g = s["gateway"]
     if g["running"]:
         who = "+".join(g["platforms"]) or "no platform"
-        _chip(t, f"gateway {mark('on', '●')} {who}, {g['paired']} paired", "green")
+        _chip(t, f"gateway {mark('on', '●')} {who}, {g['paired']} paired", "#39D5C4")
     elif g["known"] and g["paired"]:
-        _chip(t, f"gateway {mark('off', '○')} stopped, {g['paired']} paired", "dark_orange")
+        _chip(t, f"gateway {mark('off', '○')} stopped, {g['paired']} paired", "#F1B85B")
     else:
         _chip(t, "chat off" if g["known"] else "chat n/a", "dim")
     return t
@@ -234,13 +252,13 @@ def panel_approvals(proposals: List[Dict[str, Any]], decisions: Optional[int]) -
     pend = chat_first([x for x in proposals if x["status"] == "pending"])
     t = Text()
     t.append(f"{'! ' if plain() else '⚠ '}{len(pend)} pending" if pend else f"{'ok ' if plain() else '✓ '}nothing pending",
-             style="" if plain() else "bold dark_orange" if pend else "green")
+             style="" if plain() else "bold #F1B85B" if pend else "#39D5C4")
     for x in pend[:4]:
         o = origin_cell(x)
         t.append(f"\n{x['id']}  {str(x.get('text') or x.get('kind') or '')[:30]}" + (f"  [{o}]" if o else ""))
     t.append("\n\nTab 4: a approve, d reject" if pend else "")
     if decisions:
-        t.append(f"\n{decisions} open decision{'s' if decisions != 1 else ''}: tab 5", style="" if plain() else "bold dark_orange")
+        t.append(f"\n{decisions} open decision{'s' if decisions != 1 else ''}: tab 5", style="" if plain() else "bold #F1B85B")
     return t
 
 

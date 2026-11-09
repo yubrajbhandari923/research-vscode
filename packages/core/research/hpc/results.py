@@ -182,6 +182,23 @@ def _check_identity(p: Project, man: Dict[str, Any]) -> Dict[str, Any]:
 
 # =============================================================================== import
 
+def _without_remote_only(src: str, man: Dict[str, Any], staging: str) -> str:
+    """The cluster's artifacts.jsonl names files by their compute-node paths. A file that was NOT collected (too large, or gone) is recorded once, as an
+    explicit remote reference (`_register_remote_artifacts`); registering the bare remote path as well would only add a second, unverifiable record."""
+    left = {a.get("remote_path") or a.get("path") for a in man.get("artifacts") or [] if not a.get("bundled_as")}
+    out = os.path.join(staging, "artifacts.collected.jsonl")
+    with open(src, encoding="utf-8") as f, open(out, "w", encoding="utf-8") as g:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                rec = None
+            if rec and rec.get("path") in left:
+                continue
+            g.write(line if line.endswith("\n") or not line else line + "\n")
+    return out
+
+
 def _merge_jsonl(src: str, dst: str) -> int:
     """Append lines from `src` that `dst` does not already have. Content-keyed, so re-import is a no-op."""
     have = set()
@@ -239,6 +256,8 @@ def import_archive(p: Project, path: str, *, dry_run: bool = False) -> Dict[str,
         # metrics / artifacts JSONL: merged by content, so a re-import adds nothing
         for name in ("metrics.jsonl", "artifacts.jsonl"):
             src = files.get(name)
+            if src and name == "artifacts.jsonl":
+                src = _without_remote_only(src, man, staging)
             if src:
                 n = _merge_jsonl(src, os.path.join(run_dir, name))
                 if name == "metrics.jsonl":
@@ -261,8 +280,9 @@ def import_archive(p: Project, path: str, *, dry_run: bool = False) -> Dict[str,
         result["status"] = _reconcile(p, run_id, st, man, result)
         # large artifacts that stayed on the cluster: registered by reference
         result["referenced"] = _register_remote_artifacts(p, run_id, man, run_dir)
-        from ..runs import ingest_run_files, write_run_json
+        from ..runs import ingest_run_files, reconcile_collected, write_run_json
         ingest_run_files(p, run_id)
+        result["reconciled"] = reconcile_collected(p, run_id)      # artifacts registered at a compute-node path point at their collected copy
         write_run_json(p, run_id)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

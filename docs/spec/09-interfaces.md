@@ -145,7 +145,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-219 operations.
+220 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -252,6 +252,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `hpc_discover` |  |  |  |  |
 | `hpc_doctor` | cluster |  | `hpc_doctor` |  |
 | `hpc_init` | cluster, dry_run | yes |  |  |
+| `hpc_reconcile` | run | yes |  |  |
 | `hpc_status` |  |  |  |  |
 | `hpc_submit` | experiment, command, cluster, dry_run, approve, resources | yes |  |  |
 | `hpc_sync` | cluster | yes | `hpc_sync` |  |

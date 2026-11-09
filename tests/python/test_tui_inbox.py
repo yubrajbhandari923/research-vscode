@@ -114,9 +114,9 @@ def test_synthesis_draft_contains_only_recorded_facts(pravah):
 def test_experiment_context_explains_the_lifecycle_and_who_does_what(pravah):
     p, planned, hpc, r, root = pravah
     its, p2, call = items(root)
-    t = IN.experiment_context(p2, call, hpc).plain
-    assert "needs_review" in t and "Now: needs_review" in t and "not automatic" in t and "researcher-only" in t and "agent-assisted" in t
-    assert "1 not yet synthesized" in t and r in t and "inaccessible" in t
+    t = " ".join(IN.experiment_context(p2, call, hpc).plain.split())      # detail lines wrap to the pane width
+    assert "Lifecycle" in t and "needs_review" in t and "not automatic" in t and "Who does what" in t and "an analyst interprets the results" in t and "You" in t
+    assert "1 run(s) not yet synthesized" in t and r in t and "inaccessible" in t
 
 
 def test_help_explains_every_experiment_status_and_the_loops():
@@ -139,14 +139,14 @@ def test_inbox_tab_shows_what_the_decisions_tab_does_not(pravah):
         bar = text(app, "#status")
         assert "2 recommended" in bar and "(i: Inbox)" in bar and "need" not in bar.split("recommended")[0]
         assert "(2)" in str(app.query_one("#tabs").get_tab("t8").label)
-        await pilot.press("5")
+        await pilot.press("6")
         await pilot.pause()
         assert app.query_one("#decisions").row_count == 0 and "No decisions waiting" in text(app, "#decisions-d")
         await pilot.press("i")
         await pilot.pause()
         assert app.query_one("#tabs").active == "t8" and app.query_one("#inbox").row_count == 3
         d = text(app, "#inbox-d")
-        assert "Recommended follow-up" in d and "Blocks execution:" in d and "Why it matters:" in d and "Next step:" in d
+        assert "Recommended follow-up" in d and "Blocks work" in d and "Why" in d and "Next" in d
         assert "Lifecycle" in d or "inaccessible" in d
     go(app, then)
 
@@ -270,7 +270,7 @@ def test_artifact_diagnostics_and_hpc_sync_are_reachable_from_the_inbox(pravah, 
         await pilot.pause()
         d = text(app, "#inbox-d")
         assert "loss.csv" in d and "curve.png" in d and d.count("inaccessible") >= 2 and "cannot reach" in d
-        await pilot.press("x", "down", "down", "enter")                      # Sync HPC runs
+        await pilot.press("x", "down", "down", "down", "enter")              # Sync HPC runs
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Confirm" and calls == []
         await pilot.press("y")
@@ -284,13 +284,13 @@ def test_records_tab_shows_the_lifecycle_for_an_experiment(pravah):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("6")
+        await pilot.press("3")
         await pilot.pause()
         t = app.query_one("#records")
         t.move_cursor(row=t.get_row_index(hpc))
         await pilot.pause()
         d = text(app, "#records-d")
-        assert "Lifecycle" in d and "Now: needs_review" in d and "inaccessible" in d
+        assert "Lifecycle" in d and "needs_review" in d and "inaccessible" in d
     go(app, then)
 
 
@@ -328,7 +328,7 @@ def test_narrow_terminal_and_empty_project(tmp_path, pravah):
         assert app.has_class("narrow")
         await pilot.press("i")
         await pilot.pause()
-        assert app.query_one("#inbox").row_count == 3 and "Why it matters" in text(app, "#inbox-d")
+        assert app.query_one("#inbox").row_count == 3 and "Why" in text(app, "#inbox-d")
         await pilot.press("question_mark")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Help"

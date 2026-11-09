@@ -72,8 +72,8 @@ def test_banner_collapses_and_screenshot(proj, size):
     async def then(pilot):
         svg = pilot.app.export_screenshot()
         big = size == BIG
-        assert big or "RESEARCHOS" in text(app, "#banner")  # compact one-line header (gradient splits the svg glyphs)
-        assert app.query_one("#banner").region.height == (len(BANNER) + 1 if big else 1)
+        assert "research-os" in text(app, "#banner") and "Full" in text(app, "#banner")      # the wordmark and the project name, at any size
+        assert app.query_one("#banner").region.height == len(BANNER)
         assert app.query_one("#tabs").region.height > 8  # content is not squeezed
         assert "running" in text(app, "#p-status") and r["id"] in text(app, "#p-runs")
         os.makedirs(SCRATCH, exist_ok=True)
@@ -89,7 +89,7 @@ def test_runs_filter_and_kill_confirm(proj):
 
     async def then(pilot):
         assert app.query_one("#runs").row_count == 1
-        await pilot.press("2", "enter")
+        await pilot.press("4", "enter")
         assert r["id"] in text(app, "#runs-d")
         await pilot.press("slash", "z", "z", "enter")
         assert app.query_one("#runs").row_count == 0
@@ -111,7 +111,7 @@ def _decide(proj, key, pin_set, monkeypatch):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("4", "a" if key == "a" else "d")
+        await pilot.press("7", "a" if key == "a" else "d")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Confirm"
         await pilot.press("y")
@@ -149,7 +149,7 @@ def test_wrong_pin_does_not_approve(proj):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("4", "a", "y")
+        await pilot.press("7", "a", "y")
         await pilot.pause()
         await pilot.press(*"why", "enter")
         await pilot.pause()
@@ -182,7 +182,7 @@ def test_decisions_tab_lists_options_and_badges(proj):
 
     async def then(pilot):
         assert "1 open decision" in text(app, "#status")
-        await pilot.press("5")
+        await pilot.press("6")
         await pilot.pause()
         d = text(app, "#decisions-d")
         assert "What now?" in d and "Retry with a hint" in d and "one more attempt" in d and "needs your PIN" in d
@@ -200,7 +200,7 @@ def test_pick_unprotected_option_runs_it(proj):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("5", "1")
+        await pilot.press("6", "1")
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Confirm"
         await pilot.press("y")
@@ -220,7 +220,7 @@ def test_free_text_answer_goes_to_decision_answer(proj, monkeypatch):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("5", "t")
+        await pilot.press("6", "t")
         await pilot.press(*"skip it", "enter")
         await pilot.pause()
         await pilot.pause()
@@ -237,7 +237,7 @@ def _protected(proj, key_n, pin_set, typed, extra=()):
     shown = []
 
     async def then(pilot):
-        await pilot.press("5", str(key_n), "y")
+        await pilot.press("6", str(key_n), "y")
         await pilot.pause()
         await pilot.press(*"because", "enter")
         await pilot.pause()
@@ -286,7 +286,7 @@ def test_chat_requested_proposals_first_and_marked(proj):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("4")
+        await pilot.press("7")
         t = app.query_one("#approvals")
         assert t.row_count == 3 and t.coordinate_to_cell_key(t.cursor_coordinate).row_key.value == b["id"]
         assert "Discord: kim" in str(t.get_row_at(0)[3])
@@ -304,7 +304,7 @@ def test_answered_decision_says_who_and_where(proj):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("5")
+        await pilot.press("6")
         await pilot.pause()
         assert "answered via Discord by" in text(app, "#decisions-d")
     go(app, then)
@@ -316,7 +316,7 @@ def test_older_core_without_decision_ops(proj, monkeypatch):
     app = ResearchTUI(proj[2])
 
     async def then(pilot):
-        await pilot.press("5")
+        await pilot.press("6")
         await pilot.pause()
         assert "no decision requests" in text(app, "#decisions-d") and "open decision" not in text(app, "#status")
         await pilot.press("t")
@@ -384,7 +384,7 @@ def test_no_color_has_no_glyphs_or_styles(proj, monkeypatch):
     app = ResearchTUI(root)
 
     async def then(pilot):
-        await pilot.press("5")
+        await pilot.press("6")
         await pilot.pause()
         for wid in ("#status", "#decisions-d"):
             assert not any(ch in text(app, wid) for ch in "◆⚠⏳●○✓")

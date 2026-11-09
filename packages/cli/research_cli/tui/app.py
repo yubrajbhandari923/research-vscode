@@ -9,16 +9,22 @@ from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.widgets import DataTable, Footer, Static, TabbedContent, TabPane
 
-from . import helptext, inbox as IN, views as V
-from .widgets import (BANNER, DARK, LIGHT, TABS, ActionMenu, Confirm, Help, Prompt, TextBox, badge, git_branch, gradient, plain, render, tail)
+from textual.widgets import OptionList
+from textual.widgets.option_list import Option
 
-TABLES = {"inbox": "Needs attention", "runs": "Runs", "findings": "Findings", "plans": "Plans", "approvals": "Approvals", "decisions": "Decisions", "records": "Records"}
-PANELS = {"p-status": "Runs by status", "p-runs": "Last runs", "p-appr": "Approvals", "p-find": "Latest findings",
+from . import helptext, inbox as IN, views as V
+from .palette import Finder
+from .sections import SECTIONS
+from .widgets import (DARK, LIGHT, TABS, ActionMenu, Confirm, Help, Prompt, TextBox, badge, git_branch, mark_rows, plain, render, tail, wordmark)
+
+TABLES = {"inbox": "Needs attention", "work": "Worktrees and promotion", "agents": "Agents", "guide": "Guide and website", "settings": "Settings", "runs": "Runs", "findings": "Findings", "plans": "Plans", "approvals": "Approvals", "decisions": "Decisions", "records": "Records"}
+PANELS = {"p-need": "Needs you", "p-status": "Runs by status", "p-runs": "Last runs", "p-appr": "Approvals", "p-find": "Latest findings",
           "p-sup": "Supervised plans", "p-sys": "Project & system"}
-COLUMNS = {"inbox": ("level", "source", "item", "blocks"), "runs": ("id", "status", "started", "summary"), "findings": ("id", "status", "title"), "plans": ("id", "status", "title"),
+COLUMNS = {"inbox": ("", "What needs attention", "From"), "work": SECTIONS["work"].columns, "agents": SECTIONS["agents"].columns, "guide": SECTIONS["guide"].columns,
+           "settings": SECTIONS["settings"].columns, "runs": ("id", "status", "started", "summary"), "findings": ("id", "status", "title"), "plans": ("id", "status", "title"),
            "approvals": ("id", "status", "proposal", "from"), "decisions": ("id", "status", "about", "question"),
            "records": ("id", "type", "status", "title")}
-EMPTY = {"inbox": "Nothing needs you right now.\n\nThis list gathers everything that is waiting for a person: decisions, approvals, experiments that need a synthesis, "
+EMPTY = {"work": SECTIONS["work"].empty, "agents": SECTIONS["agents"].empty, "guide": "Loading…", "settings": SECTIONS["settings"].empty, "inbox": "Nothing needs you right now.\n\nThis list gathers everything that is waiting for a person: decisions, approvals, experiments that need a synthesis, "
                   "evidence that cannot be verified. Things that are merely recommended are marked so, and a planned experiment is informational.\n\nPress ? for the guide.",
          "runs": "No runs yet. Track one with `research run exec EXP-001 -- <command>`.", "findings": "No findings yet.",
          "approvals": "Nothing waiting for you. Proposals from agents (and requests from chat) show up here.",
@@ -27,49 +33,74 @@ EMPTY = {"inbox": "Nothing needs you right now.\n\nThis list gathers everything 
          "records": "No records yet."}
 NO_DECISIONS_OP = "This research core has no decision requests. Update it with `research self-update`."
 TAB_IDS = [f"t{i + 1}" for i in range(len(TABS))]
-DECISIONS_TAB, INBOX_TAB, FILTERABLE = "t5", "t8", ("t2", "t3", "t4", "t5", "t8")
-ACTION_TAB = {"kill": "t2", "approve": "t4", "deny": "t4", "answer_text": DECISIONS_TAB, "actions": INBOX_TAB}
-TAB_TABLE = {"t2": "runs", "t3": "findings", "t4": "approvals", "t5": "decisions", "t6": "records", "t8": "inbox"}
+DECISIONS_TAB, INBOX_TAB, FILTERABLE = "t5", "t8", ("t2", "t3", "t4", "t5", "t6", "t8", "t9", "t10", "t11", "t12")
+ACTION_TAB = {"kill": "t2", "approve": "t4", "deny": "t4", "answer_text": DECISIONS_TAB}
+TAB_TABLE = {"t2": "runs", "t3": "findings", "t4": "approvals", "t5": "decisions", "t6": "records", "t8": "inbox", "t9": "work", "t10": "agents", "t11": "guide", "t12": "settings"}
+ACTION_TABS = ("t8", "t9", "t10", "t11", "t12")           # tabs whose rows have a menu of actions (Enter or x)
+# the left navigation: (id, key, label, tab). The digits 1-9 and the letters g, s, y jump straight to a section.
+NAV = [(None, [("home", "1", "Home", "t1"), ("inbox", "2", "Inbox", "t8")]),
+       ("Research", [("exps", "3", "Experiments", "t6"), ("runs", "4", "Runs", "t2"), ("findings", "5", "Findings", "t3"), ("decisions", "6", "Decisions", "t5")]),
+       ("Work", [("plans", "7", "Plans & approvals", "t4"), ("work", "8", "Worktrees", "t9"), ("agents", "9", "Agents", "t10")]),
+       ("Project", [("guide", "g", "Guide & site", "t11"), ("settings", "s", "Settings", "t12"), ("system", "y", "System", "t7")])]
+NAV_ITEMS = [i for _, items in NAV for i in items]
+TAB_OF = {i[0]: i[3] for i in NAV_ITEMS}
+KEY_OF = {i[1]: i[0] for i in NAV_ITEMS}
 PENDING_RUN = ("running", "queued", "submitted", "pending", "created")
 
 
 def digit_binding(i: int) -> Binding:
-    return Binding(str(i), f"digit({i})", "Pick", key_display="1-9", show=(i == 1))
+    return Binding(str(i), f"digit({i})", "Go to section", key_display="1-9", show=False)
 
 
 class ResearchTUI(App):
     CSS = """
-    #tabs { height: 1fr; } TabPane { height: 1fr; padding: 0; }
-    #banner { height: auto; text-wrap: nowrap; text-overflow: ellipsis; padding: 0 1; background: $surface; }
-    #status { height: auto; padding: 0 1; background: $panel; }
-    #helpdlg { width: 100; max-width: 98%; height: 90%; border: round $accent; background: $surface; padding: 1 2; margin: 1 1; }
-    #helpdlg #box { height: 1fr; }
-    #dialog { width: 64; max-width: 95%; height: auto; max-height: 95%; border: round $accent; background: $surface; padding: 1 2; margin: 1 2; }
+    Screen { background: $background; }
+    #banner { height: 3; padding: 0 2; background: $background; }
+    #status { height: 1; padding: 0 2; background: $background; color: $text-muted; }
+    #main { height: 1fr; }
+    #nav { width: 25; height: 1fr; background: $surface; border: none; padding: 1 0 0 0; scrollbar-size-vertical: 1; }
+    #nav > .option-list--option { padding: 0 2; }
+    #nav > .option-list--option-highlighted { background: $primary 22%; color: $primary; text-style: bold; }
+    #nav:focus > .option-list--option-highlighted { background: $primary 40%; color: $foreground; }
+    #nav > .option-list--option-disabled { color: $text-muted; text-style: none; padding: 1 2 0 2; }
+    #tabs { width: 1fr; height: 1fr; } ContentTabs { display: none; } TabPane { height: 1fr; padding: 0; }
+    #noproj { padding: 2 4; }
     .title { text-style: bold; color: $accent; }
-    TabbedContent Tab.-active { color: #ffffff; text-style: bold; }   /* white on the primary block: readable in both themes */
-    Underline > .underline--bar { color: $accent; }
-    .panel, DataTable, .detail { border: round $primary; border-title-color: $accent; border-title-style: bold; }
-    .panel:focus-within, DataTable:focus { border: round $accent; }
-    DataTable { width: 2fr; height: 1fr; } .detail { width: 3fr; height: 1fr; padding: 0 1; }
-    #dash { grid-size: 2; grid-gutter: 0 1; grid-rows: 1fr; height: 1fr; }
-    #dash .panel { padding: 0 1; }
+    DataTable { width: 5fr; height: 1fr; background: $background; border: none; border-left: tall $background; scrollbar-size-vertical: 1; scrollbar-size-horizontal: 0; }
+    DataTable:focus { border-left: tall $primary; }
+    DataTable > .datatable--header { background: $background; color: $text-muted; text-style: none; }
+    DataTable > .datatable--cursor { background: $primary 25%; color: $foreground; text-style: bold; }
+    DataTable:focus > .datatable--cursor { background: $primary 40%; }
+    .detail { width: 4fr; height: 1fr; padding: 1 2; background: $surface; border: none; }
+    .panel { background: $surface; border: none; border-top: solid $border; border-title-color: $primary; border-title-style: bold; margin: 0 0 1 0; padding: 0 2; height: auto; min-height: 4; max-height: 14; scrollbar-size-vertical: 0; }
+    .panel:focus-within { border-top: solid $primary; }
+    VerticalScroll { scrollbar-size-vertical: 1; scrollbar-color: $border; scrollbar-background: $surface; scrollbar-color-hover: $primary; }
+    #dash { grid-size: 2; grid-gutter: 0 2; grid-rows: auto; height: 1fr; padding: 1 2 0 2; overflow-y: auto; }
+    #p-need-box { column-span: 2; }
     #left { width: 2fr; } #left DataTable { width: 100%; }
+    #dialog, #helpdlg { border: round $primary; background: $surface; padding: 1 2; }
+    #dialog { width: 64; max-width: 95%; height: auto; max-height: 95%; margin: 1 2; }
+    #helpdlg { width: 100; max-width: 98%; height: 90%; margin: 1 1; }
+    #helpdlg #box { height: 1fr; }
+    ResearchTUI.narrow #nav { display: none; }
     ResearchTUI.narrow .split { layout: vertical; }
     ResearchTUI.narrow .split > DataTable, ResearchTUI.narrow #left { width: 100%; height: 1fr; }
     ResearchTUI.narrow .detail { width: 100%; height: 1fr; }
     ResearchTUI.narrow #left { height: 2fr; } ResearchTUI.narrow #plans { height: 1fr; min-height: 4; } ResearchTUI.narrow #approvals { height: 2fr; }
     ResearchTUI.narrow #decisions { height: 1fr; } ResearchTUI.narrow #decisions-box { height: 2fr; }
-    ResearchTUI.narrow #dash { grid-size: 1; grid-rows: auto; overflow-y: auto; }
-    ResearchTUI.narrow #dash .panel { height: auto; max-height: 8; }
-    ResearchTUI.plain .panel, ResearchTUI.plain DataTable, ResearchTUI.plain .detail, ResearchTUI.plain #dialog { border: ascii $primary; }
+    ResearchTUI.narrow #dash { grid-size: 1; } ResearchTUI.narrow #p-need-box { column-span: 1; }
+    ResearchTUI.plain #dialog, ResearchTUI.plain #helpdlg { border: ascii $primary; }
     """
     TITLE = "ResearchOS"
-    ENABLE_COMMAND_PALETTE = False
-    BINDINGS = [Binding("i", "inbox", "Inbox"), Binding("x", "actions", "Actions"), Binding("w", "what", "What is this?"), Binding("k", "kill", "Cancel"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
+    ENABLE_COMMAND_PALETTE = True
+    COMMANDS = {Finder}
+    COMMAND_PALETTE_BINDING = "ctrl+p"
+    BINDINGS = [Binding("i", "inbox", "Inbox"), Binding("x", "actions", "Actions"), Binding("w", "what", "Explain"), Binding("g", "nav('guide')", "Guide", show=False),
+                Binding("s", "nav('settings')", "Settings", show=False), Binding("y", "nav('system')", "System", show=False), Binding("k", "kill", "Cancel"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
                 Binding("t", "answer_text", "Answer")] + [digit_binding(i) for i in range(1, 10)] + [
-        Binding("left_square_bracket", "step(-1)", "Tabs", key_display="[ ]"), Binding("right_square_bracket", "step(1)", "Next tab", show=False),
-        Binding("question_mark", "help", "Help"), Binding("q", "quit", "Quit"), Binding("slash", "filter", "Filter"),
-        Binding("r", "refresh", "Refresh"), Binding("ctrl+t", "theme", "Theme")]
+        Binding("left_square_bracket", "step(-1)", "Previous section", show=False), Binding("right_square_bracket", "step(1)", "Next section", show=False),
+        Binding("question_mark", "help", "Guide"), Binding("q", "quit", "Quit"), Binding("slash", "filter", "Filter"),
+        Binding("r", "refresh", "Refresh"), Binding("ctrl+t", "theme", "Theme", show=False)]
 
     def __init__(self, root: Optional[str] = None):
         super().__init__()
@@ -89,6 +120,8 @@ class ResearchTUI(App):
         self.inbox: List[Dict[str, Any]] = []
         self.prepared: Dict[str, str] = {}       # experiment -> analyst execution that was PREPARED (not necessarily running)
         self.last: Any = None
+        self._settings_cache: Optional[Dict[str, Any]] = None
+        self._navlock = False
 
     # ------------------------------------------------------------------ layout
     def compose(self) -> ComposeResult:
@@ -97,26 +130,31 @@ class ResearchTUI(App):
             yield Static("No ResearchOS project here.\n\nRun `research init` in your project folder, then `research tui`.\n\nPress any key to quit.", id="noproj")
             return
         yield Static(id="status")
-        with TabbedContent(id="tabs"):
-            with TabPane(TABS[0], id="t1"):
-                with Grid(id="dash"):
-                    for pid in PANELS:
-                        yield VerticalScroll(Static(id=pid), classes="panel", id=pid + "-box")
-            with TabPane(TABS[1], id="t2"):
-                yield self.split("runs")
-            with TabPane(TABS[2], id="t3"):
-                yield self.split("findings")
-            with TabPane(TABS[3], id="t4"):
-                yield Horizontal(Vertical(DataTable(id="plans"), DataTable(id="approvals"), id="left"),
-                                 VerticalScroll(Static(id="approvals-d"), classes="detail", id="approvals-box"), classes="split")
-            with TabPane(TABS[4], id="t5"):
-                yield self.split("decisions")
-            with TabPane(TABS[5], id="t6"):
-                yield self.split("records")
-            with TabPane(TABS[6], id="t7"):
-                yield VerticalScroll(Static(id="doctor"), classes="panel", id="doctor-box")
-            with TabPane(TABS[7], id="t8"):
-                yield self.split("inbox")
+        with Horizontal(id="main"):
+            yield OptionList(id="nav")
+            with TabbedContent(id="tabs"):
+                with TabPane(TABS[0], id="t1"):
+                    with Grid(id="dash"):
+                        for pid in PANELS:
+                            yield VerticalScroll(Static(id=pid), classes="panel", id=pid + "-box")
+                with TabPane(TABS[1], id="t2"):
+                    yield self.split("runs")
+                with TabPane(TABS[2], id="t3"):
+                    yield self.split("findings")
+                with TabPane(TABS[3], id="t4"):
+                    yield Horizontal(Vertical(DataTable(id="plans"), DataTable(id="approvals"), id="left"),
+                                     VerticalScroll(Static(id="approvals-d"), classes="detail", id="approvals-box"), classes="split")
+                with TabPane(TABS[4], id="t5"):
+                    yield self.split("decisions")
+                with TabPane(TABS[5], id="t6"):
+                    yield self.split("records")
+                with TabPane(TABS[6], id="t7"):
+                    yield VerticalScroll(Static(id="doctor"), classes="panel", id="doctor-box")
+                with TabPane(TABS[7], id="t8"):
+                    yield self.split("inbox")
+                for k, tab in (("work", 8), ("agents", 9), ("guide", 10), ("settings", 11)):
+                    with TabPane(TABS[tab], id=f"t{tab + 1}"):
+                        yield self.split(k)
         yield Footer()
 
     @staticmethod
@@ -128,26 +166,29 @@ class ResearchTUI(App):
             self.exit()
 
     def on_resize(self, event) -> None:
+        from .widgets import WRAP
         self.set_class(self.size.width < 120, "narrow")
+        w = self.size.width
+        WRAP[0] = max(30, (w - 5 - 4) if w < 120 else int((w - 25) * 4 / 9) - 5)      # characters in a detail pane
         self.draw_banner()
 
     def draw_banner(self) -> None:
+        """Three rows: the mark, then the wordmark / project name / folder and branch beside it; the version sits at the right edge."""
         import research
-        w, h = self.size
+        w = max(self.size.width, 40)
         name = self.snap.get("project", {}).get("name") or (os.path.basename(self.root) if self.root else "")
-        sep = "|" if plain() else "│"
-        info = Text(no_wrap=True, overflow="ellipsis")
-        info.append(f"v{research.__version__}", style="bold").append(f"  {sep}  {name}")
-        if self.root:
-            info.append(f"  {sep}  {self.root}")
-        if self.branch:
-            info.append(f"  {sep}  {'' if plain() else '⎇ '}{self.branch}", style="" if plain() else "dim")
-        if h >= 30 and w >= 80:
-            head = Text("\n").join(gradient(line) for line in BANNER)
-            head.append("\n").append_text(info)
-        else:
-            head = Text.assemble(gradient("RESEARCHOS"), "  ", info)
-            head.no_wrap, head.overflow = True, "ellipsis"
+        folder = (self.root or "").replace(os.path.expanduser("~"), "~")
+        if len(folder) > 46:
+            folder = "…/" + "/".join(folder.split("/")[-2:])
+        branch = f"{'' if plain() else '⎇ '}{self.branch}   " if self.branch else ""
+        text = [wordmark(), Text(name, style="bold"), Text(branch + folder, style="" if plain() else "dim")]
+        ver = f"v{research.__version__}"
+        head = Text(no_wrap=True, overflow="ellipsis")
+        for k, (m, r) in enumerate(zip(mark_rows(), text)):
+            head.append_text(m).append("  ").append_text(r)
+            if k == 0:
+                head.append(" " * max(2, w - 8 - len(r.plain) - len(ver) - 4)).append(ver, style="" if plain() else "dim")
+            head.append("\n" if k < 2 else "")
         try:
             self.query_one("#banner", Static).update(head)
         except Exception:
@@ -168,18 +209,84 @@ class ResearchTUI(App):
         self.branch = git_branch(self.root)
         for tid, c in COLUMNS.items():
             t = self.query_one(f"#{tid}", DataTable)
-            t.cursor_type, t.zebra_stripes, t.border_title = "row", True, TABLES[tid]
+            t.cursor_type, t.zebra_stripes = "row", False
             t.add_columns(*c)
         for pid, title in PANELS.items():
             self.query_one(f"#{pid}-box").border_title = title
-        for bid, title in (("runs", "Run detail"), ("findings", "Finding"), ("approvals", "Detail"), ("decisions", "Decision"), ("records", "Record"),
-                           ("doctor", "Project doctor"), ("inbox", "Why it matters and what you can do")):
-            self.query_one(f"#{bid}-box").border_title = title
+        self.build_nav()
+        nav = self.query_one("#nav", OptionList)
+        nav.highlighted = nav.get_option_index("home")
+        nav.focus()
         self.fill_doctor()
         self.refresh_data()
         self.set_interval(5, self.refresh_data)
 
     # ------------------------------------------------------------------ navigation
+    def build_nav(self) -> None:
+        nav = self.query_one("#nav", OptionList)
+        nav.clear_options()
+        for group, items in NAV:
+            if group:
+                nav.add_option(Option(Text(group, style="" if plain() else "dim"), disabled=True))
+            for ident, key, label, _ in items:
+                nav.add_option(Option(self.nav_label(ident, key, label), id=ident))
+
+    def nav_counts(self) -> Dict[str, int]:
+        c = IN.counts(self.inbox)
+        return {"inbox": c["action"] + c["followup"], "decisions": self.open_count or 0,
+                "plans": sum(1 for x in self.proposals if x.get("status") == "pending")}
+
+    def nav_label(self, ident: str, key: str, label: str) -> Text:
+        n = self.nav_counts().get(ident, 0)
+        t = Text()
+        t.append(f"{key} ", style="" if plain() else "dim").append(f"{label:<17}")
+        if n:
+            t.append(f"{n:>2}", style="bold" if plain() else ("bold #F1B85B" if ident in ("inbox", "decisions", "plans") else "dim"))
+        return t
+
+    def refresh_nav(self) -> None:
+        try:
+            nav = self.query_one("#nav", OptionList)
+            for _, items in NAV:
+                for ident, key, label, _tab in items:
+                    nav.replace_option_prompt(ident, self.nav_label(ident, key, label))
+        except Exception:      # noqa: BLE001 - cosmetic
+            pass
+
+    def show_section(self, ident: str) -> None:
+        tab = TAB_OF.get(ident)
+        if tab and self._idle():
+            self.query_one("#tabs", TabbedContent).active = tab
+
+    def on_option_list_option_highlighted(self, e: OptionList.OptionHighlighted) -> None:
+        if e.option_list.id == "nav" and e.option.id and not self._navlock:
+            self.show_section(e.option.id)
+
+    def on_option_list_option_selected(self, e: OptionList.OptionSelected) -> None:
+        if e.option_list.id == "nav" and e.option.id:       # Enter: move into the section
+            self.show_section(e.option.id)
+            tid = TAB_TABLE.get(TAB_OF[e.option.id])
+            if tid:
+                self.query_one(f"#{tid}", DataTable).focus()
+
+    def sync_nav(self) -> None:
+        if self.srv and self.size.width < 120:
+            self.refresh_data()       # narrow layout: the status bar names the section you are in
+        tab = self._active()
+        ident = next((i[0] for i in NAV_ITEMS if i[3] == tab), None)
+        nav = self.query_one("#nav", OptionList)
+        if ident and nav.highlighted_option is not None and nav.highlighted_option.id != ident:
+            self._navlock = True
+            try:
+                nav.highlighted = nav.get_option_index(ident)
+            finally:
+                self._navlock = False
+
+    def action_nav(self, ident: str) -> None:
+        if self._idle():
+            self.show_section(ident)
+            self.sync_nav()
+
     def _idle(self) -> bool:
         """True when a key should act on the tabs: there is a project and no dialog is open."""
         return bool(self.root) and not self.screen.is_modal
@@ -189,6 +296,8 @@ class ResearchTUI(App):
 
     def check_action(self, action: str, parameters: tuple) -> Optional[bool]:
         """Footer shows only the keys that work on the tab you are on."""
+        if action == "actions":
+            return self._idle() and self._active() in ACTION_TABS
         if action in ACTION_TAB:
             return self._idle() and self._active() == ACTION_TAB[action]
         if action == "filter":
@@ -197,14 +306,18 @@ class ResearchTUI(App):
 
     def on_tabbed_content_tab_activated(self, event) -> None:
         self.refresh_bindings()     # the footer lists the keys of the tab you are on
+        if self.root and self.srv:
+            self.sync_nav()
+            self.fill_section(self._active())
 
     def action_tab(self, i: int) -> None:
-        if self._idle() and 0 <= i < len(TAB_IDS):
-            self.query_one("#tabs", TabbedContent).active = TAB_IDS[i]
+        if 0 <= i < len(NAV_ITEMS):
+            self.action_nav(NAV_ITEMS[i][0])
 
     def action_step(self, d: int) -> None:
         if self._idle():
-            self.action_tab((TAB_IDS.index(self._active()) + d) % len(TAB_IDS))
+            cur = next((k for k, it in enumerate(NAV_ITEMS) if it[3] == self._active()), 0)
+            self.action_tab((cur + d) % len(NAV_ITEMS))
 
     def action_digit(self, n: int) -> None:
         if not self._idle():
@@ -258,14 +371,56 @@ class ResearchTUI(App):
         return ""
 
     def action_actions(self) -> None:
-        """The menu of what can be done with the selected inbox item."""
-        it = self._selected_item() if self._idle() and self._active() == INBOX_TAB else None
-        if not it:
-            return self.notify("Nothing is selected in the Inbox.")
-        if not it["actions"]:
-            return self.notify("There is nothing to do with this item. Press w to see what it means.")
-        opts = [(a, IN.ACTION_LABELS[a]) for a in it["actions"]]
-        self.push_screen(ActionMenu(it["title"][:60], opts), lambda a: a and self.run_item_action(it, a))
+        """The menu of what can be done with the selected row (an Inbox item, a worktree, an agent, a setting...)."""
+        if not (self._idle() and self._active() in ACTION_TABS):
+            return
+        if self._active() == INBOX_TAB:
+            it = self._selected_item()
+            if not it:
+                return self.notify("Nothing is selected in the Inbox.")
+            if not it["actions"]:
+                return self.notify("There is nothing to do with this item. Press w to see what it means.")
+            return self.push_screen(ActionMenu(it["title"][:60], [(a, IN.ACTION_LABELS[a]) for a in it["actions"]]), lambda a: a and self.run_item_action(it, a))
+        sec = SECTIONS[TAB_TABLE[self._active()]]
+        key = self._current(sec.table)
+        if not key:
+            return self.notify("Nothing is selected.")
+        opts = sec.actions(self, key)
+        if not opts:
+            return self.notify("Nothing to do with this row.")
+        self.push_screen(ActionMenu(sec.title, opts), lambda a: a and sec.act(self, key, a))
+
+    def safe(self, name: str, **kw: Any) -> Any:
+        return V.safe(self.call, name, **kw)
+
+    def fill_section(self, tab: str) -> None:
+        """Sections that call heavier operations load when you open them (and on refresh while open)."""
+        tid = TAB_TABLE.get(tab)
+        if tid in SECTIONS:
+            if tid == "settings" and self._settings_cache is None:
+                self._settings_cache = self.safe("settings")
+            self._fill(tid, SECTIONS[tid].rows(self))
+        elif tab == "t7":
+            self.fill_doctor()
+
+    def open_setting(self, key: str) -> None:
+        self.show_section("settings")
+        self.fill_section("t12")
+        t = self.query_one("#settings", DataTable)
+        try:
+            t.move_cursor(row=t.get_row_index(key))
+            t.focus()
+        except Exception:      # noqa: BLE001
+            pass
+
+    def open_inbox(self, key: str) -> None:
+        self.show_section("inbox")
+        t = self.query_one("#inbox", DataTable)
+        try:
+            t.move_cursor(row=t.get_row_index(key))
+            t.focus()
+        except Exception:      # noqa: BLE001
+            pass
 
     def inbox_detail(self, it: Dict[str, Any]) -> Text:
         ctx = None
@@ -310,6 +465,9 @@ class ResearchTUI(App):
                 self.notify(f"{ref}: {len(r['validated'])} passed, {len(r['failed'])} failed, {len(r['pending'])} pending. "
                             + ("Needs you: " + "; ".join(self.last["needs_human"][:3]) if self.last["needs_human"] else "Nothing needs interpretation."), timeout=12)
             return
+        if act == "reconcile":
+            return self.push_screen(Confirm("Point artifacts registered at a cluster path at the copy `research hpc import` collected?\nOnly files that were really collected change; the original path is kept as provenance."),
+                                    lambda ok: ok and self._do("hpc_reconcile"))
         if act == "hpc_sync":
             return self.push_screen(Confirm("Contact the cluster over SSH and refresh the state of this project's HPC runs?\nNothing is submitted."),
                                     lambda ok: ok and self._do("hpc_sync"))
@@ -445,10 +603,14 @@ class ResearchTUI(App):
         self.inbox = IN.gather(self.call, self.srv.project(sync=False), T)
         self._fill("inbox", [IN.row(i) for i in self.inbox])
         self.draw_banner()
-        bar = V.inbox_chip(IN.counts(self.inbox))
+        here = next((i[2] for i in NAV_ITEMS if i[3] == self._active()), "")
+        bar = Text(f"{here}  ›  ", style="bold") if self.size.width < 120 and here else Text()
+        bar.append_text(V.inbox_chip(IN.counts(self.inbox)))
         bar.append(V.SEP, style="dim").append_text(V.status_line(self.status))
         self.query_one("#status", Static).update(bar)
         self.label_decisions_tab()
+        self.refresh_nav()
+        self.fill_section(self._active())
         self.fill_dashboard(runs)
 
     def usage_records(self) -> List[Dict[str, Any]]:
@@ -467,6 +629,7 @@ class ResearchTUI(App):
     def fill_dashboard(self, runs: list) -> None:
         T = self.snap
         put = lambda pid, t: self.query_one(f"#{pid}", Static).update(t)
+        put("p-need", V.panel_need(self.inbox))
         put("p-status", V.panel_status(runs))
         put("p-runs", V.panel_runs(runs))
         put("p-appr", V.panel_approvals(self.proposals, self.open_count))
@@ -485,7 +648,7 @@ class ResearchTUI(App):
 
     def on_data_table_row_selected(self, e: DataTable.RowSelected) -> None:
         self.show_detail(e.data_table.id, e.row_key.value)
-        if e.data_table.id == "inbox":
+        if e.data_table.id == "inbox" or e.data_table.id in SECTIONS:
             self.action_actions()
 
     def show_detail(self, table: Optional[str], key: Optional[str]) -> None:
@@ -493,7 +656,9 @@ class ResearchTUI(App):
             return
         pane = "approvals-d" if table in ("plans", "approvals") else f"{table}-d"
         try:
-            if table == "inbox":
+            if table in SECTIONS:
+                text = SECTIONS[table].detail(self, key)
+            elif table == "inbox":
                 text = self.inbox_detail(next(x for x in self.inbox if x["key"] == key))
             elif table == "decisions":
                 text = V.decision_detail(next(x for x in self.decisions if x["id"] == key))
@@ -514,6 +679,7 @@ class ResearchTUI(App):
         if prop:
             text = V.proposal_detail(d).append_text(text)
         if table == "records" and key.startswith("EXP-"):
+            text = IN.experiment_header(self.srv.project(sync=False), key)
             text.append("\n").append_text(IN.experiment_context(self.srv.project(sync=False), self.call, key))
         if table == "runs":
             text.append("\n--- stdout ---\n" + tail(d.get("stdout_path_abs")) + "\n--- stderr ---\n" + tail(d.get("stderr_path_abs"), 15))

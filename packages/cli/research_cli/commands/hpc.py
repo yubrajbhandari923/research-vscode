@@ -381,6 +381,22 @@ def _hpc_import(a, p, cl) -> int:
     return 0
 
 
+def _hpc_reconcile(a, p, cl) -> int:
+    """Point artifacts registered at a cluster path at their collected local copy (runs imported by an older version). Safe to repeat."""
+    from research import runs as R
+    r = R.reconcile_collected(p, a.id)
+    if a.json:
+        out_json(r)
+        return 0
+    fixed = [x for x in r if "skipped" not in x]
+    print(green("✓ ") + f"{len(fixed)} artifact(s) now point at their collected copy" + (f"; {len(r) - len(fixed)} left as they were" if len(r) != len(fixed) else ""))
+    for x in fixed:
+        print(f"  {x['artifact']}  {x['path']}  " + dim(f"(was {x['remote_path']})"))
+    if not r:
+        print(dim("  nothing to reconcile: every artifact is already where it should be, or its file was never collected"))
+    return 0
+
+
 def _hpc_cancel(a, p, cl) -> int:
     from research.hpc import remote as HR
     r = HR.cancel(p, a.id, cluster_name=cl)
@@ -388,7 +404,7 @@ def _hpc_cancel(a, p, cl) -> int:
     return 0
 
 
-_HPC = {"config": _hpc_config, "clusters": _hpc_clusters, "doctor": _hpc_doctor, "init": _hpc_init, "inspect": _hpc_inspect, "datasets": _hpc_datasets, "bundle": _hpc_bundle, "submit": _hpc_submit, "status": _hpc_status, "sync": _hpc_sync, "collect": _hpc_collect, "import": _hpc_import, "cancel": _hpc_cancel}
+_HPC = {"config": _hpc_config, "clusters": _hpc_clusters, "doctor": _hpc_doctor, "init": _hpc_init, "inspect": _hpc_inspect, "datasets": _hpc_datasets, "bundle": _hpc_bundle, "submit": _hpc_submit, "status": _hpc_status, "sync": _hpc_sync, "collect": _hpc_collect, "import": _hpc_import, "reconcile": _hpc_reconcile, "cancel": _hpc_cancel}
 
 
 def cmd_hpc(a, p) -> int:
@@ -530,7 +546,7 @@ def attach(sub, add, group) -> None:
                                  "import | bundle | datasets | inspect | cancel | clusters | config", takes_tail=True)
     x.add_argument("action", nargs="?",
                    choices=["doctor", "init", "config", "clusters", "inspect", "bundle", "submit",
-                            "status", "sync", "collect", "import", "cancel", "datasets"])
+                            "status", "sync", "collect", "import", "reconcile", "cancel", "datasets"])
     x.add_argument("id", nargs="?", help="EXP-… (bundle/submit) · RUN-… (status/collect/cancel) · "
                                          "archive path (import) · sub-action (datasets)")
     x.add_argument("dataset", nargs="?", help="dataset id, for `datasets inspect|check|fetch|adopt`")
