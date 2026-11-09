@@ -93,6 +93,18 @@ def workspace_create(p, experiment: str, name: Optional[str] = None, base: Optio
 
 
 @op()
+def experiment_fork(p, id: str, title: str, at: str = "verified") -> Dict[str, Any]:
+    from .. import fork
+    return fork.fork(p, id, title, at=at)
+
+
+@op()
+def experiment_sync(p, id: str, source: str = "main") -> Dict[str, Any]:
+    from .. import fork
+    return fork.sync(p, id, source)
+
+
+@op()
 def workspace_archive(p, id: str, dry_run: bool = True, reason: Optional[str] = None) -> Dict[str, Any]:
     """Archival removes a directory, so the impact preview is the default."""
     from .. import workspace as W

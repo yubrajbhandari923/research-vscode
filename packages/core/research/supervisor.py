@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import autopromote as AP, durability, planspec as PS, registry, taskprompt
+from . import autopromote as AP, durability, fork as FK, planspec as PS, registry, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
@@ -350,6 +350,8 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
     return {"plan": st["plan_key"], "plan_id": st["plan_id"], "revision": st["revision"], "state": rs.get("state", "not_run"), "tasks": rows,
             "counts": counts, "progress": f"{done}/{len(rows)}", "budgets": {**(rs.get("budgets") or {}), "max_total_attempts": c["max_total_attempts"],
                                                                              "max_wall_minutes": c["max_wall_minutes"]},
+            "forks": [{"experiment": e["key"], "id": st["experiments"].get(e["key"]), "inherits": e["inherits"],
+                       "pinned": FK.inherited(p, st["experiments"].get(e["key"]))} for e in st["spec"].get("experiments", []) if e.get("inherits")],
             "proposals": [x for x in list_proposals(p) if x.get("plan_key") == st["plan_key"] and x["status"] == "pending"],
             "auto_promotion": AP.summary(p, st, rs) if rs else AP.mode(p, st, {}),
             "concurrency": concurrency(p, st, rs), "health": plan_health(p, st, rs), "waiting_provider": waiting_provider(rs),
@@ -445,7 +447,9 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
             e["phase"] = "awaiting_approval"
             e["reason"] = "waiting for your approval to start (requires_approval)"
             continue
-        wait = AP.gate(p, st, rs, tid)       # opt-in automatic promotion only; manual mode returns None
+        wait = FK.gate(p, st, tid)           # forked experiment: wait for the parent's verified revision, then pin it
+        if not wait and not FK.inherited(p, task.get("related_experiment_id")):   # a fork never follows main
+            wait = AP.gate(p, st, rs, tid)   # opt-in automatic promotion only; manual mode returns None
         if wait:
             e["phase"], e["reason"] = "waiting", wait
             continue

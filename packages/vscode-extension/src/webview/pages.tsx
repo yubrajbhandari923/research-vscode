@@ -109,6 +109,7 @@ const TASK_KIND: Record<string, 'ok' | 'bad' | 'info' | ''> = { done: 'ok', bloc
 
 export function WorkPage({ host, go }: { host: Host; go: Go }) {
   const a = useAsync<any>(() => host.call('control', { page: 'work' }), []);
+  const [forking, setForking] = useState(false);
   const [creating, setCreating] = useState(false);
   const [impact, setImpact] = useState<any>(null);
   const [promo, setPromo] = useState<any>(null);
@@ -152,13 +153,13 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
               <div className="grid-main">
                 <div className="col">
                   <Section id="ws" title="Experiment worktrees" count={d.workspaces.length} boxed
-                    lead={d.layout.mode === 'classic' ? undefined : <>Each experiment can live on its own git branch and folder while sharing one research history. Ledger <code>{d.layout.ledger_root}</code></>}>
+                    lead={d.layout.mode === 'classic' ? undefined : <>Each experiment can live on its own git branch and folder while sharing one research history. Ledger <code>{d.layout.ledger_root}</code> <button type="button" className="link" onClick={() => setForking(true)}>Fork an experiment…</button></>}>
                     {d.layout.mode === 'classic' ? <EmptyState icon="branch" title="Optional: try ideas on separate git branches.">Experiment worktrees and worktrees need a shared research ledger so every branch keeps one scientific history. Preview the change with <code>research ledger enable</code>; nothing moves until you add <code>--apply</code>.</EmptyState> :
                       d.workspaces.length === 0 ? <EmptyState inline icon="branch" title="No experiment worktrees yet." actions={<button type="button" onClick={() => setCreating(true)}>New worktree</button>}>Create one to try an idea without touching your current branch.</EmptyState> :
                         <div className="tbl-wrap"><table><caption className="sr">Experiment workspaces</caption><thead><tr><th scope="col">Workspace</th><th scope="col">Branch</th><th scope="col" className="hide-narrow">Experiment</th><th scope="col">State</th><th scope="col" className="hide-narrow">Agent / tasks</th><th scope="col"><span className="sr">Actions</span></th></tr></thead><tbody>
                           {d.workspaces.map((w: any) => (
                             <tr key={w.id}><td className="min"><b>{w.id}</b></td>
-                              <td><code className="clip">{w.branch}</code><span className="sub">base {String(w.base_rev || '').slice(0, 8)}{w.commits_ahead != null ? ` · ${w.commits_ahead} ahead` : ''}</span></td>
+                              <td><code className="clip">{w.branch}</code><span className="sub">base {String(w.base_rev || '').slice(0, 8)}{w.commits_ahead != null ? ` · ${w.commits_ahead} ahead` : ''}{w.forked_from ? ` · forked from ${w.forked_from.parent} (${w.forked_from.revision}), pinned` : ''}</span></td>
                               <td className="hide-narrow min">{w.experiment ? <IdLink id={w.experiment} host={host} /> : '—'}</td>
                               <td className="min">{!w.present ? <Badge kind="bad">missing</Badge> : w.dirty || w.untracked ? <Badge kind="warn">uncommitted</Badge> : <Badge kind="ok">clean</Badge>}{w.active_runs.length > 0 && <Badge kind="info" live>{w.active_runs.length} running</Badge>}</td>
                               <td className="hide-narrow dim">{[w.agent, w.tasks.length ? w.tasks.join(', ') : null].filter(Boolean).join(' · ') || '—'}</td>
@@ -196,6 +197,7 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
               </div>
             </div>
             {promo && <PromotionDialog host={host} candidate={promo} onClose={() => { setPromo(null); a.reload(); }} />}
+            {forking && <ForkExperiment host={host} onClose={() => setForking(false)} onDone={(t) => { setForking(false); setMsg({ ok: true, text: t }); a.reload(); }} />}
             {creating && <CreateWorkspace host={host} onClose={() => setCreating(false)} onDone={(t) => { setCreating(false); setMsg({ ok: true, text: t }); a.reload(); }} />}
             {impact && (
               <Dialog title={`Archive ${impact.workspace}`} onClose={() => setImpact(null)} actions={<>
@@ -210,6 +212,29 @@ export function WorkPage({ host, go }: { host: Host; go: Go }) {
         );
       }}</State>
     </div>
+  );
+}
+
+function ForkExperiment({ host, onClose, onDone }: { host: Host; onClose: () => void; onDone: (t: string) => void }) {
+  const exps = useAsync<any>(() => host.call('control', { page: 'research' }), []);
+  const [parent, setParent] = useState('');
+  const [title, setTitle] = useState('');
+  const [at, setAt] = useState('');
+  const [err, setErr] = useState('');
+  return (
+    <Dialog title="Fork an experiment" onClose={onClose} actions={<>
+      <button type="button" onClick={onClose}>Cancel</button>
+      <button type="button" className="primary" disabled={!parent || !title.trim()} onClick={async () => { try { const r = await host.call('experiment_fork', { id: parent, title: title.trim(), at: at.trim() || 'verified' }); onDone(`Created ${r.experiment} from ${r.parent} at ${String(r.base_rev).slice(0, 8)} (${r.workspace}, ${r.branch})`); } catch (e: any) { setErr(e.message || String(e)); } }}>Fork</button></>}>
+      <p className="muted">Starts a new experiment on its own branch from the parent's pinned code. It does not follow <code>main</code> and needs no promotion. If the parent is not verified yet, the fork is refused.</p>
+      <label htmlFor="fp">Parent experiment</label>
+      <select id="fp" data-autofocus value={parent} onChange={(e) => setParent(e.target.value)}><option value="">Choose…</option>
+        {(exps.data?.experiments || []).map((e: any) => <option key={e.id} value={e.id}>{e.id} · {e.title}</option>)}</select>
+      <label htmlFor="ft">Title</label>
+      <input id="ft" type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Method A" />
+      <label htmlFor="fa">Start from <span className="muted">(optional)</span></label>
+      <input id="fa" type="text" value={at} onChange={(e) => setAt(e.target.value)} placeholder="verified (default), a run id such as RUN-0003, or a git commit" />
+      {err && <div className="field-error" role="alert">{err}</div>}
+    </Dialog>
   );
 }
 

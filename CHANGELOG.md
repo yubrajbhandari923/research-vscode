@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.2.0
+
+- **Experiment forking with pinned code.** `research experiment fork EXP-001 --title "…" [--at verified|RUN-…|<commit>]`, and `inherits: {experiment: baseline, revision: verified}` on an experiment in the plan YAML. The supervisor waits for the parent to be verified, pins its last verified commit (`refs/research/forks/EXP-00N`, kept after the worktree is archived), and gives each child its own worktree from that commit, so siblings never see each other's edits. A fork never follows `main` (`research experiment sync` merges code in only when you ask). Promotion stays separate and optional. `plan yaml validate/diff/apply` check parents, cycles and pinned changes; runs record `forked_from`. See [docs/SUPERVISOR.md](docs/SUPERVISOR.md).
+
 ## 3.1.1
 
 - **On PyPI.** The CLI and terminal UI are published as `research-panel`: `uv tool install "research-panel[tui]"` (or `pipx install "research-panel[tui]"`), and update with `uv tool upgrade research-panel`, `pipx upgrade research-panel` or `research self-update`. Each GitHub release still carries the same wheel, sdist and `SHA256SUMS`; publishing a release uploads those exact files to PyPI through Trusted Publishing (no stored token). The VS Code extension is still distributed as a `.vsix` on the GitHub release.

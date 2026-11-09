@@ -77,7 +77,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 
 **`research question`** actions: `create` (create a question); `list` (list questions); `update` (edit a question); `show` (show a question)
 
-**`research experiment`** actions: `create` (register an experiment BEFORE running it); `list` (list experiments); `show` (experiment detail: runs, metrics, artifacts, synthesis); `update` (edit experiment fields); `variant` (derive a new experiment with changed parameters); `start` (mark experiment running); `ready` (mark experiment ready); `review` (mark experiment needs_review); `complete` (mark experiment completed); `fail` (mark experiment failed); `abandon` (mark experiment abandoned); `baseline` (mark as the current baseline); `check` (validate runs deterministically, list what needs interpretation, optionally prepare synthesis); `synthesize` (record a synthesis of the experiment's runs); `run` (execute a run of this experiment (same as `run exec`))
+**`research experiment`** actions: `create` (register an experiment BEFORE running it); `list` (list experiments); `show` (experiment detail: runs, metrics, artifacts, synthesis); `fork` (new experiment whose worktree starts from another experiment's pinned code (no promotion needed)); `sync` (explicitly merge main (or an EXP-/commit) into a forked experiment's branch); `update` (edit experiment fields); `variant` (derive a new experiment with changed parameters); `start` (mark experiment running); `ready` (mark experiment ready); `review` (mark experiment needs_review); `complete` (mark experiment completed); `fail` (mark experiment failed); `abandon` (mark experiment abandoned); `baseline` (mark as the current baseline); `check` (validate runs deterministically, list what needs interpretation, optionally prepare synthesis); `synthesize` (record a synthesis of the experiment's runs); `run` (execute a run of this experiment (same as `run exec`))
 
 **`research run`** actions: `exec` (run a command locally, tracked: research run exec EXP-001 -- python x.py); `submit` (submit via SLURM: research run submit EXP-001 --time 1:00:00 -- python x.py); `attach` (register a run you already executed yourself); `list` (list runs); `status` (show run status (refreshes from backend)); `update` (update a run (status, exit code, notes, reviewed)); `cancel` (cancel a running/queued run); `logs` (print run logs); `sync` (refresh status of all active runs); `compare` (side by side: parameters, metrics, code, artifacts of two runs); `sweep` (one run per grid point: research run sweep EXP-1 --grid lr=1e-3,1e-4 -- python t.py --lr {lr})
 
@@ -142,7 +142,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-212 operations.
+214 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -217,8 +217,10 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `executions` | task |  |  |  |
 | `experiment_check` | id, request_synthesis | yes |  |  |
 | `experiment_create` | title | yes | `experiment_create` |  |
+| `experiment_fork` | id, title, at |  |  |  |
 | `experiment_propose` |  | yes | `experiment_propose` |  |
 | `experiment_state` | id |  |  |  |
+| `experiment_sync` | id, source |  |  |  |
 | `experiment_synthesize` | id | yes | `experiment_synthesize` |  |
 | `finding_create` | title, statement, kind, confidence, supports, contradicts, questions, limitations | yes | `finding_create` |  |
 | `freeze_tests` | task, paths | yes |  |  |
