@@ -52,10 +52,10 @@ AUTO_PROMOTION: Dict[str, Any] = {
     "protected_test_globs": ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
 }
 NOTIFICATIONS: Dict[str, Any] = {
-    "halt_grace_seconds": 120, "auto_debug": False, "level": "medium", "telegram": {"enabled": False},
+    "halt_grace_seconds": 120, "auto_debug": False, "level": "medium", "summary": "facts", "telegram": {"enabled": False},
     "discord": {"enabled": False, "thread_per_task": True, "mention": True},
     "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit",
-                      "plan_started", "task_started", "task_verified"],
+                      "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified"],
                "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
     "digest": {"at": None, "silent_if_unchanged": True},
 }
@@ -128,6 +128,7 @@ _CONFIG: Dict[str, Any] = {
               "draft": {"trigger": "result", "max_words": 150, "max_sections": 3, "max_figures": 1},
               "publish": {"workflow": True}, "site": {"auto_include": False}},
     # Opt-in Opus → Sonnet → Haiku routing (`research setup agents`). `available`: [] = assume all configured models exist.
+    "ask": {"profile": None, "model": None, "timeout_seconds": 300, "allow_unenforced": False},
     "orchestration": {
         "enabled": False,
         "tiers": {
@@ -410,8 +411,18 @@ OPTIONS: List[Option] = [
        why="An overnight run that stops should reach you.", effect="The supervisor contacts api.telegram.org while enabled."),
     _o("notifications.discord.enabled", "bool", "supervisor", "Discord notifications", "Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only.",
        why="Answer a halted run from your phone with buttons and threads.", effect="The chat gateway keeps an outbound connection to discord.com while enabled."),
-    _o("notifications.level", "enum", "supervisor", "Push notification level", "How much the project pushes to your phone (Telegram and Discord): off = nothing automatic (commands still work); low = failures, halts and plan start/end; medium = plus anything that waits for you (approvals, decisions, promotions, provider limits); high = plus each task starting and being verified.",
+    _o("notifications.level", "enum", "supervisor", "Push notification level", "How much the project pushes to your phone (Telegram and Discord): off = nothing automatic (commands still work); low = plan started/finished and failures; medium (default) = plus each experiment starting and finishing with the results it recorded, and anything waiting for you; high = plus every run and task. Change it from chat with /notify.",
        choices=["off", "low", "medium", "high"], why="A long run should tell you what you need to know, not everything.", effect="Applies to the next alert; events skipped by a lower level are not replayed when you raise it."),
+    _o("notifications.summary", "enum", "supervisor", "Experiment summary written by", "facts = a template filled from recorded facts only (free, instant, no agent). agent = a read-only agent (ask.profile / ask.model) writes a short plain-language summary from the same facts; it is read-only, may cost money, and falls back to the facts if it fails.",
+       choices=["facts", "agent"], why="A quick 'what happened and what should I know' on your phone.", effect="Applies to the next experiment that finishes."),
+    _o("ask.profile", "str", "agents", "Agent for /ask and summaries", "The agent profile (claude, codex, agy, opencode or your own) that answers /ask and writes agent summaries. Empty uses the default profile. Only claude and codex can be restricted to read-only, so others are refused unless ask.allow_unenforced is on. In chat: /ai PROFILE MODEL.", nullable=True,
+       why="Pick the provider and model you want for quick questions, separate from the one doing the work.", effect="Applies to the next /ask or summary.", scopes=("project", "machine")),
+    _o("ask.model", "str", "agents", "Model for /ask and summaries", "The model the profile above uses for these questions. Empty uses the profile's own default.", nullable=True,
+       why="A cheaper or faster model is usually enough for questions.", effect="Applies to the next /ask or summary."),
+    _o("ask.timeout_seconds", "int", "agents", "/ask time limit", "How long the agent may work on one question or summary before it is stopped.", min_=30, max_=3600, unit="seconds",
+       why="A question should not run away.", effect="Applies to the next /ask or summary."),
+    _o("ask.allow_unenforced", "bool", "agents", "Allow agents that cannot be made read-only", "agy, opencode and custom agents cannot be restricted to read-only from here; allowing them means only the written instruction stops them from changing files.", risk="policy",
+       why="Read-only is a safety rule, not a preference.", effect="Applies to the next /ask or summary.", depends_on="ask.profile"),
     _o("notifications.discord.mention", "bool", "supervisor", "Ping me on Discord", "Mention the paired operators on Discord alerts that need a human (warnings and errors), so Discord sends a push notification even when the server only notifies for @mentions.",
        why="Discord's default setting hides ordinary messages from your phone.", effect="Applies to the next alert.", depends_on="notifications.discord.enabled"),
     _o("notifications.discord.thread_per_task", "bool", "supervisor", "One Discord thread per task", "Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals.",

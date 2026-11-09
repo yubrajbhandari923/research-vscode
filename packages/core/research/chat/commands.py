@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,6 +42,9 @@ COMMANDS: Dict[str, Tuple[str, Any, str]] = {
 }
 LOCAL = {"whoami": "your role and the projects you can see", "help": "this list", "project": "use NAME | list: choose the project for this chat",
          "sethome": "send digests and machine alerts to this chat", "health": "is chat set up and running? (what `research chat doctor` checks)",
+         "ask": "QUESTION: a read-only agent looks into the project and answers (it cannot change or delete anything)",
+         "ai": "[PROFILE [MODEL]]: which agent answers /ask and writes experiment summaries (no argument shows it)",
+         "notify": "[off|low|medium|high]: how much this project pushes automatically (no argument shows the level)",
          "pair": "get a pairing code (groups)"}
 ALIASES = {"start": "help", "approve": "REFUSE", "accept": "REFUSE", "void": "REFUSE", "promote": "REFUSE", "restart": "REFUSE", "cancel": "REFUSE"}
 _now = time.time
@@ -238,6 +242,60 @@ class Inbox:
             return self._msg(inc, f"{inc.user_name or inc.user_id}: {role} on {self.platform} (id {inc.user_id})\nProjects: {', '.join(projs) or 'none'}")
         if cmd == "pair":
             return self._msg(inc, f"You are already paired as {role}.")
+        if cmd in ("ask", "ai"):
+            from .. import ask as ASK
+            from ..store import Project
+            toks = rest.split()
+            explicit = toks.pop(0) if toks and toks[0] in projs else None
+            label, root = self._project(inc, explicit)
+            if cmd == "ask":
+                if not pairing.at_least(role, "operator"):
+                    return self._msg(inc, "/ask needs the operator role.", "warn")
+                if not toks:
+                    return self._msg(inc, "Ask something: /ask why did EXP-003 end up needs_review?", "warn")
+                with Project(root, sync=False) as p:
+                    try:
+                        info = ASK.describe(p)
+                        if not info["allowed"]:
+                            ASK.readonly_profile({}, info["provider"], False)
+                    except ResearchError as ex:
+                        return self._msg(inc, _err(ex), "warn")
+                threading.Thread(target=_ask_and_reply, args=(root, " ".join(toks), inc.platform, str(inc.chat), inc.user_name or inc.user_id), daemon=True).start()
+                return self._msg(inc, f"On it. {info['profile']}" + (f" / {info['model']}" if info["model"] else "") + " is looking into it, read-only: it cannot change or delete anything. "
+                                 "I will reply here when it is done (a few minutes at most).", "ok")
+            with Project(root) as p:
+                if toks:
+                    if not pairing.at_least(role, "operator"):
+                        return self._msg(inc, "Changing the agent needs the operator role.", "warn")
+                    if toks[0] not in ((p.config.get("agents") or {}).get("profiles") or {}):
+                        return self._msg(inc, f"No agent profile named {toks[0]!r}. Known: " + ", ".join(sorted((p.config.get("agents") or {}).get("profiles") or {})), "warn")
+                    upd = {"ask.profile": toks[0], "ask.model": toks[1] if len(toks) > 1 else None}
+                    p.save_config(upd)
+                    p.config = p.load_config()
+                info = ASK.describe(p)
+            ok = "read-only is enforced by the provider" if info["read_only_enforced"] else ("NOT enforceable for this provider: refused for /ask" if not info["allowed"] else "read-only by instruction only")
+            return self._msg(inc, f"/ask and experiment summaries use {info['profile']} ({info['provider']})" + (f", model {info['model']}" if info["model"] else ", the profile's default model")
+                             + f"\n{ok}. {'' if info['installed'] else 'WARNING: it is not installed on this machine. '}Change: /ai PROFILE [MODEL] (claude and codex can be enforced read-only).",
+                             "ok" if info["allowed"] else "warn")
+        if cmd == "notify":
+            from . import alerts
+            from ..store import Project
+            toks = rest.split()
+            explicit = toks.pop(0) if toks and toks[0] in projs else None
+            label, root = self._project(inc, explicit)
+            want = (toks[-1].lower() if toks else "")
+            if want and want not in alerts.LEVELS:
+                return self._msg(inc, f"Unknown level {want!r}. Choose off, low, medium or high.", "warn")
+            with Project(root) as p:
+                if want:
+                    if not pairing.at_least(role, "operator"):
+                        return self._msg(inc, "Changing the notification level needs the operator role.", "warn")
+                    p.save_config({"notifications.level": want})
+                    p.config = p.load_config()
+                cur = alerts.level(p)
+            lines = [f"Notifications for {label}: {cur}" + (" (just changed)" if want else "")]
+            lines += [f"{'>' if k == cur else ' '} {k:<7} {d}" for k, d in alerts.LEVEL_HELP.items()]
+            return self._msg(inc, "\n".join(lines) + "\nChange it with /notify low | medium | high | off.", "ok" if want else "info")
         if cmd == "health":
             from . import manage
             from ..store import Project
@@ -347,6 +405,28 @@ class Inbox:
         txt = (res.get("text") if isinstance(res, dict) else None) or "Approved."
         return Reply([Message(str(txt), chat=inc.chat, color="ok")], delete=[inc.ref] if inc.ref else [],
                      edit=Message((card.get("text") or "")[:1500] + f"\n\n✓ approved by {inc.user_name or inc.user_id} via {self.platform}", chat=inc.chat, color="ok"))
+
+
+def _ask_and_reply(root: str, question: str, platform: str, chat: str, who: str) -> None:
+    """Run the read-only agent off the gateway's loop and post the answer back to the chat that asked, through the project's outbox."""
+    import uuid
+    from .. import ask as ASK
+    from ..store import Project
+    from . import alerts
+    try:
+        with Project(root, sync=False, author={"author_type": "agent", "author_name": "ask", "author_model": None}) as p:
+            try:
+                r = ASK.run(p, question)
+                text, sev = f"Q: {question[:200]}\n\n{r['answer'][:3400]}{ASK.footer(r)}", "info"
+            except (ResearchError, PolicyBlocked) as ex:
+                text, sev = f"/ask could not answer: {_err(ex)}", "warn"
+            alerts.raise_(p, f"answer:{uuid.uuid4().hex[:10]}", "answer", sev, text, chat=chat, platform=platform)
+    except Exception as ex:      # noqa: BLE001 - a failed lookup must never take the gateway down
+        try:
+            with Project(root, sync=False) as p:
+                alerts.raise_(p, f"answer:{uuid.uuid4().hex[:10]}", "answer", "warn", f"/ask failed: {type(ex).__name__}", chat=chat, platform=platform)
+        except Exception:      # noqa: BLE001
+            pass
 
 
 def _err(ex: Exception) -> str:

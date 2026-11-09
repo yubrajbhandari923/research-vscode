@@ -75,7 +75,7 @@ def test_artifact_states_and_the_reason_for_each(tmp_path):
     chg.write_text("new")
     R.register_artifact(p, "/no/such/mount/far.csv", run=r, allow_missing=True)
     st = {x["name"]: x["state"] for x in IN.artifact_rows(p, e)}
-    assert st == {"fine.csv": "collected", "lost.csv": "missing", "changed.csv": "modified", "far.csv": "inaccessible"}
+    assert st == {"fine.csv": "local", "lost.csv": "missing", "changed.csv": "modified", "far.csv": "inaccessible"}
     its, _, _ = items(str(tmp_path))
     assert [i for i in its if i["kind"] == "artifacts"][0]["level"] == "action", "a modified or missing file is evidence you cannot trust: that needs you"
 

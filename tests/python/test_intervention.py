@@ -323,15 +323,16 @@ def test_a_halt_sends_one_message_with_the_debug_summary_and_options_then_report
     join_threads()
     assert tg.sent == [], "the supervisor writes to the outbox; only the gateway talks to Telegram"
     tg.deliver()
-    assert len(tg.sent) == 1 and tg.messages[0]["chat"] == "777"
-    msg = tg.sent[0]
-    assert "2. Fix the task" in json.dumps(tg.messages[0]["markup"]) and "Pause plan" in json.dumps(tg.messages[0]["markup"])
+    assert tg.sent[0] == "Plan fx started." and len(tg.sent) == 2 and {m["chat"] for m in tg.messages} == {"777"}, "the plan start (default level) and then the one halt notice"
+    hi = next(i for i, m in enumerate(tg.sent) if "HALTED" in m)
+    msg = tg.sent[hi]
+    assert "2. Fix the task" in json.dumps(tg.messages[hi]["markup"]) and "Pause plan" in json.dumps(tg.messages[hi]["markup"])
     assert "HALTED" in msg and "most likely the check is mistaken" in msg.lower() and "1. Relax the check [scientific]" in msg and "2. Fix the task [implementation] (recommended)" in msg and "/choose N" in msg
     assert TOKEN not in msg
     notify.step(lproj)
     join_threads()
     tg.deliver()
-    assert len(tg.sent) == 1, "one notice per halt, not one per pass"
+    assert len(tg.sent) == 2 and sum("HALTED" in m for m in tg.sent) == 1, "one notice per halt, not one per pass"
     rec = notify.latest_debug(lproj)
     assert rec["state"] == "done" and len(rec["options"]) == 2 and "opus" in rec["model"] or "default" in rec["model"]
     assert "read files and logs" in stub.calls[0][1] and "(read only" in stub.calls[0][1]

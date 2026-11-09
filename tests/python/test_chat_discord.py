@@ -792,11 +792,14 @@ def test_notification_level_filters_kinds_and_never_replays_what_it_skipped(env)
             return alerts.raise_(p, key or f"{kind}:{next(n)}", kind, "info", "x", once=once) is not None
         _enable(p, discord=True, **{"notifications.level": "low"})
         assert all([sends("halt"), sends("task_failed"), sends("run_failed"), sends("plan_started", True, "ps"), sends("plan_finished", True, "pf")])
-        assert not any([sends("approval_needed"), sends("decision"), sends("provider_limit"), sends("task_verified", True, "tv1"), sends("task_started")])
+        assert not any([sends("approval_needed"), sends("decision"), sends("provider_limit"), sends("experiment_started", True, "es1"), sends("experiment_finished", True, "ef1"),
+                        sends("run_finished", True, "rf1"), sends("task_verified", True, "tv1"), sends("task_started")])
         _enable(p, discord=True, **{"notifications.level": "medium"})
-        assert all([sends("approval_needed"), sends("decision"), sends("promotion_ready")]) and not sends("task_started")
+        assert all([sends("approval_needed"), sends("decision"), sends("promotion_ready"), sends("experiment_started", True, "es2"), sends("experiment_finished", True, "ef2")])
+        assert not sends("task_started") and not sends("run_finished", True, "rf2"), "every run is a high-level detail"
         _enable(p, discord=True, **{"notifications.level": "high"})
-        assert sends("task_started") and sends("task_verified", True, "tv2")
+        assert sends("task_started") and sends("task_verified", True, "tv2") and sends("run_finished", True, "rf3")
+        assert not sends("experiment_finished", True, "ef1"), "skipped at a lower level: not replayed"
         assert not sends("task_verified", True, "tv1"), "an event skipped at a lower level is not replayed when you raise it"
         _enable(p, discord=True, **{"notifications.level": "off"})
         assert not any([sends("halt"), sends("plan_finished"), sends("plan_started")])
@@ -831,3 +834,224 @@ def test_telegram_alerts_are_never_sent_silently(monkeypatch):
     telegram.set_credentials("123456:" + "A" * 35, 777)
     telegram.TelegramChannel().send_message(commands.Message("Plan x finished.", chat="777", color="ok"))
     assert sent and sent[0][0] == "sendMessage" and "disable_notification" not in sent[0][1], "Telegram pushes unless a message asks to be silent"
+
+
+# ----------------------------------------------------------------------------------------------- experiment summaries and /notify
+def _finished_experiment(root, with_bad_artifact=True):
+    from research import runs as R, services
+    with Project(root) as p:
+        e = services.create_experiment(p, "Step size sweep", hypothesis="Smaller steps converge faster")["id"]
+        r = R.create_run(p, e, command="train", backend="local", status="completed", exit_code=0)["id"]
+        p.current_run = None
+        for n, v in (("loss", 0.0831), ("accuracy", 0.912)):
+            p.conn.execute("INSERT INTO metrics(run_id, experiment_id, name, value) VALUES (?,?,?,?)", (r, e, n, v))
+        p.conn.commit()
+        if with_bad_artifact:
+            R.register_artifact(p, "/cluster/scratch/out/curve.png", run=r, allow_missing=True)
+        services.set_experiment_status(p, e, "needs_review", "all runs finished")
+        return e, r
+
+
+def test_experiment_finished_summary_is_grounded_and_flags_what_to_know(env):
+    from research import summary
+    fake, ch = env
+    e, r = _finished_experiment(fake.roots[0])
+    with Project(fake.roots[0], sync=False) as p:
+        sev, text = summary.experiment_summary(p, e)
+    assert sev == "warn" and f"Experiment {e} finished: Step size sweep (needs review)" in text
+    assert "Tested: Smaller steps converge faster" in text and "1 completed, 0 failed" in text
+    assert "loss=0.0831" in text and "accuracy=0.912" in text
+    assert "1 artifact(s) could not be verified" in text and "does not prove its files exist" in text
+    assert "a synthesis is due" in text and "not an interpretation" in text
+    assert "conclude" not in text.lower() and "suggests" not in text.lower(), "recorded values only: no interpretation"
+    e2, _ = _finished_experiment(fake.roots[1], with_bad_artifact=False)
+    with Project(fake.roots[1], sync=False) as p:
+        assert summary.experiment_summary(p, e2)[0] == "ok"
+
+
+def test_default_level_pushes_experiment_start_and_finish_but_not_every_run(env, monkeypatch):
+    from research import notify
+    fake, ch = env
+    monkeypatch.setattr(notify, "ensure_gateway", lambda p: {"action": "none"})
+    root = fake.roots[0]
+    e, r = _finished_experiment(root)
+    with Project(root) as p:
+        _enable(p, discord=True)
+        from research.util import now_iso
+        p.conn.execute("UPDATE runs SET ended_at=? WHERE id=?", (now_iso(), r))
+        p.conn.commit()
+        notify.step(p)
+        kinds = [x["kind"] for x in _outbox(p)]
+        assert "experiment_finished" in kinds and "run_finished" not in kinds, "default (medium): results per experiment, not per run"
+        fin = [x for x in _outbox(p) if x["kind"] == "experiment_finished"][0]
+        assert "loss=0.0831" in fin["text"] and fin["severity"] == "warn"
+        notify.step(p)
+        assert [x["kind"] for x in _outbox(p)].count("experiment_finished") == 1, "once per finished experiment"
+        _enable(p, discord=True, **{"notifications.level": "high"})
+        notify.step(p)
+        assert "run_finished" in [x["kind"] for x in _outbox(p)]
+    with Project(fake.roots[1]) as p2:
+        _enable(p2, discord=True, **{"notifications.level": "low"})
+        e2, _ = _finished_experiment(fake.roots[1])
+        notify.step(p2)
+        assert not [x for x in _outbox(p2) if x["kind"] in ("experiment_finished", "run_finished")], "low: only plan start/end and failures"
+
+
+def test_notify_command_shows_and_sets_the_level_from_chat(env):
+    fake, ch = env
+
+    def send(user, text):
+        run(fake.do(ch, "message", user, "u" + user, channel="dm-" + user, guild=None, text=text))
+        return fake.texts("dm-" + user)[-1] if fake.texts("dm-" + user) else ""
+    out = send("1", "/notify alpha")
+    assert "Notifications for alpha: medium" in out and "> medium" in out and "plus each experiment started and finished" in out
+    out = send("1", "/notify alpha low")
+    assert "low (just changed)" in out
+    with Project(fake.roots[0], sync=False) as p:
+        assert p.config["notifications"]["level"] == "low"
+    assert "Unknown level" in send("1", "/notify alpha loud")
+    assert "operator role" in send("2", "/notify alpha high"), "a viewer can look but not change it"
+    with Project(fake.roots[0], sync=False) as p:
+        assert p.config["notifications"]["level"] == "low"
+    assert "level" in {o["name"] for c in D.slash_payload() if c["name"] == "notify" for o in c["options"]}
+    ix = run(fake.slash_cmd(ch, "notify", level="high", where={"channel": "100"}))
+    with Project(fake.roots[0], sync=False) as p:
+        assert p.config["notifications"]["level"] == "high"
+
+
+# ----------------------------------------------------------------------------------------------- /ask, /ai and agent-drafted summaries (read-only)
+def _wait(cond, secs=8.0):
+    import time as _t
+    end = _t.time() + secs
+    while _t.time() < end:
+        if cond():
+            return True
+        _t.sleep(0.05)
+    return False
+
+
+def test_ask_agent_is_read_only_where_the_provider_can_enforce_it_and_refused_where_it_cannot(env, monkeypatch):
+    import shutil
+    from research import agents, ask as ASK
+    fake, ch = env
+    monkeypatch.setattr(shutil, "which", lambda c: "/usr/bin/" + c)
+    seen = []
+    monkeypatch.setattr(agents, "run_headless", lambda p, d, timeout=None: seen.append(d) or {"exit_code": 0, "timed_out": False, "result": "42 runs.", "usage": None})
+    with Project(fake.roots[0], sync=False) as p:
+        r = ASK.run(p, "how many runs?")
+        d = seen[-1]
+        assert r["answer"] == "42 runs." and r["provider"] == "claude" and r["read_only_enforced"]
+        tools = d["argv"][d["argv"].index("--allowedTools") + 1].split(",")
+        assert d["argv"][d["argv"].index("--permission-mode") + 1] == "plan"
+        assert not any(t.startswith(("Edit", "Write", "NotebookEdit")) or t in ("Bash", "Bash(*)", "Bash(rm *)") for t in tools) and "Read" in tools
+        assert not any(t.startswith("Bash(research") and not t.startswith(("Bash(research current", "Bash(research show", "Bash(research search", "Bash(research status",
+                                                                             "Bash(research list", "Bash(research run status", "Bash(research run logs",
+                                                                             "Bash(research experiment state")) for t in tools if "research" in t and "/" not in t), "only read-only research commands"
+        prompt = d["argv"][-1]
+        assert "READ-ONLY" in prompt and "Do NOT create, edit, move, copy over or delete" in prompt and "QUESTION: how many runs?" in prompt
+        assert d["env"]["RESEARCH_AGENT"] == "claude", "it runs as an agent: protected actions stay refused"
+        p.config.setdefault("ask", {})["profile"] = "codex"
+        r = ASK.run(p, "q")
+        assert r["provider"] == "codex" and seen[-1]["argv"][seen[-1]["argv"].index("-s") + 1] == "read-only"
+        p.config["ask"]["profile"] = "agy"
+        with pytest.raises(ResearchError, match="cannot be restricted to read-only"):
+            ASK.run(p, "q")
+        assert ASK.describe(p)["allowed"] is False and ASK.describe(p)["read_only_enforced"] is False
+        n = len(seen)
+        p.config["ask"]["allow_unenforced"] = True
+        r = ASK.run(p, "q")
+        assert r["read_only_enforced"] is False and "by instruction only" in ASK.footer(r) and len(seen) == n + 1
+
+
+def test_ask_command_replies_at_once_then_posts_the_answer_back_to_the_asker_only(env, monkeypatch):
+    from research import ask as ASK
+    fake, ch = env
+    calls = []
+    monkeypatch.setattr(ASK, "run", lambda p, q, facts="", style="answer": calls.append(q) or {"answer": "EXP-003 is in needs_review: one run is unsynthesized.", "profile": "claude",
+                                                                                             "provider": "claude", "model": "m1", "read_only_enforced": True, "usage": None})
+    monkeypatch.setattr(ASK, "describe", lambda p: {"profile": "claude", "provider": "claude", "model": "m1", "allowed": True, "read_only_enforced": True, "installed": True})
+    with Project(fake.roots[0], sync=False) as p:
+        _enable(p, discord=True, **{"notifications.level": "off"})                  # an answer is never filtered by the level
+    run(fake.do(ch, "message", "1", "u1", channel="dm-1", guild=None, text="/ask alpha why is EXP-003 waiting?"))
+    first = fake.texts("dm-1")[-1]
+    assert "On it." in first and "read-only" in first and "cannot change or delete anything" in first
+    with Project(fake.roots[0], sync=False) as p:
+        assert _wait(lambda: any(r["kind"] == "answer" for r in _outbox(p)))
+        rec = [r for r in _outbox(p) if r["kind"] == "answer"][0]
+        assert rec["platform"] == "discord" and rec["chat"] == "dm-1" and calls == ["why is EXP-003 waiting?"]
+        assert "needs_review" in rec["text"] and "-- claude / m1, read-only" in rec["text"]
+    g = Gateway({"discord": ch}, discover=False)
+    assert run(g.pump_once()) >= 1
+    assert any("needs_review" in (t or "") for t in fake.texts("dm-1")), "delivered to the chat that asked"
+    assert not any("needs_review" in (t or "") for ch_ in ("100", "200") for t in fake.texts(ch_)), "not broadcast to the project channel"
+    out = run(fake.do(ch, "message", "2", "u2", channel="dm-2", guild=None, text="/ask alpha anything"))
+    assert "operator role" in fake.texts("dm-2")[-1] and len(calls) == 1, "a viewer cannot start an agent"
+
+
+def test_ask_failure_is_reported_in_chat(env, monkeypatch):
+    from research import ask as ASK
+    fake, ch = env
+    monkeypatch.setattr(ASK, "describe", lambda p: {"profile": "agy", "provider": "agy", "model": None, "allowed": True, "read_only_enforced": False, "installed": True})
+
+    def boom(p, q, facts="", style="answer"):
+        raise ResearchError("the agent failed (exit 1)")
+    monkeypatch.setattr(ASK, "run", boom)
+    run(fake.do(ch, "message", "1", "u1", channel="dm-1", guild=None, text="/ask alpha what happened"))
+    with Project(fake.roots[0], sync=False) as p:
+        assert _wait(lambda: any(r["kind"] == "answer" for r in _outbox(p)))
+        rec = [r for r in _outbox(p) if r["kind"] == "answer"][0]
+        assert rec["severity"] == "warn" and "could not answer" in rec["text"] and "the agent failed" in rec["text"]
+
+
+def test_ai_command_shows_and_sets_the_agent_for_ask_and_summaries(env):
+    fake, ch = env
+
+    def send(user, text):
+        run(fake.do(ch, "message", user, "u" + user, channel="dm-" + user, guild=None, text=text))
+        return fake.texts("dm-" + user)[-1]
+    out = send("1", "/ai alpha")
+    assert "claude (claude)" in out and "read-only is enforced by the provider" in out
+    out = send("1", "/ai alpha codex gpt-x")
+    assert "codex (codex)" in out and "model gpt-x" in out
+    with Project(fake.roots[0], sync=False) as p:
+        assert p.config["ask"]["profile"] == "codex" and p.config["ask"]["model"] == "gpt-x"
+    assert "No agent profile named 'nope'" in send("1", "/ai alpha nope")
+    assert "refused for /ask" in send("1", "/ai alpha agy")
+    assert "operator role" in send("2", "/ai alpha claude")
+    with Project(fake.roots[0], sync=False) as p:
+        assert p.config["ask"]["profile"] == "agy"
+
+
+def test_agent_drafted_experiment_summary_keeps_the_facts_and_falls_back_when_the_agent_fails(env, monkeypatch):
+    from research import ask as ASK, notify
+    from research.util import now_iso
+    fake, ch = env
+    monkeypatch.setattr(notify, "ensure_gateway", lambda p: {"action": "none"})
+    calls = []
+
+    def fake_run(p, q, facts="", style="answer"):
+        calls.append(style)
+        return {"answer": "Short version: one run finished, results recorded, artifacts unverified.", "profile": "claude", "provider": "claude", "model": None,
+                "read_only_enforced": True, "usage": None}
+    monkeypatch.setattr(ASK, "run", fake_run)
+    root = fake.roots[0]
+    e, r = _finished_experiment(root)
+    with Project(root) as p:
+        _enable(p, discord=True, **{"notifications.summary": "agent"})
+        notify.step(p)
+        assert _wait(lambda: any(x["kind"] == "experiment_finished" for x in _outbox(p)))
+        rec = [x for x in _outbox(p) if x["kind"] == "experiment_finished"][0]
+        assert rec["text"].startswith("Short version:") and "--- recorded facts ---" in rec["text"] and "loss=0.0831" in rec["text"] and calls == ["summary"]
+        notify.step(p)
+        assert [x["kind"] for x in _outbox(p)].count("experiment_finished") == 1
+    e2, _ = _finished_experiment(fake.roots[1])
+
+    def bad(p, q, facts="", style="answer"):
+        raise ResearchError("agy cannot be restricted to read-only")
+    monkeypatch.setattr(ASK, "run", bad)
+    with Project(fake.roots[1]) as p2:
+        _enable(p2, discord=True, **{"notifications.summary": "agent"})
+        notify.step(p2)
+        assert _wait(lambda: any(x["kind"] == "experiment_finished" for x in _outbox(p2)))
+        t = [x for x in _outbox(p2) if x["kind"] == "experiment_finished"][0]["text"]
+        assert "loss=0.0831" in t and "agent summary unavailable" in t and "cannot be restricted" in t

@@ -221,6 +221,8 @@ def send_rest(text: str, channel_id: Optional[str] = None) -> bool:
 _PROJ = ("project", "Project (default: this channel's)", "str", False, "project")
 SLASH: Dict[str, List[Tuple[str, str, str, bool, Any]]] = {
     "status": [_PROJ], "blocked": [_PROJ], "tasks": [_PROJ], "health": [],
+    "ask": [("question", "What do you want to know? A read-only agent looks it up.", "str", True, None)],
+    "ai": [("profile", "Agent profile (empty shows the current one)", "str", False, None), ("model", "Model (optional)", "str", False, None)], "notify": [("level", "off, low, medium or high (empty shows the current level)", "str", False, ("off", "low", "medium", "high"))],
     "task": [("task", "Task id, e.g. T-12", "str", True, "task")],
     "logs": [("task", "Task id, e.g. T-12", "str", True, "task"), ("stream", "stdout or stderr", "str", False, ("stdout", "stderr"))],
     "report": [("scope", "What to report on", "str", False, None)],
@@ -440,7 +442,7 @@ class DiscordChannel(Channel):
 
     async def deliver(self, m: Message) -> Optional[str]:
         c = credentials()
-        chan = self._label_channel(m.project) or m.chat or home_channel()
+        chan = (m.chat if m.direct else None) or self._label_channel(m.project) or m.chat or home_channel()
         if not chan:
             raise ResearchError("Discord has no home channel", hint="Run /sethome in the channel that should receive alerts.")
         chan, first = str(chan), render(m)
@@ -531,7 +533,7 @@ class DiscordChannel(Channel):
         label, _ = self._where(ix)
         o = ix.options
         order = ORDER.get(ix.name) or [x[0] for x in SLASH.get(ix.name, [])]
-        pre = ((o.get("project") if ix.name in ("status", "blocked", "tasks") else None) or label) if ix.name in commands.COMMANDS or ix.name == "health" else None
+        pre = ((o.get("project") if ix.name in ("status", "blocked", "tasks") else None) or label) if ix.name in commands.COMMANDS or ix.name in ("health", "notify", "ask", "ai") else None
         _, thread_task = self._where(ix)
         if thread_task and not o.get("task") and any(x[0] == "task" for x in SLASH.get(ix.name, [])):
             o = {**o, "task": thread_task}       # inside a task's thread, /say /task /logs /stop ... mean that task

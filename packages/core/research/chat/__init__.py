@@ -64,6 +64,7 @@ class Message:
     ephemeral: bool = False
     project: str = ""
     chat: Optional[str] = None    # destination override (reply to where the command came from); None = the platform's home
+    direct: bool = False          # True: `chat` is where the asker is (an /ask answer), so it wins over the project channel and the home channel
 
     def plain(self) -> str:
         """Plain-text rendering (Telegram; also what tests assert on)."""

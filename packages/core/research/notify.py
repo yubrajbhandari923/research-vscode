@@ -245,6 +245,49 @@ def _scan(p, c: Dict[str, Any]) -> None:
                               actions=[{"label": "Show logs", "op": "chat_cmd_logs", "params": {"task": tid}, "min_role": "viewer"}])
 
 
+def _experiment_alerts(p) -> None:
+    """Experiment started / finished (with the recorded results) and, at the highest level, every run. Only recent events, so an upgrade does not replay history."""
+    from . import summary as S
+    from .chat import alerts
+    for e in p.q("SELECT id, title, status, started_at, updated_at FROM experiments WHERE status IN ('running','needs_review','completed','failed')"):
+        if e["status"] == "running" and _recent(e["started_at"]):
+            alerts.raise_(p, f"experiment_started:{e['id']}", "experiment_started", "info", S.started_text(p, e["id"]), once=True)
+        elif e["status"] != "running" and _recent(e["updated_at"]) and alerts.allowed(p, "experiment_finished"):
+            n = p.q1("SELECT COUNT(*) AS n FROM runs WHERE experiment_id=? AND status IN ('completed','failed','cancelled')", (e["id"],))["n"]
+            if n:
+                sev, text = S.experiment_summary(p, e["id"])
+                key = f"experiment_finished:{e['id']}:{n}"
+                if (p.config.get("notifications") or {}).get("summary") == "agent" and not (alerts._load(p).get("keys") or {}).get(key):
+                    if key not in _threads or not _threads[key].is_alive():
+                        _threads[key] = threading.Thread(target=_agent_summary_and_alert, args=(p.root, e["id"], key, sev, text), daemon=True)
+                        _threads[key].start()
+                    continue
+                alerts.raise_(p, key, "experiment_finished", sev, text, once=True)
+    if alerts.allowed(p, "run_finished"):
+        for r in p.q("SELECT id, ended_at FROM runs WHERE status IN ('completed','failed','cancelled') ORDER BY ended_at DESC LIMIT 30"):
+            if _recent(r["ended_at"]):
+                sev, text = S.run_summary(p, r["id"])
+                alerts.raise_(p, f"run_finished:{r['id']}", "run_finished", sev, text, once=True)
+
+
+def _agent_summary_and_alert(root: str, exp_id: str, key: str, sev: str, facts: str) -> None:
+    """notifications.summary: agent. A read-only agent writes the short summary from the recorded facts, off the supervisor's tick; the facts follow it,
+    and if the agent cannot run the facts alone are sent (saying why). Never blocks scheduling, never writes anything but the alert."""
+    from . import ask as ASK
+    from .chat import alerts
+    from .store import Project
+    try:
+        with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
+            try:
+                r = ASK.run(p, p.get("experiment", exp_id)["title"], facts=facts, style="summary")
+                text = f"{r['answer']}\n\n--- recorded facts ---\n{facts}{ASK.footer(r)}"
+            except (ResearchError, PolicyBlocked) as ex:
+                text = f"{facts}\n\n(agent summary unavailable: {str(ex)[:160]})"
+            alerts.raise_(p, key, "experiment_finished", sev, text, once=True)
+    except Exception:      # noqa: BLE001
+        pass
+
+
 def _recent(ts: Optional[str], hours: float = 24.0) -> bool:
     """True when an ISO timestamp is within `hours` of now (naive timestamps are UTC)."""
     if not ts:
@@ -308,6 +351,7 @@ def step(p) -> None:
                     _alert_halt(p, st["plan_key"], h["fingerprint"], message_for({"state": "none"}, h), {})
         if tg:
             _scan(p, c)
+            _experiment_alerts(p)
             ensure_gateway(p)
     except Exception as ex:      # noqa: BLE001 - notifications must never stop scheduling
         try:
