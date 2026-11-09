@@ -114,14 +114,15 @@ blockquote { border-left: 4px solid $primary; color: #444; }
 figure figcaption { font-size: 0.9em; color: #555; }
 """
 
-_PUBLISH_YML = """# Builds the guide's scientific edition and publishes it as a website (GitHub Pages) on every push to main.
+_PUBLISH_YML = """# Builds the research website (the guide's scientific edition) and publishes it with GitHub Pages on every push to {branch}.
+# This is the ONE workflow that deploys to Pages; keep it single (two deploying workflows cancel each other).
 # One-time setup on GitHub: Settings -> Pages -> Build and deployment -> Source: "GitHub Actions".
 # Written once by Research OS; it is yours to edit (add the researcher edition, a custom domain, a PDF, ...).
 name: Publish scientist guide
 
 on:
   push:
-    branches: [main]
+    branches: [{branch}]
     paths:
       - "{path}/**"
       - ".github/workflows/publish-guide.yml"
@@ -147,6 +148,8 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
       - name: Render (never executes code)
         run: quarto render {path} --profile scientific --to html --no-execute
+      - name: Check the site was built
+        run: test -f {path}/_output/scientific/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -324,6 +327,20 @@ def _write_new(path: str, text: str, created: List[str], skipped: List[str], roo
     created.append(rel)
 
 
+def default_branch(p: Project) -> str:
+    """The branch the Pages workflow deploys: `promotion.main_branch` when set, else the remote's default branch, else the branch checked out
+    on the main checkout (so a repository whose default is `trunk` or `master` is not given a workflow for `main`)."""
+    from . import promotion as PR, registry, workspace as W
+    explicit = (p.config.get("promotion") or {}).get("main_branch")
+    if explicit and explicit != registry.default("promotion.main_branch"):      # the default "main" is not a choice; a changed value is
+        return str(explicit)
+    top = PV.main_root(p)
+    ref = W._git(top, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+    if ref and "/" in ref:
+        return ref.split("/", 1)[1]
+    return W._git(top, "symbolic-ref", "--short", "HEAD") or PR._main_branch(p)
+
+
 def workflow_path(p: Project) -> str:
     return os.path.join(PV.main_root(p), ".github", "workflows", "publish-guide.yml")
 
@@ -347,7 +364,7 @@ def init_quarto(p: Project, dry_run: bool = False, workflow: Optional[bool] = No
     want_wf = (p.config.get("guide") or {}).get("publish", {}).get("workflow", True) if workflow is None else workflow
     paths = {n: os.path.join(gd, n) for n in files}
     if want_wf:
-        files[os.path.relpath(workflow_path(p), gd).replace(os.sep, "/")] = _PUBLISH_YML.format(path=guide_rel)
+        files[os.path.relpath(workflow_path(p), gd).replace(os.sep, "/")] = _PUBLISH_YML.format(path=guide_rel, branch=default_branch(p))
         paths[os.path.relpath(workflow_path(p), gd).replace(os.sep, "/")] = workflow_path(p)
     plan = [{"path": os.path.relpath(paths[n], root), "exists": os.path.exists(paths[n])} for n in files]
     if dry_run:

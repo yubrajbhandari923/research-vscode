@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-112 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+115 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -159,8 +159,10 @@ dependency. A test checks that each option exists in the defaults with the right
 | `intervention.require_approval` | bool | `False` |  | Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN. |
 | `notifications.telegram.enabled` | bool | `False` |  | Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`). |
 | `notifications.discord.enabled` | bool | `False` |  | Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only. |
+| `notifications.level` | enum | `'medium'` |  | How much the project pushes to your phone (Telegram and Discord): off = nothing automatic (commands still work); low = failures, halts and plan start/end; medium = plus anything that waits for you (approvals, decisions, promotions, provider limits); high = plus each task starting and being verified. |
+| `notifications.discord.mention` | bool | `True` |  | Mention the paired operators on Discord alerts that need a human (warnings and errors), so Discord sends a push notification even when the server only notifies for @mentions. |
 | `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
-| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
+| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'task_started', 'task_verified']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
 | `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |
@@ -223,6 +225,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `guide.draft.max_sections` | int | `3` |  | How many chapters or result entries one draft may change. |
 | `guide.draft.max_figures` | int | `1` |  | How many figures one draft may add to a section. 0 means the agent writes text only. |
 | `guide.publish.workflow` | bool | `True` |  | Keep .github/workflows/publish-guide.yml, which builds the guide's scientific edition and publishes it as a website on every push to main. |
+| `guide.site.auto_include` | bool | `False` |  | When a finding becomes supported, publish every verified experiment that has committed report files under reports/ (and was not unpublished) as a draft page on the research website. Adds only; nothing is pushed. |
 | `guide.model` | str | `'claude-opus-5-5'` |  | The model profile the guide draft dispatch asks for. |
 
 #### Data & artifacts

@@ -114,8 +114,27 @@ Several projects on one bot: `/project use NAME` chooses the project for that ch
 
 ## Alerts
 
+**Either platform is enough.** Telegram and Discord are switched on independently (`notifications.telegram.enabled`, `notifications.discord.enabled`, each with its own
+saved token). A Discord-only project gets every automatic alert (halts, failures, plan start and finish, approvals), and the supervisor and gateway start for it without any
+Telegram setup; with both on, each alert goes to both; with neither, nothing is pushed.
+
+**How much to push: `notifications.level`** (`research config set notifications.level low`):
+
+| Level | You are told about |
+|---|---|
+| `off` | nothing automatically (commands such as `/status` still work) |
+| `low` | failures (`task_failed`, `run_failed`, `budget`, `supervisor_down`), a plan that **halts**, and the plan **starting** and **finishing** |
+| `medium` (default) | plus what waits for you: `approval_needed`, `decision`, `promotion_ready`, `provider_limit` (what was sent before levels existed, plus plan start) |
+| `high` | plus progress: each `task_started` and `task_verified` |
+
+An event skipped by a lower level is not replayed when you raise the level. `notifications.alerts.on` still narrows the kinds further.
+
+**Push notifications.** Telegram messages push by default (nothing is sent silently). Discord only pushes ordinary messages if your server or channel notifies for all messages,
+so alerts that need a person (warnings and errors) also **@mention the paired operators and approvers** (`notifications.discord.mention`, default on; good news such as a finished plan does
+not ping). For the best result set the Discord channel's notifications to "Only @mentions" and turn on mobile push in Discord.
+
 Kinds (`notifications.alerts.on`, default all): `halt`, `task_failed`, `approval_needed`, `promotion_ready`, `plan_finished`, `run_failed`, `budget`,
-`supervisor_down`, `decision`, `provider_limit`. The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
+`supervisor_down`, `decision`, `provider_limit`, `plan_started`, `task_started`, `task_verified`. The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
 "still: ..."; after `escalate_after` (3) failures in a row for one task the message suggests a next step; "moving again" is sent once. More than five alerts
 for one project in a minute fold into one summary. Approval card buttons disappear after `approval_expiry_hours` (24); the proposal stays pending (waiting never approves or denies).
 
@@ -131,6 +150,8 @@ The gateway also raises `supervisor_down` when a plan is running but the supervi
 |---|---|---|
 | `notifications.telegram.enabled` | false | switch for this project |
 | `notifications.discord.enabled` | false | switch for this project (needs the discord extra) |
+| `notifications.level` | medium | off / low / medium / high: how much is pushed automatically (table above) |
+| `notifications.discord.mention` | true | @mention paired operators on warnings and errors so Discord pushes |
 | `notifications.discord.thread_per_task` | true | one thread per task for its alerts |
 | `notifications.alerts.on` | all kinds | which kinds reach chat |
 | `notifications.alerts.cooldown_minutes` | 30 | dedupe window |

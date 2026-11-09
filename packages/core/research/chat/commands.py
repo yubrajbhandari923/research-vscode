@@ -241,7 +241,8 @@ class Inbox:
         if cmd == "health":
             from . import manage
             from ..store import Project
-            label, root = self._project(inc)
+            first = rest.split()[0] if rest.split() else ""
+            label, root = self._project(inc, first if first in projs else None)
             with Project(root, sync=False) as p:
                 d = manage.doctor(p)
             mark = {"ok": "✓", "info": "·", "warn": "!", "error": "✗"}

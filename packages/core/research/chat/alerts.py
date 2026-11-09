@@ -13,7 +13,15 @@ from .. import registry
 from ..store import append_jsonl, _atomic_write
 
 KINDS = ("halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down",
-         "decision", "provider_limit")                  # last two: H.7 and H.10 producers (WP14b / later packages)
+         "decision", "provider_limit",                 # these two: H.7 and H.10 producers (WP14b / later packages)
+         "plan_started", "task_started", "task_verified")
+# `notifications.level` is a preset over the kinds: each kind has the lowest level that sends it. An unlisted kind counts as "medium".
+#   low     failures and plan start/end: something broke, or the run began or ended (a halt is a failure: nothing can move)
+#   medium  plus what waits for you: approvals, decisions, promotions, provider limits (the behaviour before levels existed)
+#   high    plus progress: a task starting, a task verified
+LEVELS = {"off": 0, "low": 1, "medium": 2, "high": 3}
+KIND_LEVEL = {"halt": 1, "task_failed": 1, "run_failed": 1, "budget": 1, "supervisor_down": 1, "plan_started": 1, "plan_finished": 1,
+              "approval_needed": 2, "decision": 2, "promotion_ready": 2, "provider_limit": 2, "task_started": 3, "task_verified": 3}
 SUGGEST = {"halt": "continue with another agent, pause the plan, or run /debug", "task_failed": "continue with another agent (/continue T-n PROFILE) or pause the plan"}
 _now = time.time                                        # tests replace it
 
@@ -45,15 +53,30 @@ def _append(p, rec: Dict[str, Any]) -> Dict[str, Any]:
     return rec
 
 
+def level(p) -> str:
+    v = str(registry.section(p, "notifications").get("level") or "medium").lower()
+    return v if v in LEVELS else "medium"
+
+
+def allowed(p, kind: str) -> bool:
+    return KIND_LEVEL.get(kind, 2) <= LEVELS[level(p)]
+
+
 def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[List[Dict[str, Any]]] = None,
            files: Optional[List[str]] = None, task: Optional[str] = None, decision: Optional[str] = None,
            once: bool = False) -> Optional[Dict[str, Any]]:
-    """Queue an alert unless the same `key` is inside its cooldown (then a "still: ..." reminder after it) or the kind is switched off.
+    """Queue an alert unless the same `key` is inside its cooldown (then a "still: ..." reminder after it), the kind is switched off
+    (`notifications.alerts.on`) or `notifications.level` is below the kind's level.
     `actions`: [{label, op, params, style?, kind?: op|local|ask_code, text?, min_role?}]. Returns the record or None when suppressed."""
     c = cfg(p)
     if c["on"] and kind not in c["on"]:
         return None
     st, now = _load(p), _now()
+    if not allowed(p, kind):
+        if once and key not in (st.setdefault("keys", {})):      # remember it, so raising the level later does not replay old events
+            st["keys"][key] = {"ts": now, "open": False, "kind": kind, "task": task, "level_skipped": True}
+            _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
+        return None
     e = (st.setdefault("keys", {})).get(key)
     if e and once:
         return None

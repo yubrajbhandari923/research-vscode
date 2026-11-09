@@ -701,6 +701,133 @@ def test_health_command_and_tasks_are_registered(env):
     assert "tasks" in commands.COMMANDS and "health" in commands.LOCAL
     assert {"tasks", "health"} <= {c["name"] for c in D.slash_payload()}
     fake, ch = env
-    ix = run(fake.slash_cmd(ch, "health"))
+    ix = run(fake.slash_cmd(ch, "health", where={"channel": "100"}))          # a project channel implies the project
     d = ix.impl.followups[0].embed["description"]
     assert d.startswith("Chat health for") and "gateway" in d
+
+
+# ----------------------------------------------------------------------------------------------- push notifications: either platform, levels, mentions
+PLAN_YAML = """\
+schema_version: 1
+plans:
+  - key: x
+    title: X
+    objective: o
+    experiments:
+      - key: e
+        title: E
+        hypothesis: h
+        tasks:
+          - {key: t, title: T, agent: {role: implementer, profile: fake}, prompt: "p"}
+"""
+
+
+def _enable(p, telegram=False, discord=False, **more):
+    p.save_config({"notifications.telegram.enabled": telegram, "notifications.discord.enabled": discord, **more})
+    p.config = p.load_config()
+
+
+def _outbox(p):
+    return alerts.read_from(alerts.outbox_path(p))[0]
+
+
+def test_chat_platforms_are_independent_discord_only_telegram_only_both_neither(env):
+    from research import notify
+    from research.chat import telegram
+    fake, ch = env                                                     # the fixture saved Discord credentials only
+    with Project(fake.roots[0], sync=False) as p:
+        def got(tg, dc):
+            _enable(p, tg, dc)
+            return notify.chat_platforms(p), notify.chat_enabled(p)
+        assert got(False, False) == ([], False)                         # neither
+        assert got(False, True) == (["discord"], True), "Discord alone: no Telegram credentials are needed"
+        assert got(True, False) == ([], False), "Telegram enabled but no Telegram token: nothing to push to"
+        telegram.set_credentials("123456:" + "A" * 35, 777)
+        assert got(True, False) == (["telegram"], True)                  # Telegram only: unchanged behaviour
+        assert got(True, True) == (["telegram", "discord"], True)        # both
+        assert got(False, False) == ([], False), "credentials without the project switch push nothing"
+        D.clear_credentials()
+        assert got(False, True) == ([], False), "Discord enabled but no token"
+
+
+def test_discord_only_plan_alerts_reach_the_gateway_once_and_survive_restarts(env, monkeypatch):
+    import sys
+    from research import notify, planspec as PS, supervisor as SV
+    fake, ch = env
+    gateways = []
+    monkeypatch.setattr(notify, "ensure_gateway", lambda p: gateways.append(p.root) or {"action": "none"})
+    root = fake.roots[0]
+    with Project(root, sync=False) as p:
+        _enable(p, discord=True)
+        p.config["agents"]["profiles"]["fake"] = {"command": sys.executable}
+        PS.apply(p, PLAN_YAML)
+        pid = PS.load_state(p, "x")["plan_id"]
+        SV.plan_run(p, "x", start_daemon=False)
+        rs = SV.load_run(p, pid)
+        rs["state"] = "completed"
+        SV.save_run(p, rs)
+        notify.step(p)                                                   # the supervisor's pass: no Telegram anywhere
+        kinds = [r["kind"] for r in _outbox(p)]
+        assert kinds.count("plan_finished") == 1 and kinds.count("plan_started") == 1 and gateways == [root], "the gateway is kept alive for Discord too"
+        notify.step(p)
+        assert len(_outbox(p)) == len(kinds), "no duplicate on the next pass"
+    with Project(root, sync=False) as p2:                                # supervisor restart: state is on disk
+        notify.step(p2)
+        assert len(_outbox(p2)) == len(kinds)
+    g = Gateway({"discord": ch}, discover=False)
+    assert run(g.pump_once()) == len(kinds)
+    assert any("finished" in (t or "") for t in fake.texts("100") + fake.texts("200"))
+    assert run(Gateway({"discord": ch}, discover=False).pump_once()) == 0, "a restarted gateway does not deliver them again"
+    with Project(root, sync=False) as p3:
+        notify.step(p3)
+        assert len(_outbox(p3)) == len(kinds)
+
+
+def test_notification_level_filters_kinds_and_never_replays_what_it_skipped(env):
+    fake, ch = env
+    with Project(fake.roots[0], sync=False) as p:
+        n = iter(range(1000))
+
+        def sends(kind, once=False, key=None):
+            return alerts.raise_(p, key or f"{kind}:{next(n)}", kind, "info", "x", once=once) is not None
+        _enable(p, discord=True, **{"notifications.level": "low"})
+        assert all([sends("halt"), sends("task_failed"), sends("run_failed"), sends("plan_started", True, "ps"), sends("plan_finished", True, "pf")])
+        assert not any([sends("approval_needed"), sends("decision"), sends("provider_limit"), sends("task_verified", True, "tv1"), sends("task_started")])
+        _enable(p, discord=True, **{"notifications.level": "medium"})
+        assert all([sends("approval_needed"), sends("decision"), sends("promotion_ready")]) and not sends("task_started")
+        _enable(p, discord=True, **{"notifications.level": "high"})
+        assert sends("task_started") and sends("task_verified", True, "tv2")
+        assert not sends("task_verified", True, "tv1"), "an event skipped at a lower level is not replayed when you raise it"
+        _enable(p, discord=True, **{"notifications.level": "off"})
+        assert not any([sends("halt"), sends("plan_finished"), sends("plan_started")])
+    from research import registry
+    assert registry.default("notifications.level") == "medium", "default: everything that was sent before levels existed"
+
+
+def test_discord_alerts_that_need_a_human_mention_the_operators_so_discord_pushes(env):
+    fake, ch = env
+    root = fake.roots[0]
+    with Project(root, sync=False) as p:
+        _enable(p, discord=True)
+        alerts.raise_(p, "k1", "halt", "error", "halted")
+        alerts.raise_(p, "k2", "plan_finished", "ok", "all done", once=True)
+        alerts.raise_(p, "k3", "approval_needed", "warn", "needs you")
+    run(Gateway({"discord": ch}, discover=False).pump_once())
+    by = {(p_.embed or {}).get("description"): p_ for _, p_ in fake.sent["100"]}
+
+    assert by["[alpha] halted"].mention == ["1", "3"] and by["[alpha] needs you"].mention == ["1", "3"], "operator and approver, not the viewer"
+    assert by["[alpha] all done"].mention == [], "good news does not ping"
+    with Project(root, sync=False) as p:
+        _enable(p, discord=True, **{"notifications.discord.mention": False})
+        alerts.raise_(p, "k4", "halt", "error", "halted again")
+    run(Gateway({"discord": ch}, discover=False).pump_once())
+    assert [p_ for _, p_ in fake.sent["100"] if (p_.embed or {}).get("description") == "[alpha] halted again"][0].mention == []
+
+
+def test_telegram_alerts_are_never_sent_silently(monkeypatch):
+    from research.chat import telegram
+    sent = []
+    monkeypatch.setattr(telegram, "_api", lambda token, method, params, timeout=15.0: sent.append((method, params)) or {"result": {"message_id": 1}})
+    telegram.set_credentials("123456:" + "A" * 35, 777)
+    telegram.TelegramChannel().send_message(commands.Message("Plan x finished.", chat="777", color="ok"))
+    assert sent and sent[0][0] == "sendMessage" and "disable_notification" not in sent[0][1], "Telegram pushes unless a message asks to be silent"

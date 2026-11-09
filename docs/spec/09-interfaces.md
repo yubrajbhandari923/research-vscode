@@ -69,6 +69,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research skills` | `skill` | agent skills (.research/skills/) |
 | `research report` |  | write a readable report (project, or one Q-/PLAN-/EXP-) to .research/reports/ |
 | `research guide` |  | Scientist Guide (Quarto book on main): init \| status \| highlights \| star F-… \| log \| cite list\|add\|check \| draft [done\|check] \| publish \| claim \| figure \| section \| validate \| coverage \| quarto … \| chapter add \| review … |
+| `research site` |  | research website (Quarto, GitHub Pages): init \| preview \| build \| status \| add EXP \| remove EXP \| list \| sync |
 | `research workspace` | `ws` | experiment worktrees: info \| create \| attach \| list \| show \| link-task \| assign \| archive |
 | `research sandbox` |  | optional job isolation: list \| show NAME \| doctor \| verify NAME \| preview EXP |
 | `research hpc` |  | remote execution: doctor \| init \| submit \| status \| sync \| collect \| import \| bundle \| datasets \| inspect \| cancel \| clusters \| config |
@@ -100,6 +101,8 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 **`research agent`** actions: `dispatch` (hand work to an agent CLI: research agent dispatch verifier F-003); `executions` (launched agent sessions: list | show | logs | stop | retry (completed ≠ verified)); `providers` (agent providers: list | set-default NAME | mcp NAME [--apply]); `profiles` (agent profiles and roles (config.yaml → agents)); `usage` (model usage: `agent usage [--by strategy|model|task|level]` · `agent usage import FILE`); `instructions` (create/refresh the research block in AGENTS.md); `setup` (set up agent files for a provider: research agent setup PROVIDER --preset scientific [--apply]); `progress` (free-text progress); `milestone` (a named milestone); `artifact` (an output file (workspace-relative)); `metric` (a metric value); `run` (a computational run id); `hpc-job` (an HPC job id); `code` (a commit / changed files); `problem` (a problem with a failure category); `report` (summary of what was done and found); `finish` (request verification); `propose` (propose a plan change (YAML patch))
 
 **`research skills`** actions: `list` (list skills); `show` (print a skill's SKILL.md); `add` (import skill(s) from a folder or git repo (URL, owner/repo, …/tree/main/skills/x)); `remove` (remove a skill (moved to .research/cache/removed-skills)); `update` (re-import skills from their recorded source); `set` (project settings for a skill); `verify` (run a protocol skill's machine-checkable requirements); `audit` (which skills gate managed dispatch, and what direct Claude Code/Codex sessions can see); `link` ((re)create .claude/skills and .agents/skills links); `catalog` (the skills catalog: first-party, bundled (attributed copies) and install-from-source entries); `packs` (skill packs: list | enable ID [--optional] | disable ID); `install` (install catalog skill(s) (bundled copy, or fetched from the source at the pinned commit)); `enable` (turn a skill on (it stays on disk either way)); `disable` (turn a skill off: not suggested, not linked; files kept); `upgrade` (bring bundled and first-party skills to this release's version (never replaces a skill you changed)); `new` (create a skill); `duplicate` (copy a skill)
+
+**`research site`** actions: `init` (preview the website files; --apply creates them (never overwrites; also repairs)); `status` (quarto, workflow, remote, Pages URL, published experiments and the exact next commands); `preview` (live local website with hot reload (no GitHub needed)); `build` (render the static site locally and check its links (never runs code)); `add` (publish a verified experiment's committed report and figures as a draft page you can edit); `remove` (unpublish an experiment: move it out of the site (nothing is deleted); previews unless --apply); `list` (experiments on the website and their state); `sync` (publish verified experiments that have committed reports and are not on the site yet (adds only))
 
 Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `telegram`, `usage`.
 <!-- /generated:cli -->
@@ -142,7 +145,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-215 operations.
+219 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -319,6 +322,10 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `settings_preview` | changes, scope, remove, expected |  |  |  |
 | `setup_agents` | apply, strategy | yes |  |  |
 | `show` | id |  | `research_show` |  |
+| `site_add` | experiment, at, dry_run | yes |  |  |
+| `site_init` | apply | yes |  |  |
+| `site_remove` | experiment, apply | yes |  |  |
+| `site_status` |  |  |  |  |
 | `skill_install` | names, force | yes |  |  |
 | `skill_show` | name |  | `skill_show` |  |
 | `skill_toggle` | name, enabled | yes |  |  |

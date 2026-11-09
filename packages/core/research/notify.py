@@ -29,8 +29,19 @@ from .chat.telegram import clear_credentials, credentials, discover_chat, send, 
 _path = _tg.path
 
 
+def chat_platforms(p) -> List[str]:
+    """The chat platforms this project pushes to: each one needs its own switch and its own saved token, and never the other's."""
+    from .chat import discord_bot
+    c, out = cfg(p), []
+    if c["telegram"].get("enabled") and credentials().get("token"):
+        out.append("telegram")
+    if (c.get("discord") or {}).get("enabled") and discord_bot.credentials().get("token"):
+        out.append("discord")
+    return out
+
+
 def chat_enabled(p) -> bool:
-    return bool(cfg(p)["telegram"].get("enabled") and credentials().get("token"))
+    return bool(chat_platforms(p))
 
 
 def ensure_gateway(p) -> Dict[str, Any]:
@@ -48,7 +59,8 @@ def ensure_running(p) -> Dict[str, Any]:
     from . import supervisor as SV
     try:
         cr = credentials()
-        wants_chat = bool(cfg(p)["telegram"].get("enabled") and cr.get("token") and cr.get("chat_id") is not None)
+        # Telegram needs a linked chat to say anything; Discord's gateway must run before /sethome can be typed, so a token is enough
+        wants_chat = bool(("telegram" in chat_platforms(p) and cr.get("chat_id") is not None) or "discord" in chat_platforms(p))
         if wants_chat:
             ensure_gateway(p)
         d = SV.daemon_status(p)
@@ -217,13 +229,34 @@ def _scan(p, c: Dict[str, Any]) -> None:
         st = PS.load_state(p, rs["plan_key"])
         if not st:
             continue
+        if _recent(rs.get("started_at")):                   # not for a run that began before this feature existed
+            alerts.raise_(p, f"plan_started:{rs['plan_key']}:{rs['started_at']}", "plan_started", "info", f"Plan {rs['plan_key']} started.", once=True)
         if SV.plan_health(p, st, rs)["state"] == "completed":
             alerts.raise_(p, f"plan_finished:{rs['plan_key']}", "plan_finished", "ok", f"Plan {rs['plan_key']} finished.", once=True)
         for tid, e in (rs.get("tasks") or {}).items():
+            n = len(e.get("attempts") or [])
+            if e.get("phase") == "running" and n:
+                alerts.raise_(p, f"task_started:{tid}:{n}", "task_started", "info", f"{tid} started (attempt {n}): {p.get('task', tid)['title'][:80]}", task=tid, once=True)
+            elif e.get("phase") == "verified":
+                alerts.raise_(p, f"task_verified:{tid}", "task_verified", "ok", f"{tid} verified: {p.get('task', tid)['title'][:80]}", task=tid, once=True)
             if e.get("phase") == "failed":
                 alerts.raise_(p, f"task_failed:{tid}:{len(e.get('attempts') or [])}", "task_failed", "error",
                               f"{tid} failed after {len(e.get('attempts') or [])} attempt(s): {(e.get('reason') or '')[:200]}", task=tid,
                               actions=[{"label": "Show logs", "op": "chat_cmd_logs", "params": {"task": tid}, "min_role": "viewer"}])
+
+
+def _recent(ts: Optional[str], hours: float = 24.0) -> bool:
+    """True when an ISO timestamp is within `hours` of now (naive timestamps are UTC)."""
+    if not ts:
+        return False
+    from datetime import datetime, timezone
+    try:
+        t = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - t).total_seconds() < hours * 3600
 
 
 def step(p) -> None:
@@ -231,7 +264,7 @@ def step(p) -> None:
     from . import supervisor as SV
     try:
         c = cfg(p)
-        tg = chat_enabled(p)
+        tg = chat_enabled(p)          # any platform: Telegram, Discord or both
         for rs in SV.all_runs(p):
             if rs.get("state") != "running":
                 continue

@@ -37,6 +37,7 @@ export function GuidePage({ host, go }: { host: Host; go: Go }) {
         <Limits s={s} go={go} />
         <References host={host} s={s} act={act} />
         <Publishing host={host} s={s} />
+        <Website host={host} s={s} act={act} busy={busy} />
         <QuartoBlock host={host} s={s} />
         <ReportsSection host={host} onGuide={() => undefined} />
       </>}</State>
@@ -208,6 +209,49 @@ function Publishing({ host, s }: any) {
         <button type="button" className="sm" onClick={() => host.openGuide(s.abs, '_quarto.yml')}>Book settings</button>
         <button type="button" className="sm" onClick={() => host.openDoc('docs/GUIDE.md')}>Guide documentation</button>
       </div>
+    </Section>
+  );
+}
+
+/** The research website: experiments published from their verified, committed reports. Nothing here pushes; unpublishing moves, never deletes. */
+function Website({ host, s, act, busy }: any) {
+  const a = useAsync<any>(() => host.call('site_status'), [s]);
+  const [exp, setExp] = useState('');
+  const [removing, setRemoving] = useState<any>(null);
+  return (
+    <Section id="website" title="Research website" lead="Verified experiments become editable pages next to the guide. Research OS adds files, never deletes or overwrites your edits, and never pushes.">
+      <State a={a}>{(w) => <>
+        <div className="row small">
+          <Badge kind={w.quarto.ok ? 'ok' : 'warn'}>{w.quarto.ok ? 'Quarto ready' : 'Quarto missing'}</Badge>
+          <Badge kind={w.workflow.exists ? 'ok' : 'warn'}>{w.workflow.exists ? 'Pages workflow' : 'no Pages workflow'}</Badge>
+          <Badge kind={w.remote.url ? 'ok' : ''}>{w.remote.url ? 'remote set' : 'local only'}</Badge>
+          {w.remote.site_url && <code>{w.remote.site_url}</code>}
+        </div>
+        {w.experiments.length === 0 ? <p className="muted">No experiment is on the website yet.</p> : (
+          <div className="tbl-wrap"><table><caption className="sr">Experiments on the website</caption>
+            <thead><tr><th scope="col">Experiment</th><th scope="col">State</th><th scope="col" className="hide-narrow">Verified commit</th><th scope="col"><span className="sr">Actions</span></th></tr></thead>
+            <tbody>{w.experiments.map((e: any) => (
+              <tr key={e.experiment}>
+                <td><button type="button" className="link idlink" onClick={() => host.openEntity(e.experiment)}>{e.experiment}</button> <code>/{e.slug}/</code></td>
+                <td>{e.status === 'published' ? <Badge kind="ok">published</Badge> : <Badge kind="pend">unpublished</Badge>}{e.edited_by_you.length > 0 && <> <Badge kind="">your edits kept</Badge></>}</td>
+                <td className="hide-narrow"><code>{e.commit}</code></td>
+                <td className="min">{e.status === 'published'
+                  ? <button type="button" className="sm" disabled={!!busy} onClick={async () => setRemoving(await host.call('site_remove', { experiment: e.experiment }))}>Unpublish…</button>
+                  : <button type="button" className="sm" disabled={!!busy} onClick={() => act('site_add', () => host.call('site_add', { experiment: e.experiment }), () => `${e.experiment} is back on the website`)}>Publish again</button>}</td>
+              </tr>))}</tbody></table></div>)}
+        <div className="row">
+          <input aria-label="Experiment to publish" placeholder="EXP-001" value={exp} onChange={(ev) => setExp(ev.target.value)} />
+          <button type="button" className="sm" disabled={!!busy || !exp.trim()} title="Publishes the experiment's verified, committed report and figures as a draft page you can edit"
+            onClick={() => act('site_add', () => host.call('site_add', { experiment: exp.trim() }), (r: any) => `${r.experiment} published as a draft in ${r.dir}: ${r.written.length} new file(s). Fill in the TODOs, commit and push when ready.`).then(() => { a.reload(); setExp(''); })}>Publish experiment</button>
+          <button type="button" className="sm" onClick={() => host.run('research.guide.preview')}>Live preview</button>
+        </div>
+        <ol className="small">{w.next.map((n: string) => <li key={n}><code>{n}</code></li>)}</ol>
+        {removing && <Dialog title={`Unpublish ${removing.experiment}?`} onClose={() => setRemoving(null)}
+          actions={<><button type="button" onClick={() => setRemoving(null)}>Cancel</button>
+            <button type="button" className="primary" disabled={!!busy} onClick={async () => { const e = removing.experiment; setRemoving(null); await act('site_remove', () => host.call('site_remove', { experiment: e, apply: true }), () => `${e} unpublished; its files are kept in _unpublished/`); a.reload(); }}>Unpublish</button></>}>
+          <p>The folder <code>{removing.from}</code> moves to <code>{removing.to}</code> and {removing.unlist.length} page(s) leave the book. {removing.edited_by_you.length > 0 && <b>Your edits in {removing.edited_by_you.length} file(s) move with it. </b>}Nothing is deleted; publishing it again restores it. The live site changes only after you commit and push.</p>
+        </Dialog>}
+      </>}</State>
     </Section>
   );
 }

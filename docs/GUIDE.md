@@ -98,6 +98,48 @@ commit `docs/scientist-guide` and `.github` on `main`, push, and once on GitHub 
 Every later push that touches the guide updates the site. (`guide.publish.workflow: false`, or the wizard's checkbox, skips the file;
 turning it off later never deletes it.) The website never contains Research OS identifiers or evidence panels.
 
+## The research website: `research site`
+
+The website is this guide, served as one Quarto site, plus a page for each experiment you choose to publish. `research site` wraps the guide commands
+above (no second system): the same Quarto project, theme, bibliography and the same single GitHub Pages workflow.
+
+```bash
+research site init              # preview the files (about, research question, theme, bibliography, .gitignore, Pages workflow)
+research site init --apply      # create them; existing files are never overwritten, so it also repairs an older project
+research site preview           # live local site with hot reload (http://localhost:4200/); works with no GitHub and no remote
+research site build             # static HTML in docs/scientist-guide/_output/scientific/, links and figures checked
+research site status            # Quarto, workflow, remote, Pages URL, what is published, and the exact next commands
+research site add EXP-001       # publish a verified experiment (see below)
+research site remove EXP-001    # unpublish it: previews; add --apply to do it
+research site list | sync
+```
+
+New projects get all of this when they are created (the guide's init also writes the about and research-question pages from your project record,
+with TODOs where the record is empty). **Over SSH or on a cluster login node**, `preview` does not open a browser; it prints the URL and the line to run on
+your laptop: `ssh -L 4200:localhost:4200 <user>@<host>`, then open `http://localhost:4200/`.
+
+**Publishing an experiment.** `research site add EXP-001` requires the experiment to be *verified* (every task done and verified by the supervisor; otherwise it
+stops and says why, exactly like `research experiment fork`). It reads only what is **committed** at the verified commit (or the commit you name with `--at`, or
+`RUN-NNNN`), from `reports/` in the experiment: Quarto chapters (`reports/quarto/chapters/00-smoke.qmd`), figures (png, jpg, svg, gif, webp) and small CSV tables.
+They are copied to `docs/scientist-guide/experiments/<title-slug>/` (the slug never contains the experiment id), the chapters join the book, and an editable
+`index.qmd` draft is written from the record: question, hypothesis, motivation, method, the recorded steps, limitations, and a **TODO** wherever the record is empty.
+Nothing is invented: no results are stated for you and no citation is added. Executable cells in a chapter are shown as code and never run; the website renders
+committed results only (`execute: enabled: false`, `--no-execute`, no simulation in the workflow).
+
+Never published, whatever is committed: credentials (`.env`, keys, tokens), logs, notebooks, `ledger/`, `.research/`, agent files, scratch, `hpc/` and `slurm` output, files
+over 5 MB (1 MB for tables) and anything whose text looks like a secret. `site add --dry-run` lists what would go and what is excluded and why.
+
+**Research OS only adds.** Running `add` again changes nothing; a generated file you edited is left exactly as it is and reported; the draft page is yours after
+it is first written. No command deletes anything. **Unpublishing** (`site remove EXP-001 --apply`) moves the experiment's folder to `_unpublished/<slug>/`
+(Quarto never renders `_` folders) and takes its pages out of the book; your edits go with it, and `site add EXP-001` restores it. An experiment you unpublished is not
+published again by automatic inclusion. `guide.site.auto_include: true` makes a newly supported finding also publish verified experiments that have committed
+reports; it adds only, and never pushes.
+
+**Going live is your decision.** Research OS never creates a repository, commits, pushes or changes GitHub settings. `research site status` prints the next steps:
+commit the guide and `.github`, `git push`, and once on GitHub **Settings → Pages → Source: GitHub Actions** (the link is shown when a remote exists). The workflow
+(`.github/workflows/publish-guide.yml`, the only one that deploys to Pages, for your default branch, plus manual dispatch) renders what is committed and
+deploys it. Links are relative, so a project site at `https://<you>.github.io/<repo>/` works without configuration.
+
 ## Updating Quarto
 
 Research OS uses whatever Quarto it finds (`RESEARCH_QUARTO`, `guide.quarto`, `PATH`, `~/.local/bin`, `~/.local/opt/quarto/bin`) and needs **1.4 or newer**.

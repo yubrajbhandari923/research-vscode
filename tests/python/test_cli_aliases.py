@@ -40,7 +40,7 @@ def test_help_lists_the_regrouped_commands_only(capsys):
     listed = set(re.findall(r"^    ([a-z][a-z-]*)\b", out, re.M))
     assert set(NEW_VISIBLE) <= listed
     assert not (set(REGROUPED_AWAY) & listed), set(REGROUPED_AWAY) & listed
-    assert "==SUPPRESS==" not in out and len(listed) <= 50
+    assert "==SUPPRESS==" not in out and len(listed) <= 51        # 51: `research site` (3.3.0) is a top-level group on purpose
     code, agent_help = _run(["agent", "--help"], capsys)
     for sub in ("dispatch", "profiles", "providers", "executions", "instructions", "setup", "usage"):
         assert re.search(r"^    " + sub + r"\b", agent_help, re.M), sub

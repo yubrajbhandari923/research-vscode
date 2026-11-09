@@ -280,6 +280,7 @@ class Parts:
     options: List[Tuple[str, str]] = field(default_factory=list)               # select menu (label, value)
     files: List[str] = field(default_factory=list)
     ephemeral: bool = False
+    mention: List[str] = field(default_factory=list)       # user ids to @mention: Discord pushes a mention even when the server only notifies for them
 
 
 def render(m: Message, limit: int = MAX_FILE, at: Optional[float] = None) -> List[Parts]:
@@ -422,12 +423,28 @@ class DiscordChannel(Channel):
         except Exception:      # noqa: BLE001
             return True
 
+    def _mentions(self, label: str, color: str) -> List[str]:
+        """Paired operators (and approvers) to @mention on an alert that needs a human, unless `notifications.discord.mention` is off."""
+        if color not in ("error", "warn"):
+            return []
+        root = commands.enabled_projects("discord").get(label)
+        if root:
+            try:
+                from ..store import Project
+                with Project(root, sync=False) as p:
+                    if not commands.registry.section(p, "notifications")["discord"].get("mention", True):
+                        return []
+            except Exception:      # noqa: BLE001
+                pass
+        return [str(u["user_id"]) for u in pairing.users("discord") if pairing.at_least(u["role"], "operator")][:5]
+
     async def deliver(self, m: Message) -> Optional[str]:
         c = credentials()
         chan = self._label_channel(m.project) or m.chat or home_channel()
         if not chan:
             raise ResearchError("Discord has no home channel", hint="Run /sethome in the channel that should receive alerts.")
         chan, first = str(chan), render(m)
+        first[0].mention = await self._call(self._mentions, m.project, m.color)
         target = chan
         if m.thread_key and await self._call(self._thread_per_task, m.project):
             try:
@@ -514,7 +531,7 @@ class DiscordChannel(Channel):
         label, _ = self._where(ix)
         o = ix.options
         order = ORDER.get(ix.name) or [x[0] for x in SLASH.get(ix.name, [])]
-        pre = ((o.get("project") if ix.name in ("status", "blocked", "tasks") else None) or label) if ix.name in commands.COMMANDS else None
+        pre = ((o.get("project") if ix.name in ("status", "blocked", "tasks") else None) or label) if ix.name in commands.COMMANDS or ix.name == "health" else None
         _, thread_task = self._where(ix)
         if thread_task and not o.get("task") and any(x[0] == "task" for x in SLASH.get(ix.name, [])):
             o = {**o, "task": thread_task}       # inside a task's thread, /say /task /logs /stop ... mean that task
@@ -665,7 +682,10 @@ class RealTransport:
 
     def _kw(self, parts: Parts, edit: bool = False) -> Dict[str, Any]:
         d, kw = self.d, {}
-        if parts.content is not None:
+        if parts.mention:
+            kw["content"] = " ".join(f"<@{i}>" for i in parts.mention) + (" " + parts.content if parts.content else "")
+            kw["allowed_mentions"] = d.AllowedMentions(users=[d.Object(id=int(i)) for i in parts.mention])
+        elif parts.content is not None:
             kw["content"] = parts.content
         if parts.embed is not None:
             kw["embed" if not edit else "embeds"] = d.Embed.from_dict(parts.embed) if not edit else [d.Embed.from_dict(parts.embed)]

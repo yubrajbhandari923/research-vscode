@@ -384,6 +384,17 @@ research guide quarto doctor
 research guide quarto build --edition scientific
 ```
 
+Preview and publish it as a website with `research site`:
+
+```bash
+research site status          # what exists, and the exact next commands
+research site preview         # live local site, no GitHub needed (over SSH it prints the port-forward line)
+research site add EXP-001     # publish a verified experiment's committed report and figures as an editable draft page
+research site remove EXP-001  # unpublish (nothing is deleted); previews until you add --apply
+```
+
+Research OS never commits or pushes: after you commit the guide and `.github` and `git push`, the generated GitHub Actions workflow deploys the site (once: GitHub → Settings → Pages → Source: GitHub Actions).
+
 Results an independent review marks supported (or that you star with `research guide star F-001`) are logged into it automatically. An agent writes a short draft only when you ask, within word limits you set
 (`research guide draft check` reports any overrun). Add references with `research guide cite add --bibtex "..."` and cite them as `[@key]`. Quarto is needed only to build. See [GUIDE.md](GUIDE.md).
 

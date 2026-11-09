@@ -76,7 +76,11 @@ def _save_state(p: Project, name: str, data: Dict[str, Any]) -> None:
 
 def init(p: Project, dry_run: bool = False, workflow: Optional[bool] = None) -> Dict[str, Any]:
     """Create the guide (chapters, theme, references.bib, publish workflow). Never overwrites a file."""
-    return GQ.init_quarto(p, dry_run=dry_run, workflow=workflow)
+    r = GQ.init_quarto(p, dry_run=dry_run, workflow=workflow)
+    if not dry_run:
+        from . import site
+        r["site_pages"] = site.ensure_pages(p)["created"]          # about / research-question pages of the website; existing files untouched
+    return r
 
 
 # =============================================================================== important results
@@ -235,6 +239,9 @@ def auto_log(p: Project) -> None:
     try:
         if settings(p)["enabled"] and settings(p)["auto_log"] and exists(p):
             log(p)
+            from . import site
+            if site.auto_enabled(p):
+                site.sync(p)
     except Exception:  # noqa: BLE001
         pass
 

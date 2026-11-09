@@ -1,10 +1,18 @@
 # Changelog
 
-## 3.2.2
+## 3.3.0
 
+- **Discord-only projects get automatic alerts.** `notify.chat_enabled` checked only Telegram, so with Discord alone the supervisor never produced halt, plan-finished or failure alerts and the gateway was not started for them. Each platform now counts on its own switch and its own token (Telegram-only behaves as before); verified supervisor to outbox to gateway for `plan_finished`, with no duplicates across supervisor and gateway restarts.
+- **`notifications.level` (off, low, medium, high)** sets how much is pushed: low = failures, halts and plan start/end; medium (default) adds approvals, decisions, promotions and provider limits; high adds each task starting and being verified. New alert kinds `plan_started`, `task_started`, `task_verified`. Skipped events are not replayed when you raise the level.
+- **Pushes on both platforms.** Telegram sends are never silent; on Discord, alerts that need a human @mention the paired operators and approvers (`notifications.discord.mention`, default on) so the phone is notified even when the server only notifies for mentions.
+- **`/health` works from a project channel** and the CLI top-level command count (`research site`) is allowed one more.
 - **`/sethome` on Discord now sticks.** It saved the home channel only in `gateway/chats.json` while `status`, `doctor` and `chat test discord` read `discord.json`, so it said "done" and `test` said "not configured". `discord.json` is now the one place (merged, so the token, server and project channels are kept); a home set by an older version is adopted. `research chat test discord` says what is missing.
 - **`/say` is useful without a task id.** It picks the one task that needs you (else the only running task); when it cannot choose it lists the candidates with their state and the exact command, instead of "Which task? … Blocked: none". Inside a task's thread, `/say /task /logs /stop /approve-start` mean that thread's task.
 - **New Discord commands:** `/tasks` (what is running or waits for you, with the command for each) and `/health` (the chat doctor, in chat).
+- **`research site`: a research website for every project.** `site init` (preview; `--apply` creates), `preview` (live local site, no GitHub needed; prints the SSH port-forward line), `build` (renders and checks links and figures), `status` (Quarto, workflow, remote, Pages URL, the exact next commands), `add EXP-001`, `remove EXP-001`, `list`, `sync`. It wraps the Scientist Guide: one Quarto project, one Pages workflow. New projects also get about and research-question pages written from the project record (TODOs where it is empty).
+- **Publish a verified experiment.** `site add` copies the experiment's committed `reports/` chapters, figures and small tables (at its verified commit) into the site and writes an editable draft page: question, hypothesis, method, limitations and TODOs; nothing is invented and no citation is added. Credentials, logs, notebooks, ledgers, agent files, scratch and HPC output are never published; code cells are shown, not run.
+- **Only ever adds.** Re-running changes nothing, your edits to generated files and the draft page are kept (and reported), and nothing is deleted. `site remove --apply` unpublishes by moving the folder to `_unpublished/` (restorable with `site add`).
+- **The Pages workflow follows your default branch** (not a fixed `main`), checks the site was built, and `status` flags a second workflow that also deploys to Pages. Research OS never commits, pushes or changes GitHub settings. Optional `guide.site.auto_include` publishes newly verified experiments that have committed reports. Guide page: new Research website section.
 
 ## 3.2.1
 

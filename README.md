@@ -70,6 +70,7 @@ The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](https://g
 | Start from a complete, commented project file | `research init --template -o research-os.yaml`, edit, `research init --from research-os.yaml --apply` ([copy in the repo](https://github.com/yubrajbhandari923/research-vscode/blob/main/examples/research-os.yaml)) |
 | Keep scientific decisions in human hands | [Governance and the approval PIN](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GOVERNANCE.md) |
 | Survive provider usage limits unattended | [Usage limits](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#8-usage-limits) |
+| See and publish your results as a website (local preview, one-push GitHub Pages) | `research site status`, [Research website](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md#the-research-website-research-site) |
 | Tell the story of your results | [Scientist Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) |
 | Give agents skills, hooks and MCP tools | [Skills, hooks and MCP](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md) |
 | Fix a problem | [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) |
@@ -114,6 +115,7 @@ First run in an empty folder opens a short setup wizard; **New experiment** is a
 - **Important results are logged for you.** A finding an independent review marks supported (or that you star) gets a short entry with its claim and plot in *Key results*. No agent is involved and entries are never rewritten.
 - **An agent drafts only when you ask**, within limits you set (words per section, sections, figures); `research guide draft check` reports any overrun. You edit, add context, cite, and approve.
 - **References from day one:** `references.bib`, `research guide cite add --bibtex …`, `[@key]` in the text; a cited key that is missing is an error.
+- **A research website out of the box:** `research site preview` serves it locally with hot reload (no GitHub needed); `research site add EXP-001` publishes a verified experiment's committed report and figures as an editable draft page (nothing invented, nothing overwritten), `research site remove EXP-001` unpublishes without deleting. Research OS never pushes.
 - **Publish on every push:** `.github/workflows/publish-guide.yml` deploys the scientific edition with GitHub Pages (one-time: Settings → Pages → Source: GitHub Actions).
 - **Two editions, one text:** the website is clean prose; the researcher edition adds an evidence panel per chapter. Claims and figures carry provenance; review and approval are separate steps.
 
