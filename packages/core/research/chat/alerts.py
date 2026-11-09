@@ -13,7 +13,21 @@ from .. import registry
 from ..store import append_jsonl, _atomic_write
 
 KINDS = ("halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down",
-         "decision", "provider_limit")                  # last two: H.7 and H.10 producers (WP14b / later packages)
+         "decision", "provider_limit",                 # these two: H.7 and H.10 producers (WP14b / later packages)
+         "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "answer")
+# `notifications.level` is a preset over the kinds: each kind has the lowest level that sends it. An unlisted kind counts as "medium".
+#   low     the plan starts or ends, plus failures (a halt is a failure: nothing can move)
+#   medium  (default) plus each experiment starting and FINISHING with its recorded results, and what waits for you (approvals, decisions...)
+#   high    plus every run finishing, and each task starting or being verified
+LEVELS = {"off": 0, "low": 1, "medium": 2, "high": 3}
+LEVEL_HELP = {"off": "nothing automatic (commands still work)",
+              "low": "plan started / finished, and failures",
+              "medium": "plus each experiment started and finished (with the results it recorded) and anything waiting for you",
+              "high": "plus every run and every task"}
+KIND_LEVEL = {"halt": 1, "task_failed": 1, "run_failed": 1, "budget": 1, "supervisor_down": 1, "plan_started": 1, "plan_finished": 1,
+              "approval_needed": 2, "decision": 2, "promotion_ready": 2, "provider_limit": 2, "experiment_started": 2, "experiment_finished": 2,
+              "run_finished": 3, "task_started": 3, "task_verified": 3,
+              "answer": 0}      # a reply to something you asked for (/ask): never filtered by the level or the kind list
 SUGGEST = {"halt": "continue with another agent, pause the plan, or run /debug", "task_failed": "continue with another agent (/continue T-n PROFILE) or pause the plan"}
 _now = time.time                                        # tests replace it
 
@@ -45,15 +59,30 @@ def _append(p, rec: Dict[str, Any]) -> Dict[str, Any]:
     return rec
 
 
+def level(p) -> str:
+    v = str(registry.section(p, "notifications").get("level") or "medium").lower()
+    return v if v in LEVELS else "medium"
+
+
+def allowed(p, kind: str) -> bool:
+    return KIND_LEVEL.get(kind, 2) <= LEVELS[level(p)]
+
+
 def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[List[Dict[str, Any]]] = None,
            files: Optional[List[str]] = None, task: Optional[str] = None, decision: Optional[str] = None,
-           once: bool = False) -> Optional[Dict[str, Any]]:
-    """Queue an alert unless the same `key` is inside its cooldown (then a "still: ..." reminder after it) or the kind is switched off.
+           once: bool = False, chat: Optional[str] = None, platform: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Queue an alert unless the same `key` is inside its cooldown (then a "still: ..." reminder after it), the kind is switched off
+    (`notifications.alerts.on`) or `notifications.level` is below the kind's level.
     `actions`: [{label, op, params, style?, kind?: op|local|ask_code, text?, min_role?}]. Returns the record or None when suppressed."""
     c = cfg(p)
-    if c["on"] and kind not in c["on"]:
+    if c["on"] and kind not in c["on"] and kind != "answer":
         return None
     st, now = _load(p), _now()
+    if not allowed(p, kind):
+        if once and key not in (st.setdefault("keys", {})):      # remember it, so raising the level later does not replay old events
+            st["keys"][key] = {"ts": now, "open": False, "kind": kind, "task": task, "level_skipped": True}
+            _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
+        return None
     e = (st.setdefault("keys", {})).get(key)
     if e and once:
         return None
@@ -72,7 +101,8 @@ def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[L
     st["keys"][key] = {"ts": now, "open": True, "kind": kind, "task": task}
     _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
     return _append(p, {"id": uuid.uuid4().hex[:12], "ts": now, "key": key, "kind": kind, "severity": severity, "text": text, "actions": actions or [],
-                       "files": files or [], "task": task, "decision": decision, "clear": False, "project_root": p.root})
+                       "files": files or [], "task": task, "decision": decision, "clear": False, "project_root": p.root,
+                       **({"chat": chat, "platform": platform} if chat else {})})
 
 
 def clear(p, key: str, text: str) -> Optional[Dict[str, Any]]:

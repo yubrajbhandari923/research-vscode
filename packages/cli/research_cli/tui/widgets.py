@@ -11,12 +11,11 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.theme import Theme
-from textual.widgets import Input, Label, Static
+from textual.containers import VerticalScroll
+from textual.widgets import Input, Label, OptionList, Static
 
-TABS = ["Overview", "Runs", "Findings", "Plans & Approvals", "Decisions", "Records", "Doctor"]
-KEYS = [("1-7", "switch tab (not on Decisions)"), ("[ ]", "previous / next tab"), ("r", "refresh"), ("/", "filter rows (empty clears)"),
-        ("k", "cancel the selected run"), ("a / d", "approve / reject a proposal (PIN)"), ("1-9", "Decisions: pick that option"),
-        ("t", "Decisions: answer in your own words"), ("ctrl+t", "dark / light theme"), ("?", "this help"), ("q", "quit")]
+TABS = ["Overview", "Runs", "Findings", "Plans & Approvals", "Decisions", "Records", "Doctor", "Inbox"]
+from .helptext import KEYS      # noqa: E402  (one list for the Help screen and the docs)
 GLYPHS = {"letters": {
     "R": ["████ ", "█   █", "████ ", "█  █ ", "█   █"], "E": ["█████", "█    ", "████ ", "█    ", "█████"],
     "S": [" ████", "█    ", " ███ ", "    █", "████ "], "A": [" ███ ", "█   █", "█████", "█   █", "█   █"],
@@ -97,13 +96,73 @@ class Prompt(ModalScreen[Optional[str]]):
 
 
 class Help(ModalScreen):
-    BINDINGS = [("escape,question_mark,q", "app.pop_screen", "Close")]
+    """The built-in guide: sections you step through with the arrow keys, opened at the section that explains what you had selected."""
+    BINDINGS = [("escape,question_mark,q", "app.pop_screen", "Close"), ("right,l", "step(1)", "Next"), ("left,h", "step(-1)", "Previous")]
+
+    def __init__(self, section: str = "start"):
+        super().__init__()
+        from .helptext import SECTIONS
+        self.names = [k for k, _ in SECTIONS]
+        self.i = self.names.index(section) if section in self.names else 0
 
     def compose(self) -> ComposeResult:
-        t = Text()
-        for k, d in KEYS:
-            t.append(f"{k:7} ", style="bold").append(d + "\n")
-        yield Vertical(Label("ResearchOS keys", classes="title"), Static(t), Label("Esc closes"), id="dialog")
+        yield Vertical(Label("", classes="title", id="help-title"), VerticalScroll(Static(id="help-body")), Static("", id="help-nav", markup=False), id="helpdlg")
+
+    def on_mount(self) -> None:
+        self.draw()
+
+    def action_step(self, d: int) -> None:
+        self.i = (self.i + d) % len(self.names)
+        self.draw()
+
+    def draw(self) -> None:
+        from .helptext import SECTIONS, body
+        title = dict(SECTIONS)[self.names[self.i]]
+        self.query_one("#help-title", Label).update(f"ResearchOS guide - {title}")
+        self.query_one("#help-body", Static).update(Text(body(self.names[self.i])))
+        self.query_one("#help-nav", Static).update("  ".join(f"[{t}]" if k == self.names[self.i] else t for k, t in SECTIONS) + "\n<- ->  sections   Esc closes")
+
+
+class ActionMenu(ModalScreen[Optional[str]]):
+    """What can be done with the selected item. Choosing one runs the same operation the CLI would; nothing here skips a PIN or an approval."""
+    BINDINGS = [("escape", "cancel", "Cancel")]
+
+    def __init__(self, title: str, options: list):
+        super().__init__()
+        self.title_text, self.options = title, options
+
+    def compose(self) -> ComposeResult:
+        yield Vertical(Label(self.title_text, classes="title", markup=False), OptionList(*[o[1] for o in self.options], id="menu"),
+                       Label("Enter choose   Esc cancel"), id="dialog")
+
+    def on_mount(self) -> None:
+        self.query_one("#menu", OptionList).focus()
+
+    def on_option_list_option_selected(self, e: OptionList.OptionSelected) -> None:
+        self.dismiss(self.options[e.option_index][0])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
+class TextBox(ModalScreen[Optional[str]]):
+    """A multi-line text the researcher edits before anything is recorded (Ctrl+S records, Esc cancels)."""
+    BINDINGS = [("escape", "cancel", "Cancel"), ("ctrl+s", "save", "Record")]
+
+    def __init__(self, label: str, text: str = ""):
+        super().__init__()
+        self.label, self.initial = label, text
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import TextArea
+        yield Vertical(Label(self.label + "\nCtrl+S record, Esc cancel. Nothing is recorded until you save.", markup=False), TextArea(self.initial, id="box"), id="helpdlg")
+
+    def action_save(self) -> None:
+        from textual.widgets import TextArea
+        self.dismiss(self.query_one("#box", TextArea).text)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 _QUIET = ("author_type", "author_name", "author_model", "created_at", "updated_at", "claimed_by", "claimed_at", "completed_by")

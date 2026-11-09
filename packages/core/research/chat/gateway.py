@@ -124,8 +124,12 @@ class Gateway:
 
     # --- delivery
     def _home(self, platform: str, m: Message) -> Message:
-        h = (read_json(gdir("chats.json")).get("home") or {}).get(platform)
-        if h and not m.chat:
+        if platform == "discord":
+            from . import discord_bot
+            h = discord_bot.home_channel()
+        else:
+            h = (read_json(gdir("chats.json")).get("home") or {}).get(platform)
+        if h and not m.chat and not m.direct:
             m.chat = h
         return m
 
@@ -155,7 +159,8 @@ class Gateway:
         color = {"error": "error", "warn": "warn", "ok": "ok"}.get(r.get("severity"), "info")
         from ..taskprompt import redact
         return Message((f"[{label}] " if multi else "") + (redact(r.get("text")) or ""), color=color, files=list(r.get("files") or []),
-                       buttons=commands.buttons_for(root, r.get("actions") or [], r.get("id")), thread_key=r.get("task"), project=label)
+                       buttons=commands.buttons_for(root, r.get("actions") or [], r.get("id")), thread_key=r.get("task"), project=label,
+                       chat=r.get("chat"), direct=bool(r.get("chat")))
 
     async def pump_once(self) -> int:
         """Deliver new outbox records of every enabled project on every platform. Returns the number of messages sent."""
@@ -179,7 +184,7 @@ class Gateway:
         c = (cur.get("outbox") or {}).get(f"{platform}|{root}") or {}
         recs, end, ino = alerts.read_from(path, int(c.get("offset") or 0), c.get("inode"))
         seen = set((cur.get("sent") or {}).get(platform) or [])
-        fresh = [r for r in recs if r["id"] not in seen]
+        fresh = [r for r in recs if r["id"] not in seen and (not r.get("platform") or r["platform"] == platform)]    # an /ask answer goes back to where it was asked
         n, done_to, ok_ids = 0, c.get("offset") or 0, []
         w = self.window.setdefault(f"{platform}|{root}", deque())
         while w and self.now() - w[0] > STORM_WINDOW:

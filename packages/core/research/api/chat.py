@@ -173,13 +173,35 @@ def chat_cmd_options(p) -> Dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------------------------- steer and refuse (operator)
+def _live(p) -> List[Dict[str, Any]]:
+    """Tasks a plan is working on or waiting on a human for: id, title, phase, plan, attempts, reason."""
+    from .. import supervisor as SV
+    out = []
+    for st, rs in _plans(p):
+        for tid, e in (rs.get("tasks") or {}).items():
+            if e.get("phase") in SV.ACTIVE_PHASES + SV.HUMAN_PHASES and p.exists("task", tid):
+                out.append({"task": tid, "title": p.get("task", tid)["title"], "phase": e["phase"], "plan": st["plan_key"],
+                            "attempts": len(e.get("attempts") or []), "reason": e.get("reason"), "human": e["phase"] in SV.HUMAN_PHASES})
+    return out
+
+
+def _task_line(t: Dict[str, Any]) -> str:
+    return f"{t['task']} {t['title'][:50]} [{t['phase']}" + (f", attempt {t['attempts']}" if t["attempts"] else "") + f"] ({t['plan']})"
+
+
 def _instruct(p, task: Optional[str], text: str, via: str) -> Dict[str, Any]:
-    from .. import intervene as I, notify
-    blocked = notify._blocked(p)
+    from .. import intervene as I
     if task is None:
-        if len(blocked) != 1:
-            raise ResearchError("Which task? Use /say T-12 <instruction>. Blocked: " + (", ".join(b["task"] for b in blocked) or "none"))
-        task = blocked[0]["task"]
+        live = _live(p)
+        needs = [t for t in live if t["human"]]
+        pick = needs if needs else live          # one task needs you: that one; else the only running one
+        if len(pick) != 1:
+            ex = (pick or live or [{"task": "T-12"}])[0]["task"]
+            raise ResearchError("Which task? " + ("Needs you: " + "; ".join(_task_line(t) for t in needs) + ". " if needs else "")
+                                + ("Running: " + "; ".join(_task_line(t) for t in live if not t["human"]) + ". " if any(not t["human"] for t in live) else "")
+                                + ("No task is running or waiting. " if not live else "")
+                                + f"Say it as /say {ex} <instruction>, or type in that task's thread.")
+        task = pick[0]["task"]
     it = I.request(p, task, text, source=via)
     if it["state"] == "approved":
         return _text(f"{it['id']}: {it['summary']}\nApplied under your instruction; the supervisor is resuming {task}.")
@@ -187,6 +209,23 @@ def _instruct(p, task: Optional[str], text: str, via: str) -> Dict[str, Any]:
         return _text(f"{it['id']}: {it['summary']}\nThis changes " + ", ".join(it["protected"]) + " and needs your approval with the PIN:\n"
                      f"  research intervention approve {it['id']}\n(or in VS Code → Plans → {task} → Instruct).")
     return _text(f"{it['id']} {it['state']}: {(it.get('history') or [{}])[-1].get('note', '')}")
+
+
+@op(sync=False, chat="read")
+def chat_cmd_tasks(p) -> Dict[str, Any]:
+    live = _live(p)
+    if not live:
+        return _text("No task is running or waiting for you. /status shows the plans.")
+    lines = []
+    needs = [t for t in live if t["human"]]
+    if needs:
+        lines.append("Needs you:")
+        lines += [f"  {_task_line(t)}" + (f"\n      {str(t['reason'])[:200]}" if t.get("reason") else "") + f"\n      /say {t['task']} <instruction> · /logs {t['task']}" for t in needs]
+    run = [t for t in live if not t["human"]]
+    if run:
+        lines.append("Running:")
+        lines += [f"  {_task_line(t)}\n      /task {t['task']} · /logs {t['task']} · /stop {t['task']}" for t in run]
+    return _text("\n".join(lines))
 
 
 @op(mutates=True, chat="decide")

@@ -40,7 +40,8 @@ The bot connects **outbound** to Discord; nothing listens on a public URL.
 3. The setup lists the servers the bot is in (`GET /users/@me/guilds`) and asks which if there are several (`--guild ID` to say it up front).
    Optional `--channel ID` makes that channel this project's alert channel and the home channel.
 4. Send the bot a **direct message**. It answers with a pairing code; type it at the setup prompt (or later: `research chat pair CODE`).
-   Run `/sethome` in the channel that should receive digests and machine alerts.
+   Run `/sethome` in the channel (not a thread) that should receive digests and machine alerts. It is saved in `discord.json` (token, server and project
+   channels stay as they are), the one place `research chat status`, `doctor`, `test discord` and the alerts all read; a home chosen before 3.2.2 is picked up automatically.
    Discord answers HTTP 429 now and then (setup makes two requests to Discord). Research OS reads `Retry-After` and retries by itself when the wait is
    10 seconds or less (up to four attempts, saying so as it waits). A longer wait, or a limit that does not clear, stops with the time Discord asked for;
    nothing is saved at that point, so run the same command again afterwards.
@@ -48,8 +49,12 @@ The bot connects **outbound** to Discord; nothing listens on a public URL.
 
 What you get:
 
-* **Slash commands** (registered in your server, typed options, autocomplete for project, task and plan ids): `/status /blocked /task /logs /report /finding /usage /proposals /interventions /digest /decisions /options /whoami /help /project /say /choose /debug /pause /resume /stop /continue /approve-start /sethome`.
+* **Slash commands** (registered in your server, typed options, autocomplete for project, task and plan ids): `/status /blocked /tasks /task /logs /report /finding /usage /proposals /interventions /digest /decisions /options /whoami /health /help /project /say /choose /debug /pause /resume /stop /continue /approve-start /sethome`.
   Replies are private to you (ephemeral). A project channel (`--channel`) implies the project, so `/status` there needs no argument.
+  **Inside a task's thread, `/say`, `/task`, `/logs`, `/stop` and `/approve-start` mean that task**: no id to type. Elsewhere, `/tasks` lists what is running or
+  waits for you, each with the command to use. `/say text` with no task picks the one task that needs you, else the only running task; if it cannot choose
+  it lists the candidates (`Needs you: T-3 … Running: T-5 …`) and shows the exact command. `/health` is `research chat doctor` in the chat: what is set up,
+  what is missing and the command to run on your computer.
 * **Alerts as embeds**: color by severity (green ok, yellow warn, red error, blue info), fields (task, plus whatever the alert carries), project and time in the footer.
   With `notifications.discord.thread_per_task` (default on) alerts about a task go to one **thread** named after it; the channel gets a one-line pointer for errors and approvals.
 * **Buttons and menus**: one button per option of a decision request (a **select menu** when there are more than five), Reject, *Approve on my computer*, and an **Instruct** button that opens a text box and sends your words as `/say` for that task.
@@ -82,7 +87,7 @@ The allow-list is by **platform user id** (never display name), checked on every
 
 | Role | May |
 |---|---|
-| `viewer` | read: `/status /blocked /task /logs /report /finding /usage /proposals /interventions /digest /options /whoami /help /project` |
+| `viewer` | read: `/status /blocked /tasks /health /task /logs /report /finding /usage /proposals /interventions /digest /options /whoami /help /project` |
 | `operator` | plus steering: `/say /choose /debug /pause /resume /stop /continue /approve-start /sethome`, reject buttons |
 | `approver` | plus answering an authenticator-code prompt, if the owner enabled chat approval (see GOVERNANCE.md) |
 
@@ -107,10 +112,53 @@ The allow-list is by **platform user id** (never display name), checked on every
 Long logs and reports travel as attachments (at most four plots referenced by the report, 20 MB each); nothing inline over 1,500 characters.
 Several projects on one bot: `/project use NAME` chooses the project for that chat; a command only ever touches the selected project.
 
+## Ask anything: `/ask`
+
+`/ask why is EXP-003 waiting for review?` starts a **read-only agent** with the project's context. It can read files, search, run read-only commands (`ls`, `cat`, `grep`,
+`git log/diff/show`) and read-only `research` commands, looks things up on its own, and replies in the chat that asked (a few minutes at most; the gateway is not blocked while it works).
+It is told not to create, edit or delete anything, and where the provider can enforce that it is enforced:
+
+| Agent | Read-only |
+|---|---|
+| `claude` | enforced: plan permission mode, only read tools and read-only commands are allowed |
+| `codex` | enforced: the `read-only` sandbox |
+| `agy`, `opencode`, custom | **refused** (their headless modes cannot be restricted from here), unless a human sets `ask.allow_unenforced: true`, which leaves only the instruction |
+
+It runs as an agent, so approvals, promotion and anything behind your PIN stay refused to it. Operators can use `/ask`; viewers cannot. A reply is never filtered by the notification level.
+Which agent and model answer is a setting: `/ai` shows it, `/ai claude claude-sonnet-5-5` sets it (operators), or `research config set ask.profile claude`, `ask.model …`, `ask.timeout_seconds …`.
+
+**Agent-written experiment summaries.** By default an experiment's "finished" message is a template from recorded facts (free, instant). With `notifications.summary: agent`
+the same read-only agent (`ask.profile`, `ask.model`) writes a short plain-language "what was done and what you should know" from those facts, and the facts follow it. If the agent
+cannot run (not installed, not enforceable read-only, timed out) the facts are sent alone and say why. Nothing is ever recorded as a scientific conclusion by either.
+
 ## Alerts
 
+**Either platform is enough.** Telegram and Discord are switched on independently (`notifications.telegram.enabled`, `notifications.discord.enabled`, each with its own
+saved token). A Discord-only project gets every automatic alert (halts, failures, plan start and finish, approvals), and the supervisor and gateway start for it without any
+Telegram setup; with both on, each alert goes to both; with neither, nothing is pushed.
+
+**How much to push: `notifications.level`.** Change it in chat with `/notify low|medium|high|off` (`/notify` alone shows it; operators can change it) or with
+`research config set notifications.level low`.
+
+| Level | You are told about |
+|---|---|
+| `off` | nothing automatically (commands such as `/status` still work) |
+| `low` | the plan **starting** and **finishing**, and failures (`task_failed`, `run_failed`, `budget`, `supervisor_down`, a plan that **halts**) |
+| `medium` (default) | plus **each experiment starting** (which one, and the hypothesis it tests) and **finishing, with a summary of what was done and the results it recorded**; plus what waits for you (`approval_needed`, `decision`, `promotion_ready`, `provider_limit`) |
+| `high` | plus **every run** finishing (its status and recorded metrics) and each `task_started` / `task_verified` |
+
+The experiment summary is built only from recorded facts: the hypothesis, how many runs completed or failed, the last recorded metric values, and what you should know
+(failed runs not reviewed, artifacts that could not be verified, no metrics logged). It never interprets the results: the interpretation is the synthesis, written by you or by an analyst you launch.
+A summary that flags something is sent as a warning (so on Discord it @mentions you); a clean one is not.
+
+An event skipped by a lower level is not replayed when you raise the level. `notifications.alerts.on` still narrows the kinds further.
+
+**Push notifications.** Telegram messages push by default (nothing is sent silently). Discord only pushes ordinary messages if your server or channel notifies for all messages,
+so alerts that need a person (warnings and errors) also **@mention the paired operators and approvers** (`notifications.discord.mention`, default on; good news such as a finished plan does
+not ping). For the best result set the Discord channel's notifications to "Only @mentions" and turn on mobile push in Discord.
+
 Kinds (`notifications.alerts.on`, default all): `halt`, `task_failed`, `approval_needed`, `promotion_ready`, `plan_finished`, `run_failed`, `budget`,
-`supervisor_down`, `decision`, `provider_limit`. The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
+`supervisor_down`, `decision`, `provider_limit`, `plan_started`, `experiment_started`, `experiment_finished`, `run_finished`, `task_started`, `task_verified`. The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
 "still: ..."; after `escalate_after` (3) failures in a row for one task the message suggests a next step; "moving again" is sent once. More than five alerts
 for one project in a minute fold into one summary. Approval card buttons disappear after `approval_expiry_hours` (24); the proposal stays pending (waiting never approves or denies).
 
@@ -126,6 +174,12 @@ The gateway also raises `supervisor_down` when a plan is running but the supervi
 |---|---|---|
 | `notifications.telegram.enabled` | false | switch for this project |
 | `notifications.discord.enabled` | false | switch for this project (needs the discord extra) |
+| `ask.profile` / `ask.model` | default profile / its model | the agent for `/ask` and agent summaries (`/ai` in chat) |
+| `ask.timeout_seconds` | 300 | stop the agent after this long |
+| `ask.allow_unenforced` | false | allow agents that cannot be made read-only (human only) |
+| `notifications.summary` | facts | `facts` or `agent`: who writes the experiment-finished summary |
+| `notifications.level` | medium | off / low / medium / high: how much is pushed automatically (table above); `/notify` changes it from chat |
+| `notifications.discord.mention` | true | @mention paired operators on warnings and errors so Discord pushes |
 | `notifications.discord.thread_per_task` | true | one thread per task for its alerts |
 | `notifications.alerts.on` | all kinds | which kinds reach chat |
 | `notifications.alerts.cooldown_minutes` | 30 | dedupe window |

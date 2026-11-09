@@ -196,7 +196,7 @@ NO_PIN_TESTS = {
 
 
 # --------------------------------------------------------------------------- markers (assigned here, so test files stay untouched)
-_DAEMON_FILES = ("test_cli_e2e", "test_supervisor", "test_autopromote", "test_fork")   # prefix match
+_DAEMON_FILES = ("test_cli_e2e", "test_supervisor", "test_autopromote", "test_fork", "test_site_e2e")   # prefix match
 _PTY_FILES = ("test_cli_e2e",)
 _PTY_TESTS = {"test_approval", "test_localbin", "test_escalation"}   # modules whose moved pty tests are named below
 _PTY_NAMES = set(['test_a_wrong_result_is_not_an_incomplete_deliverable_and_escalation_is_bounded', 'test_agent_shells_get_a_clear_message_and_are_never_locked_out', 'test_first_protected_action_without_a_pin_creates_one_instead_of_silently_passing', 'test_incomplete_deliverable_escalates_the_repair_attempt_to_the_stronger_model', 'test_install_links_research_into_main_runs_from_there_and_stays_out_of_git', 'test_link_never_replaces_real_files_and_unlink_removes_only_its_own_link', 'test_mismatched_new_pin_creates_nothing_and_authorizes_nothing', 'test_no_escalation_unless_configured_or_for_other_failures', 'test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlink_safe', 'test_no_terminal_fails_closed_without_counting_a_wrong_attempt', 'test_plan_validation_rejects_bad_escalation', 'test_set_pin_prompts_twice_without_echo_then_every_protected_action_asks'])

@@ -21,7 +21,7 @@ INTENDED_NEW = {
     "auto_promotion.protected_test_globs",
     "notifications.alerts.on", "notifications.alerts.cooldown_minutes", "notifications.alerts.escalate_after",       # WP14a chat gateway
     "notifications.alerts.approval_expiry_hours", "notifications.digest.at", "notifications.digest.silent_if_unchanged",
-    "notifications.discord",                                                                                          # WP15
+    "notifications.discord", "notifications.level", "notifications.summary", "ask", "guide.site.auto_include",                                          # WP15; 3.2.2 push level; 3.3.0 site
     "governance.approval.chat", "governance.approval.chat_allow", "supervisor.investigator", "supervisor.usage_limit",                                            # WP14b: approval from chat (TOTP)
 }
 

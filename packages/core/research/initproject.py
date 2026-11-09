@@ -214,7 +214,7 @@ def plan(root: str, spec: Dict[str, Any]) -> Dict[str, Any]:
             actions.append("Add and approve nine cheap starter hooks (syntax, whitespace, git integrity, secrets scan, task scope, frozen tests, experiment configuration, numeric invariants, artifact integrity). They never block, never run your code, and project-specific ones (lint, format, tests, tsc) are offered in Agents → Skills, hooks and MCP once you have code")
         gs = spec.get("guide") or {}
         if gs.get("enabled", True):
-            actions.append(f"Create the Scientist Guide (a Quarto book for communicating results) in {rel(lay['main_path'])}/docs/scientist-guide/ on main, "
+            actions.append(f"Create the Scientist Guide and research website (a Quarto site with about and research-question pages; preview it with `research site preview`) in {rel(lay['main_path'])}/docs/scientist-guide/ on main, "
                            f"with references.bib, a theme you can edit and a notes chapter, and commit it"
                            + ("; add a GitHub Actions workflow that publishes it as a website on every push to main" if gs.get("publish", True) else ""))
             actions.append(f"Guide drafts: an agent writes only when you ask; at most {int(gs.get('max_words', 150))} words per section"

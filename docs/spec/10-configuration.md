@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-112 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+120 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -92,6 +92,10 @@ dependency. A test checks that each option exists in the defaults with the right
 | `agents.handoff.fallback_order` | list | `['claude', 'codex', 'agy', 'opencode']` |  | Providers to try, in order: claude, codex, agy, opencode. Each must have a profile with that provider and be installed. |
 | `agents.handoff.on_provider_unavailable` | enum | `'pause'` |  | try_next continues with the next provider; pause stops the task for you. |
 | `agents.handoff.on_unknown_execution_state` | enum | `'pause'` |  | Always pause: a task is never relaunched while its previous process might still be running. |
+| `ask.profile` | str | `null` |  | The agent profile (claude, codex, agy, opencode or your own) that answers /ask and writes agent summaries. Empty uses the default profile. Only claude and codex can be restricted to read-only, so others are refused unless ask.allow_unenforced is on. In chat: /ai PROFILE MODEL. |
+| `ask.model` | str | `null` |  | The model the profile above uses for these questions. Empty uses the profile's own default. |
+| `ask.timeout_seconds` | int | `300` |  | How long the agent may work on one question or summary before it is stopped. |
+| `ask.allow_unenforced` | bool | `False` | human only | agy, opencode and custom agents cannot be restricted to read-only from here; allowing them means only the written instruction stops them from changing files. |
 
 #### Hooks & skills
 
@@ -159,8 +163,11 @@ dependency. A test checks that each option exists in the defaults with the right
 | `intervention.require_approval` | bool | `False` |  | Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN. |
 | `notifications.telegram.enabled` | bool | `False` |  | Message you on Telegram when a plan halts and answer simple commands. The bot token and chat id are stored on this machine only (Control Center → Plans → Chat, or `research chat setup`). |
 | `notifications.discord.enabled` | bool | `False` |  | Alerts, slash commands and decision buttons in Discord, through the one chat gateway (needs the optional discord extra; `research chat setup discord`). The bot token is stored on this machine only. |
+| `notifications.level` | enum | `'medium'` |  | How much the project pushes to your phone (Telegram and Discord): off = nothing automatic (commands still work); low = plan started/finished and failures; medium (default) = plus each experiment starting and finishing with the results it recorded, and anything waiting for you; high = plus every run and task. Change it from chat with /notify. |
+| `notifications.summary` | enum | `'facts'` |  | facts = a template filled from recorded facts only (free, instant, no agent). agent = a read-only agent (ask.profile / ask.model) writes a short plain-language summary from the same facts; it is read-only, may cost money, and falls back to the facts if it fails. |
+| `notifications.discord.mention` | bool | `True` |  | Mention the paired operators on Discord alerts that need a human (warnings and errors), so Discord sends a push notification even when the server only notifies for @mentions. |
 | `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
-| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
+| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
 | `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |
@@ -223,6 +230,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `guide.draft.max_sections` | int | `3` |  | How many chapters or result entries one draft may change. |
 | `guide.draft.max_figures` | int | `1` |  | How many figures one draft may add to a section. 0 means the agent writes text only. |
 | `guide.publish.workflow` | bool | `True` |  | Keep .github/workflows/publish-guide.yml, which builds the guide's scientific edition and publishes it as a website on every push to main. |
+| `guide.site.auto_include` | bool | `False` |  | When a finding becomes supported, publish every verified experiment that has committed report files under reports/ (and was not unpublished) as a draft page on the research website. Adds only; nothing is pushed. |
 | `guide.model` | str | `'claude-opus-5-5'` |  | The model profile the guide draft dispatch asks for. |
 
 #### Data & artifacts

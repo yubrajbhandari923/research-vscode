@@ -269,18 +269,34 @@ that waits for your PIN (section 7).
 research tui
 ```
 
-It has seven tabs: Overview, Runs, Findings, Plans & Approvals, Decisions, Records and Doctor. It refreshes by itself.
+It has eight tabs: Overview, Runs, Findings, Plans & Approvals, Decisions, Records, Doctor and **Inbox**. It refreshes by itself.
+
+**Start with the Inbox (`i`).** It gathers everything that needs a person, from every part of ResearchOS, and keeps three kinds apart:
+**Action** (something is waiting for you: a decision, an approval, a blocked task, evidence that changed or is missing), **Recommended follow-up** (a scientific step is due
+but nothing is stuck: a synthesis, a finding awaiting independent review, artifacts that cannot be verified), and **Informational** (nothing to do, for example a planned
+experiment). Each row says where it comes from, why it matters, whether it blocks execution and the next step. `Enter` or `x` opens the actions for the row; `w` explains what
+it means. An experiment that says `needs_review` is a follow-up about interpretation, not a decision request, so Decisions can be empty while the Inbox is not.
+
+For an experiment that is due for **synthesis** the actions follow the division of work: *Check evidence* (automatic), *Prepare analyst draft* (writes a brief; **starts nothing**),
+*Launch analyst* (starts a real agent after you confirm; it may cost money), *Record synthesis* (a text box prefilled with the recorded facts: you write and review the
+interpretation, nothing is recorded until you save and confirm, and it never closes the experiment) and *Mark completed* (a separate, explicit step). For artifacts the TUI says
+whether each file is local, collected, inaccessible (external storage this machine cannot reach), missing or modified, and why: a Slurm job that exited 0 does not prove its files are
+here. Nothing is rewritten; *Re-check* and *Sync HPC runs* are offered. The Records tab shows an experiment's lifecycle (`proposed → ready → running → needs_review → completed`) and what drives it.
+`?` opens the built-in guide from any screen (the research loop, statuses, who does what, reviews versus approvals, keys, troubleshooting).
 
 | Key | Does |
 |---|---|
-| `1`-`7`, or `[` and `]` | switch tab (on Decisions, the digits pick an option) |
+| `i` | open the Inbox |
+| `Enter` or `x` | actions for the selected Inbox row |
+| `w` | what does the selected status or item mean? |
+| `1`-`8`, or `[` and `]` | switch tab (on Decisions, the digits pick an option) |
 | `r` | refresh |
 | `/` | filter the rows (an empty filter clears it) |
 | `k` | cancel the selected run |
 | `a` / `d` | approve or reject the selected proposal (asks for your PIN) |
 | `t` | on Decisions: answer in your own words |
 | `Ctrl+T` | dark or light theme |
-| `?` | help |
+| `?` | the guide (← → move between its sections) |
 | `q` | quit |
 
 **The VS Code Control Center.** Run **Research: Open Control Center** (or `Ctrl/Cmd+Alt+R` for Home). Home lists what needs you; **Plans** shows phases, attempts,
@@ -383,6 +399,17 @@ research guide highlights
 research guide quarto doctor
 research guide quarto build --edition scientific
 ```
+
+Preview and publish it as a website with `research site`:
+
+```bash
+research site status          # what exists, and the exact next commands
+research site preview         # live local site, no GitHub needed (over SSH it prints the port-forward line)
+research site add EXP-001     # publish a verified experiment's committed report and figures as an editable draft page
+research site remove EXP-001  # unpublish (nothing is deleted); previews until you add --apply
+```
+
+Research OS never commits or pushes: after you commit the guide and `.github` and `git push`, the generated GitHub Actions workflow deploys the site (once: GitHub → Settings → Pages → Source: GitHub Actions).
 
 Results an independent review marks supported (or that you star with `research guide star F-001`) are logged into it automatically. An agent writes a short draft only when you ask, within word limits you set
 (`research guide draft check` reports any overrun). Add references with `research guide cite add --bibtex "..."` and cite them as `[@key]`. Quarto is needed only to build. See [GUIDE.md](GUIDE.md).

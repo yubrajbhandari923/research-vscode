@@ -99,10 +99,27 @@ def need_discord() -> None:
         raise ResearchError("Discord needs the optional discord.py package (Python 3.10 or newer)", hint="Install it with: " + install_hint())
 
 
+def home_channel() -> Optional[str]:
+    """The Discord home channel, from its one canonical place: discord.json. A /sethome made before 3.2.2 was stored in gateway/chats.json only;
+    it is adopted here (once) so nothing set earlier is lost."""
+    c = credentials()
+    if c.get("home_channel_id"):
+        return str(c["home_channel_id"])
+    old = (read_json(gdir("chats.json")).get("home") or {}).get("discord")
+    if old and c.get("token"):
+        save(home_channel_id=str(old))
+    return str(old) if old else None
+
+
+def set_home(channel_id: Any) -> None:
+    """What /sethome does: merge into discord.json, so the token, guild and project channels stay as they are."""
+    save(home_channel_id=str(channel_id))
+
+
 def status(p=None) -> Dict[str, Any]:
     c = credentials()
     en = bool(commands.registry.section(p, "notifications")["discord"].get("enabled")) if p is not None else None
-    return {"token_set": bool(c.get("token")), "guild_set": bool(c.get("guild_id")), "home_channel_set": bool(c.get("home_channel_id")), "enabled": en,
+    return {"token_set": bool(c.get("token")), "guild_set": bool(c.get("guild_id")), "home_channel_set": bool(home_channel()), "enabled": en,
             "library": available(), "install": None if available() else install_hint(), "stored_at": path(),
             "ready": bool(c.get("token") and c.get("guild_id") and available() and en is not False)}
 
@@ -192,7 +209,7 @@ PORTAL_STEPS = """In the Discord developer portal (https://discord.com/developer
 def send_rest(text: str, channel_id: Optional[str] = None) -> bool:
     """One plain message to the home channel (setup test). False when not configured."""
     c = credentials()
-    ch = channel_id or c.get("home_channel_id")
+    ch = channel_id or home_channel()
     if not c.get("token") or not ch:
         return False
     _rest(c["token"], "POST", f"/channels/{ch}/messages", {"content": clean(text)[:CONTENT_MAX], "allowed_mentions": {"parse": []}})
@@ -203,7 +220,9 @@ def send_rest(text: str, channel_id: Optional[str] = None) -> bool:
 # command -> options: (name, description, "str"|"int", required, choices tuple | autocomplete kind | None)
 _PROJ = ("project", "Project (default: this channel's)", "str", False, "project")
 SLASH: Dict[str, List[Tuple[str, str, str, bool, Any]]] = {
-    "status": [_PROJ], "blocked": [_PROJ],
+    "status": [_PROJ], "blocked": [_PROJ], "tasks": [_PROJ], "health": [],
+    "ask": [("question", "What do you want to know? A read-only agent looks it up.", "str", True, None)],
+    "ai": [("profile", "Agent profile (empty shows the current one)", "str", False, None), ("model", "Model (optional)", "str", False, None)], "notify": [("level", "off, low, medium or high (empty shows the current level)", "str", False, ("off", "low", "medium", "high"))],
     "task": [("task", "Task id, e.g. T-12", "str", True, "task")],
     "logs": [("task", "Task id, e.g. T-12", "str", True, "task"), ("stream", "stdout or stderr", "str", False, ("stdout", "stderr"))],
     "report": [("scope", "What to report on", "str", False, None)],
@@ -263,6 +282,7 @@ class Parts:
     options: List[Tuple[str, str]] = field(default_factory=list)               # select menu (label, value)
     files: List[str] = field(default_factory=list)
     ephemeral: bool = False
+    mention: List[str] = field(default_factory=list)       # user ids to @mention: Discord pushes a mention even when the server only notifies for them
 
 
 def render(m: Message, limit: int = MAX_FILE, at: Optional[float] = None) -> List[Parts]:
@@ -405,12 +425,28 @@ class DiscordChannel(Channel):
         except Exception:      # noqa: BLE001
             return True
 
+    def _mentions(self, label: str, color: str) -> List[str]:
+        """Paired operators (and approvers) to @mention on an alert that needs a human, unless `notifications.discord.mention` is off."""
+        if color not in ("error", "warn"):
+            return []
+        root = commands.enabled_projects("discord").get(label)
+        if root:
+            try:
+                from ..store import Project
+                with Project(root, sync=False) as p:
+                    if not commands.registry.section(p, "notifications")["discord"].get("mention", True):
+                        return []
+            except Exception:      # noqa: BLE001
+                pass
+        return [str(u["user_id"]) for u in pairing.users("discord") if pairing.at_least(u["role"], "operator")][:5]
+
     async def deliver(self, m: Message) -> Optional[str]:
         c = credentials()
-        chan = self._label_channel(m.project) or m.chat or c.get("home_channel_id")
+        chan = (m.chat if m.direct else None) or self._label_channel(m.project) or m.chat or home_channel()
         if not chan:
             raise ResearchError("Discord has no home channel", hint="Run /sethome in the channel that should receive alerts.")
         chan, first = str(chan), render(m)
+        first[0].mention = await self._call(self._mentions, m.project, m.color)
         target = chan
         if m.thread_key and await self._call(self._thread_per_task, m.project):
             try:
@@ -497,7 +533,10 @@ class DiscordChannel(Channel):
         label, _ = self._where(ix)
         o = ix.options
         order = ORDER.get(ix.name) or [x[0] for x in SLASH.get(ix.name, [])]
-        pre = ((o.get("project") if ix.name in ("status", "blocked") else None) or label) if ix.name in commands.COMMANDS else None
+        pre = ((o.get("project") if ix.name in ("status", "blocked", "tasks") else None) or label) if ix.name in commands.COMMANDS or ix.name in ("health", "notify", "ask", "ai") else None
+        _, thread_task = self._where(ix)
+        if thread_task and not o.get("task") and any(x[0] == "task" for x in SLASH.get(ix.name, [])):
+            o = {**o, "task": thread_task}       # inside a task's thread, /say /task /logs /stop ... mean that task
         args = [str(o[k]) for k in order if k != "project" and o.get(k) not in (None, "")]
         return " ".join(["/" + ix.name] + ([pre] if pre else []) + args)
 
@@ -645,7 +684,10 @@ class RealTransport:
 
     def _kw(self, parts: Parts, edit: bool = False) -> Dict[str, Any]:
         d, kw = self.d, {}
-        if parts.content is not None:
+        if parts.mention:
+            kw["content"] = " ".join(f"<@{i}>" for i in parts.mention) + (" " + parts.content if parts.content else "")
+            kw["allowed_mentions"] = d.AllowedMentions(users=[d.Object(id=int(i)) for i in parts.mention])
+        elif parts.content is not None:
             kw["content"] = parts.content
         if parts.embed is not None:
             kw["embed" if not edit else "embeds"] = d.Embed.from_dict(parts.embed) if not edit else [d.Embed.from_dict(parts.embed)]

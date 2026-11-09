@@ -131,7 +131,7 @@ def cmd_chat(a, p) -> int:
         return _emit(a, {"removed": pairing.remove_user(args[0], args[1])}, lambda d: [green("✓ ") + "removed" if d["removed"] else yellow("no such user")])
     if act == "test":
         r = manage.test_discord() if args[:1] == ["discord"] else manage.test_telegram()
-        return _emit(a, r, lambda d: [green("✓ ") + "sent" if d["sent"] else yellow("not configured")])
+        return _emit(a, r, lambda d: [green("✓ ") + "sent" + (f" to channel {d['channel']}" if d.get("channel") else "") if d["sent"] else yellow("not configured" + (": " + d["reason"] if d.get("reason") else ""))])
     if act == "remove":
         dc = args[:1] == ["discord"]
         (manage.remove_discord if dc else manage.remove_telegram)(p)
