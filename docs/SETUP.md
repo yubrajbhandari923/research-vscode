@@ -30,6 +30,9 @@ research env check                              # shows the interpreter and whet
 research env install -k scipy                   # add packages later
 ```
 
+Name packages as on PyPI (`PyYAML`, `scikit-learn>=1.4`, `Pillow`); the check imports them by their module name (`yaml`, `sklearn`, `PIL`), also for
+`required_packages` on a cluster. A package whose import name differs and is not known to Research OS can be listed by its module name instead.
+
 **Already have an environment?** Choose *Use an existing environment* and give the venv folder, or run
 `research config set environment.python /path/to/venv` (an interpreter path works too).
 

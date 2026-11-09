@@ -64,7 +64,10 @@ The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](https://g
 | Let agents run a plan while you sleep, with checks and retries | [Supervisor](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md), [Plans, tasks and agents](#plans-tasks-and-agents) |
 | Choose which model does which work (fast, balanced, deep) | [Providers and strategies](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/PROVIDERS.md), [Model allocation](#model-allocation-and-contracts) |
 | Watch from a terminal or a panel | [`research tui`](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#5-watching-and-steering), [Control Center](#control-center) |
-| Answer questions and steer from Telegram or Discord | [Chat](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CHAT.md) |
+| Branch an experiment from another's verified code, without promoting it | [Forking](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md#forking-an-experiment-from-anothers-verified-code) (`research experiment fork`, `inherits:` in the plan YAML) |
+| Let verified code reach `main` unattended, with your authorization | [Auto-promotion](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md) (`research plan autopromote PLAN authorize`, before or after `plan run`) |
+| Answer questions and steer from Telegram or Discord | [Chat](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/CHAT.md) (`research chat doctor` checks the setup and prints the fix) |
+| Start from a complete, commented project file | `research init --template -o research-os.yaml`, edit, `research init --from research-os.yaml --apply` ([copy in the repo](https://github.com/yubrajbhandari923/research-vscode/blob/main/examples/research-os.yaml)) |
 | Keep scientific decisions in human hands | [Governance and the approval PIN](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GOVERNANCE.md) |
 | Survive provider usage limits unattended | [Usage limits](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#8-usage-limits) |
 | Tell the story of your results | [Scientist Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) |
@@ -204,8 +207,8 @@ On any failure the existing install is untouched.
 bundles no Python. It needs a core with the same major version and a minor at least what it declares; on a mismatch the status bar warns and
 **Research: Show Version Info** names the command to run. `research version --json` reports what is installed.
 
-**Agents.** Each initialized project gets `.research/bin/research`, a generated machine-local launcher agents can run without `PATH`; refresh it with
-`research bin install --force` after an upgrade, a new machine or moving the project.
+**Agents.** Each initialized project gets `.research/bin/research`, a generated machine-local launcher agents can run without `PATH`; Opening the project in VS Code and `research supervisor start` recreate it if it is missing (it is git-ignored, so a clone or another machine starts
+without it). It runs the Python that installed it: after reinstalling Research OS somewhere else, refresh it with `research bin install --force`.
 
 **Supervisor after a reboot or upgrade.** Opening a project in VS Code starts the supervisor only when a plan is running or Telegram is enabled; otherwise run `research supervisor start`, and after an upgrade `research supervisor restart` (`research self-update` also restarts known supervisors).
 

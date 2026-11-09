@@ -123,7 +123,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | Key | Type | Default | Who | Meaning |
 |---|---|---|---|---|
 | `environment.python` | str | `null` |  | The Python used on this machine by agents, task checks and `{python}` in check commands: a venv folder or an interpreter path (relative paths are under the project folder). Empty uses whatever `python3` is on PATH. |
-| `environment.packages` | list | `[]` |  | Importable package names that `research env check` verifies (for example numpy, matplotlib). |
+| `environment.packages` | list | `[]` |  | Packages that `research env check` verifies, written as on PyPI (for example numpy, PyYAML, scikit-learn>=1.4); each is checked by its import name (yaml, sklearn). |
 
 #### Supervisor
 
