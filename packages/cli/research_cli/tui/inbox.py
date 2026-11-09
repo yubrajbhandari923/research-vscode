@@ -147,7 +147,7 @@ def _experiments(call, p, tree, items) -> None:
             worst = "action" if any(r["state"] in ("modified", "missing") for r in bad) else "followup"
             items.append(_item("artifacts", worst, eid, f"{eid}: {len(bad)} artifact(s) cannot be verified ({', '.join(sorted({r['state'] for r in bad}))})",
                                bad[0]["why"], "Reconnect the storage and re-check, sync HPC runs, or collect the files and register them; otherwise state the limitation.",
-                               ["artifacts", "recheck", "hpc_sync", "open"], "t6", source=src))
+                               ["artifacts", "recheck", "reconcile", "hpc_sync", "open"], "t6", source=src))
 
 
 def _proposals(call, items) -> None:
@@ -247,8 +247,22 @@ ACTION_LABELS = {
     "prepare_analyst": "Prepare analyst draft (writes a brief; starts nothing)", "launch_analyst": "Launch analyst (starts an agent; may cost money)",
     "check": "Check evidence now (experiment check)", "record_synthesis": "Record synthesis (your interpretation)",
     "mark_completed": "Mark experiment completed (you accept the science)", "mark_ready": "Mark experiment ready (accept the proposal)", "abandon": "Abandon experiment",
-    "artifacts": "Show artifacts and why each is flagged", "recheck": "Re-check artifacts", "hpc_sync": "Sync HPC runs (refresh state from the cluster)",
+    "artifacts": "Show artifacts and why each is flagged", "reconcile": "Point artifacts at their collected copies (safe, in place)", "recheck": "Re-check artifacts", "hpc_sync": "Sync HPC runs (refresh state from the cluster)",
 }
+
+
+def experiment_header(p, exp_id: str) -> Text:
+    """What the experiment is: title, question, hypothesis and the plan, in the order a reader asks for them."""
+    e = p.get("experiment", exp_id)
+    t = Text()
+    t.append(f"{exp_id}  {e['title']}\n", style="bold")
+    t.append_text(badge(e["status"])).append("\n\n")
+    q = p.get("question", e["question_id"])["title"] if e.get("question_id") and p.exists("question", e["question_id"]) else None
+    for k, v in (("Question", q), ("Hypothesis", e.get("hypothesis")), ("Motivation", e.get("motivation")), ("Method", e.get("method")),
+                 ("Success", e.get("success_criteria")), ("Limitations", e.get("limitations")), ("Notes", e.get("notes"))):
+        if v:
+            kv(t, k, v)
+    return t
 
 
 def experiment_context(p, call, exp_id: str) -> Text:

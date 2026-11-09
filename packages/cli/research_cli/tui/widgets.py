@@ -111,6 +111,38 @@ class Prompt(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+def reflow(text: str, width: int) -> Text:
+    """Re-wrap the guide's prose to the dialog's width. All-caps lines are headings; table-like lines (label, spaces, text) keep one row each
+    with a hanging indent; the rest of a block is joined and wrapped as a paragraph."""
+    import textwrap
+    out = Text()
+    block: list = []
+
+    def flush() -> None:
+        if not block:
+            return
+        tabular = any(re.search(r"\S {3,}\S", ln) for ln in block)
+        for ln in (block if tabular else [" ".join(x.strip() for x in block)]):
+            indent = len(ln) - len(ln.lstrip()) if tabular else len(block[0]) - len(block[0].lstrip())
+            body = ln.strip()
+            m = re.match(r"\S+(?: \S+)? {3,}", body) if tabular else None
+            hang = indent + (len(m.group(0)) if m else 2 if indent else 0)
+            out.append(textwrap.fill(body, width=width, initial_indent=" " * indent, subsequent_indent=" " * hang) + "\n")
+        block.clear()
+    for ln in text.split("\n"):
+        body = ln.strip()
+        if not body:
+            flush()
+            out.append("\n")
+        elif body.isupper() and len(body) < 40:
+            flush()
+            out.append(body + "\n", style="bold" if plain() else f"bold {TEAL}")
+        else:
+            block.append(ln)
+    flush()
+    return out
+
+
 class Help(ModalScreen):
     """The built-in guide: sections you step through with the arrow keys, opened at the section that explains what you had selected."""
     BINDINGS = [("escape,question_mark,q", "app.pop_screen", "Close"), ("right,l", "step(1)", "Next"), ("left,h", "step(-1)", "Previous")]
@@ -135,7 +167,7 @@ class Help(ModalScreen):
         from .helptext import SECTIONS, body
         title = dict(SECTIONS)[self.names[self.i]]
         self.query_one("#help-title", Label).update(f"ResearchOS guide - {title}")
-        self.query_one("#help-body", Static).update(Text(body(self.names[self.i])))
+        self.query_one("#help-body", Static).update(reflow(body(self.names[self.i]), max(40, min(100, int(self.size.width * 0.98)) - 10)))
         self.query_one("#help-nav", Static).update("  ".join(f"[{t}]" if k == self.names[self.i] else t for k, t in SECTIONS) + "\n<- ->  sections   Esc closes")
 
 

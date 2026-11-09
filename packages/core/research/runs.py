@@ -530,8 +530,9 @@ def _stat_artifact(p: Project, abspath: str, do_hash: Optional[bool]) -> Dict[st
 
 def register_artifact(p: Project, path: str, run: Optional[str] = None, experiment: Optional[str] = None,
                       name: Optional[str] = None, type: Optional[str] = None, description: Optional[str] = None,
-                      tags: Any = None, hash: Optional[bool] = None, allow_missing: bool = False) -> Dict[str, Any]:
-    """Reference a file/dir produced by research work. Nothing is copied or moved."""
+                      tags: Any = None, hash: Optional[bool] = None, allow_missing: bool = False, remote_path: Optional[str] = None) -> Dict[str, Any]:
+    """Reference a file/dir produced by research work. Nothing is copied or moved. `remote_path`: where a collected file was written on the
+    cluster; kept as provenance (in the record and as a `remote:` tag) while `path` is the local copy that can be checked."""
     ep = os.path.expanduser(str(path))
     ap = os.path.abspath(ep if os.path.isabs(ep) else os.path.join(os.getcwd(), ep))
     if not os.path.exists(ap) and not allow_missing:
@@ -552,7 +553,8 @@ def register_artifact(p: Project, path: str, run: Optional[str] = None, experime
         "id": aid, "run_id": run_id, "experiment_id": exp_id, "name": name or os.path.basename(ap.rstrip("/")),
         "type": type or infer_type(ap), "path": stored, "external": os.path.isabs(stored),
         "description": description, "size": info["size"], "mtime": info["mtime"], "hash": info["hash"],
-        "tags": as_list(tags), "preview": info.get("preview"), "created_at": now_iso(), **p.author,
+        "tags": as_list(tags) + ([f"remote:{remote_path}"] if remote_path else []), "preview": info.get("preview"), "created_at": now_iso(), **p.author,
+        **({"remote_path": remote_path} if remote_path else {}),
     }
     if existing:
         old = get_artifact(p, aid)
@@ -690,6 +692,44 @@ def ingest_root_files(p: Project) -> None:
             p.set_meta(key, end)
 
 
+def collected_copy(run_dir: str, path: str) -> Optional[str]:
+    """The local copy of a file a cluster job registered, when `research hpc import` collected it: `<run>/collected/outputs/<name>`. Only a file that
+    was actually collected is returned; nothing is guessed. (The compute-node path may even exist on this machine, on a shared filesystem: the
+    collected copy is still the one the project owns and can check.)"""
+    cand = os.path.join(run_dir, "collected", "outputs", os.path.basename(path.rstrip("/")))
+    return cand if os.path.isfile(cand) else None
+
+
+def reconcile_collected(p: Project, run_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Point artifacts that were registered at a cluster path at their collected local copy, in place: same id, the original path kept as
+    `remote_path`. Runs whose files were imported by an older version (registered at the compute-node path, copy sitting in collected/outputs)
+    are repaired by this; running it again changes nothing. Large files that stayed on the cluster have no copy and are left as references."""
+    out: List[Dict[str, Any]] = []
+    rows = p.q("SELECT a.id, a.path, a.run_id, a.external, r.run_dir FROM artifacts a JOIN runs r ON r.id = a.run_id"
+               + (" WHERE a.run_id=?" if run_id else ""), (normalize_id(run_id, "RUN"),) if run_id else ())
+    for a in rows:
+        path = p.abspath(a["path"])
+        local = collected_copy(p.abspath(a["run_dir"]), path)
+        if not local or not os.path.isabs(a["path"]):
+            continue
+        dup = p.q1("SELECT id FROM artifacts WHERE path=? AND run_id=? AND id<>?", (p.rel(local), a["run_id"], a["id"]))
+        if dup:
+            out.append({"artifact": a["id"], "skipped": f"{dup['id']} already registers the collected copy"})
+            continue
+        old = get_artifact(p, a["id"])
+        info = _stat_artifact(p, local, None)
+        rec = {k: old.get(k) for k in ("id", "run_id", "experiment_id", "name", "type", "description", "tags", "preview", "created_at")}
+        rec.update(path=p.rel(local), external=os.path.isabs(p.rel(local)), size=info["size"], mtime=info["mtime"], hash=info["hash"], preview=info.get("preview"),
+                   remote_path=path, updated_at=now_iso(), reconciled_from=a["path"],
+                   tags=as_list(old.get("tags")) + [f"remote:{path}"], **p.author)
+        append_jsonl(p.path("artifacts.jsonl"), rec)
+        with p.tx():
+            _upsert_artifact(p, rec)
+            p.event("artifact", a["id"], "reconciled", f"{a['id']} now points at the collected copy {rec['path']} (was {path})")
+        out.append({"artifact": a["id"], "path": rec["path"], "remote_path": path})
+    return out
+
+
 def ingest_run_files(p: Project, run_id: str, write_json: bool = True) -> int:
     """Ingest metrics.jsonl / artifacts.jsonl written inside a run directory (possibly by a SLURM job)."""
     r = p.q1("SELECT id, experiment_id, run_dir, metrics_offset, artifacts_offset FROM runs WHERE id=?", (run_id,))
@@ -719,9 +759,11 @@ def ingest_run_files(p: Project, run_id: str, write_json: bool = True) -> int:
             p.conn.execute("UPDATE runs SET artifacts_offset=? WHERE id=?", (end, run_id))
     for rec in new_artifacts:
         try:
-            register_artifact(p, rec["path"] if os.path.isabs(rec["path"]) else os.path.join(rec.get("cwd") or p.root, rec["path"]),
-                              run=run_id, name=rec.get("name"), type=rec.get("type"),
-                              description=rec.get("description"), tags=rec.get("tags"), allow_missing=True)
+            target = rec["path"] if os.path.isabs(rec["path"]) else os.path.join(rec.get("cwd") or p.root, rec["path"])
+            local = collected_copy(d, target)
+            register_artifact(p, local or target, run=run_id, name=rec.get("name"), type=rec.get("type"),
+                              description=rec.get("description"), tags=rec.get("tags"), allow_missing=True,
+                              remote_path=target if local else None)
         except ResearchError:
             pass
         n += 1

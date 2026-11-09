@@ -16,6 +16,13 @@ def hpc_doctor(p, cluster: Optional[str] = None) -> Dict[str, Any]:
     return HR.doctor(p, cluster)
 
 
+@op(mutates=True)
+def hpc_reconcile(p, run: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Point artifacts registered at a cluster path at their collected local copy (in place, original path kept as provenance). Safe to repeat."""
+    from .. import runs as R
+    return R.reconcile_collected(p, run)
+
+
 @op()
 def hpc_status(p) -> Dict[str, Any]:
     """HPC overview for the Run view: configured clusters plus every run with remote state."""

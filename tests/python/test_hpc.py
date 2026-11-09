@@ -1058,3 +1058,83 @@ def test_hpc_command_words_are_shell_quoted():
     from research_cli.commands.records import _shell_cmd
     assert _shell_cmd(argparse.Namespace(cmd=["--", "python3", "-c", 'print("hi there")'], command=None)) == "python3 -c 'print(\"hi there\")'"
     assert _shell_cmd(argparse.Namespace(cmd=["--", "python a.py --x 1"], command=None)) == "python a.py --x 1"   # already a command line
+
+
+# =========================================================================== collected outputs are registered at their local copy
+
+def _artifacts(p, run_id):
+    return [R.get_artifact(p, a["id"]) for a in p.q("SELECT id FROM artifacts WHERE run_id=? ORDER BY id", (run_id,))]
+
+
+@pytest.mark.slow
+def test_collected_output_is_registered_at_its_local_copy_and_the_remote_path_is_kept(hp, tmp_path):
+    from research import evidence, expcheck
+    archive = _run_bundle_manually(hp, tmp_path)
+    res = RES.import_archive(hp, archive)
+    run_id = res["run"]
+    run_dir = hp.abspath(R.get_run(hp, run_id)["run_dir"])
+    (art,) = [a for a in _artifacts(hp, run_id) if a["name"] == "out.txt"]
+    assert not os.path.isabs(art["path"]) and art["path"].endswith(f"{run_id}/collected/outputs/out.txt"), "the canonical local path, not the compute-node path"
+    assert os.path.isfile(hp.abspath(art["path"])) and art["hash"]
+    remote = [t for t in art["tags"] if t.startswith("remote:")]
+    assert len(remote) == 1 and os.path.isabs(remote[0][len("remote:"):]) and "out.txt" in remote[0], "where the cluster wrote it is kept as provenance"
+    rec = [json.loads(line) for line in open(hp.path("artifacts.jsonl")) if json.loads(line)["id"] == art["id"]][-1]
+    assert rec["remote_path"] == remote[0][len("remote:"):]
+    assert evidence.artifact_integrity(hp, art["id"])["status"] == "ok"
+    chk = expcheck.check(hp, "EXP-001")
+    assert any(f"{art['id']} ok" in v for v in chk["deterministic"]["validated"]) and not [f for f in chk["deterministic"]["failed"] if "artifact" in f["problem"]]
+    assert os.path.isfile(os.path.join(run_dir, "collected", "outputs", "out.txt"))
+
+
+@pytest.mark.slow
+def test_reimport_creates_no_duplicate_artifacts(hp, tmp_path):
+    archive = _run_bundle_manually(hp, tmp_path)
+    first = RES.import_archive(hp, archive)
+    counts, arts = _counts(hp), [a["id"] for a in _artifacts(hp, first["run"])]
+    second = RES.import_archive(hp, archive)
+    assert not second["changed"] and second["reconciled"] == [] and _counts(hp) == counts
+    assert [a["id"] for a in _artifacts(hp, first["run"])] == arts
+
+
+@pytest.mark.slow
+def test_runs_imported_by_an_older_version_are_reconciled_safely(hp, tmp_path):
+    from research import evidence
+    archive = _run_bundle_manually(hp, tmp_path)
+    run_id = RES.import_archive(hp, archive)["run"]
+    (art,) = [a for a in _artifacts(hp, run_id) if a["name"] == "out.txt"]
+    remote = next(t[len("remote:"):] for t in art["tags"] if t.startswith("remote:"))
+    # what 3.3.0 left behind: the artifact registered at the compute-node path, the copy sitting in collected/outputs
+    old = {**{k: art[k] for k in ("id", "run_id", "experiment_id", "name", "type", "description", "created_at")}, "path": remote, "external": True,
+           "tags": [], "size": None, "mtime": None, "hash": None, "preview": None}
+    R._upsert_artifact(hp, old)
+    hp.conn.commit()
+    if os.path.exists(remote):
+        os.rename(remote, remote + ".gone")           # the compute-node path is not reachable from here
+    try:
+        assert evidence.artifact_integrity(hp, art["id"])["status"] in ("missing", "unavailable")
+        n_before = hp.q("SELECT COUNT(*) AS n FROM artifacts")[0]["n"]
+        fixed = R.reconcile_collected(hp, run_id)
+        assert [x["artifact"] for x in fixed] == [art["id"]] and fixed[0]["remote_path"] == remote
+        assert hp.q("SELECT COUNT(*) AS n FROM artifacts")[0]["n"] == n_before, "repaired in place: same id, no duplicate"
+        now = R.get_artifact(hp, art["id"])
+        assert now["path"].endswith("collected/outputs/out.txt") and f"remote:{remote}" in now["tags"] and now["hash"]
+        assert evidence.artifact_integrity(hp, art["id"])["status"] == "ok"
+        assert R.reconcile_collected(hp, run_id) == [], "running it again changes nothing"
+    finally:
+        if os.path.exists(remote + ".gone"):
+            os.rename(remote + ".gone", remote)
+
+
+@pytest.mark.slow
+def test_large_files_that_stay_on_the_cluster_are_one_explicit_remote_reference(hp, tmp_path):
+    r = B.build(hp, "EXP-001", command=f"{sys.executable} train.py")
+    archive = _run_bundle(hp, r, tmp_path, max_bytes=1)         # nothing is small enough to travel
+    run_id = RES.import_archive(hp, archive)["run"]
+    arts = _artifacts(hp, run_id)
+    assert [a["type"] for a in arts] == ["remote-reference"], "one record, not a second bare remote path that can never be checked"
+    ref = arts[0]
+    assert "stays on the cluster at" in ref["description"] and os.path.isfile(hp.abspath(ref["path"]))
+    marker = json.load(open(hp.abspath(ref["path"])))
+    assert os.path.isabs(marker["remote_path"]) and marker["remote_path"].endswith("out.txt")
+    assert R.reconcile_collected(hp, run_id) == [], "a file that was never collected is never given a local path"
+    assert not os.path.exists(os.path.join(hp.abspath(R.get_run(hp, run_id)["run_dir"]), "collected", "outputs", "out.txt"))

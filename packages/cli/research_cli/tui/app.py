@@ -82,7 +82,7 @@ class ResearchTUI(App):
     #dialog { width: 64; max-width: 95%; height: auto; max-height: 95%; margin: 1 2; }
     #helpdlg { width: 100; max-width: 98%; height: 90%; margin: 1 1; }
     #helpdlg #box { height: 1fr; }
-    ResearchTUI.narrow #nav { width: 5; } ResearchTUI.narrow #nav > .option-list--option { padding: 0 1; } ResearchTUI.narrow #nav > .option-list--option-disabled { display: none; }
+    ResearchTUI.narrow #nav { display: none; }
     ResearchTUI.narrow .split { layout: vertical; }
     ResearchTUI.narrow .split > DataTable, ResearchTUI.narrow #left { width: 100%; height: 1fr; }
     ResearchTUI.narrow .detail { width: 100%; height: 1fr; }
@@ -270,6 +270,8 @@ class ResearchTUI(App):
                 self.query_one(f"#{tid}", DataTable).focus()
 
     def sync_nav(self) -> None:
+        if self.srv and self.size.width < 120:
+            self.refresh_data()       # narrow layout: the status bar names the section you are in
         tab = self._active()
         ident = next((i[0] for i in NAV_ITEMS if i[3] == tab), None)
         nav = self.query_one("#nav", OptionList)
@@ -463,6 +465,9 @@ class ResearchTUI(App):
                 self.notify(f"{ref}: {len(r['validated'])} passed, {len(r['failed'])} failed, {len(r['pending'])} pending. "
                             + ("Needs you: " + "; ".join(self.last["needs_human"][:3]) if self.last["needs_human"] else "Nothing needs interpretation."), timeout=12)
             return
+        if act == "reconcile":
+            return self.push_screen(Confirm("Point artifacts registered at a cluster path at the copy `research hpc import` collected?\nOnly files that were really collected change; the original path is kept as provenance."),
+                                    lambda ok: ok and self._do("hpc_reconcile"))
         if act == "hpc_sync":
             return self.push_screen(Confirm("Contact the cluster over SSH and refresh the state of this project's HPC runs?\nNothing is submitted."),
                                     lambda ok: ok and self._do("hpc_sync"))
@@ -598,7 +603,9 @@ class ResearchTUI(App):
         self.inbox = IN.gather(self.call, self.srv.project(sync=False), T)
         self._fill("inbox", [IN.row(i) for i in self.inbox])
         self.draw_banner()
-        bar = V.inbox_chip(IN.counts(self.inbox))
+        here = next((i[2] for i in NAV_ITEMS if i[3] == self._active()), "")
+        bar = Text(f"{here}  ›  ", style="bold") if self.size.width < 120 and here else Text()
+        bar.append_text(V.inbox_chip(IN.counts(self.inbox)))
         bar.append(V.SEP, style="dim").append_text(V.status_line(self.status))
         self.query_one("#status", Static).update(bar)
         self.label_decisions_tab()
@@ -672,6 +679,7 @@ class ResearchTUI(App):
         if prop:
             text = V.proposal_detail(d).append_text(text)
         if table == "records" and key.startswith("EXP-"):
+            text = IN.experiment_header(self.srv.project(sync=False), key)
             text.append("\n").append_text(IN.experiment_context(self.srv.project(sync=False), self.call, key))
         if table == "runs":
             text.append("\n--- stdout ---\n" + tail(d.get("stdout_path_abs")) + "\n--- stderr ---\n" + tail(d.get("stderr_path_abs"), 15))

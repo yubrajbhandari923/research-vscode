@@ -270,7 +270,7 @@ def test_artifact_diagnostics_and_hpc_sync_are_reachable_from_the_inbox(pravah, 
         await pilot.pause()
         d = text(app, "#inbox-d")
         assert "loss.csv" in d and "curve.png" in d and d.count("inaccessible") >= 2 and "cannot reach" in d
-        await pilot.press("x", "down", "down", "enter")                      # Sync HPC runs
+        await pilot.press("x", "down", "down", "down", "enter")              # Sync HPC runs
         await pilot.pause()
         assert app.screen.__class__.__name__ == "Confirm" and calls == []
         await pilot.press("y")
