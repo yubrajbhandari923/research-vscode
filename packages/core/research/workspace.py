@@ -423,7 +423,9 @@ def create(p, experiment: str, name: Optional[str] = None, base: Optional[str] =
     top = toplevel(p.root)
     slug = _slug(name or e["title"])
     br = branch or f"exp/{exp}" + (f"-{slug}" if slug else "")
-    base_ref = base or "HEAD"
+    from . import fork
+    pin = fork.inherited(p, exp)   # a forked experiment starts from its pinned revision, never from the checkout's HEAD
+    base_ref = base or (pin or {}).get("base_rev") or "HEAD"
     if _git(top, "rev-parse", "--verify", "-q", f"refs/heads/{br}"):
         raise ResearchError(f"Branch {br} already exists.", hint="Use `research workspace attach` to adopt an existing branch.")
     cfg_dir = (p.config.get("layout") or {}).get("experiments_dir")
@@ -521,7 +523,15 @@ def show(p, ws: str) -> Dict[str, Any]:
             ahead = _git(path, "rev-list", "--count", f"{rec['base_rev']}..HEAD")
             out["commits_ahead"] = int(ahead) if ahead and ahead.isdigit() else None
     out["active_runs"] = _active_runs(p, ws)
+    from . import fork
+    pin = fork.inherited(p, rec.get("experiment"))
+    if pin:
+        out["forked_from"] = {k: pin[k] for k in ("parent", "revision", "base_rev", "ref")}
     return out
+
+
+def has_workspace(p, exp: str) -> bool:
+    return any(r.get("experiment") == exp for r in _fold(_records(p)).values())
 
 
 def list_workspaces(p, include_archived: bool = False) -> List[Dict[str, Any]]:
@@ -597,6 +607,10 @@ def run_info(p) -> Dict[str, Any]:
     out: Dict[str, Any] = {"id": ws, "branch": g.get("branch"), "head": g.get("commit"),
                            "base_rev": rec.get("base_rev"), "experiment": rec.get("experiment"),
                            "source_repo": repo_identity(p.root)}
+    from . import fork
+    pin = fork.inherited(p, rec.get("experiment"))
+    if pin:   # immutable: the pinned commit stays reachable through its ref after the worktree is archived
+        out["forked_from"] = {k: pin[k] for k in ("parent", "revision", "base_rev", "ref")}
     return out
 
 

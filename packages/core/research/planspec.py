@@ -30,7 +30,7 @@ PLAN_FIELDS = {"key", "id", "title", "objective", "success_criteria", "context",
 EXEC_FIELDS = {"mode", "max_parallel_agents", "max_attempts_per_task", "max_total_attempts", "max_wall_minutes", "on_failure",
                "require_approval_for_scientific_changes", "default_profile", "max_hpc_resubmissions", "auto_promotion", "escalation"}
 EXP_FIELDS = {"key", "id", "title", "hypothesis", "motivation", "method", "success_criteria", "expected_outcome", "stop_conditions",
-              "parameters", "metrics", "expected_artifacts", "planned_runs", "question", "tasks", "notes", "tags"}
+              "parameters", "metrics", "expected_artifacts", "planned_runs", "question", "tasks", "notes", "tags", "inherits"}
 TASK_FIELDS = {"key", "id", "title", "description", "prompt", "depends_on", "agent", "inputs", "expected_artifacts", "acceptance",
                "checks", "resources", "execution", "task_type", "skills", "datasets", "allowed_files", "notes"}
 AGENT_FIELDS = {"role", "profile", "model", "provider", "session_group", "level"}
@@ -42,7 +42,7 @@ MODES = ("bounded_autonomous", "manual")
 
 # Fields whose change alters the scientific meaning of already-defined work (see supervisor.classify_change).
 SCIENTIFIC_PLAN = {"objective", "success_criteria"}
-SCIENTIFIC_EXP = {"hypothesis", "method", "success_criteria", "expected_outcome", "stop_conditions", "parameters", "metrics", "question"}
+SCIENTIFIC_EXP = {"inherits", "hypothesis", "method", "success_criteria", "expected_outcome", "stop_conditions", "parameters", "metrics", "question"}
 SCIENTIFIC_TASK = {"acceptance", "checks", "expected_artifacts", "datasets", "inputs", "depends_on"}
 
 
@@ -246,7 +246,17 @@ def normalize(doc: Dict[str, Any], known: Optional[Any] = None) -> Dict[str, Any
             exp_keys.add(ek)
             if not e.get("title"):
                 errs.append(f"experiment {key}/{ek}: title is required")
-            norm["experiments"].append({**{k: e.get(k) for k in EXP_FIELDS if k not in ("tasks",) and k in e}, "key": ek})
+            inh = e.get("inherits")
+            if inh is not None:
+                if not isinstance(inh, dict) or set(inh) - {"experiment", "revision"} or not isinstance(inh.get("experiment"), str):
+                    errs.append(f"experiment {key}/{ek}: inherits must be a mapping with `experiment` (a key or EXP- id) and optional `revision`")
+                    inh = None
+                else:
+                    inh = {"experiment": inh["experiment"], "revision": str(inh.get("revision") or "verified")}
+                    if inh["experiment"] in (ek, e.get("id")):
+                        errs.append(f"experiment {key}/{ek}: inherits from itself")
+            norm["experiments"].append({**{k: e.get(k) for k in EXP_FIELDS if k not in ("tasks", "inherits") and k in e}, "key": ek,
+                                        **({"inherits": inh} if inh else {})})
             for t in _list(e.get("tasks")):
                 add_task(t, f"{ew}.tasks", ek)
         for t in _list(pl.get("tasks")):
@@ -275,6 +285,32 @@ def normalize(doc: Dict[str, Any], known: Optional[Any] = None) -> Dict[str, Any
             state[n] = 2
         for n in deps:
             visit(n)
+        # experiment graph: child -> parent, and a task depending on another experiment's task. A cycle can never start.
+        by_ref = {**{x["key"]: x["key"] for x in norm["experiments"]}, **{x["id"]: x["key"] for x in norm["experiments"] if x.get("id")}}
+        egraph: Dict[str, set] = {x["key"]: set() for x in norm["experiments"]}
+        for x in norm["experiments"]:
+            par = (x.get("inherits") or {}).get("experiment")
+            if par in by_ref:
+                egraph[x["key"]].add(by_ref[par])
+            elif par and not re.match(r"^EXP-\d+$", par):
+                errs.append(f"experiment {key}/{x['key']}: inherits {par!r}, which is neither an experiment key of this plan nor an EXP- id")
+        for t in norm["tasks"]:
+            for d in t["depends_on"]:
+                if t["experiment"] in egraph and d in task_keys and task_keys[d] in egraph and task_keys[d] != t["experiment"]:
+                    egraph[t["experiment"]].add(task_keys[d])
+        # Only a cycle through an `inherits` edge can never start (task-level cycles are reported above; plain experiments may depend on each other).
+        def reach(src: str) -> set:
+            seen, todo = set(), [src]
+            while todo:
+                for m in egraph[todo.pop()]:
+                    if m not in seen:
+                        seen.add(m)
+                        todo.append(m)
+            return seen
+        for x in norm["experiments"]:
+            par = by_ref.get((x.get("inherits") or {}).get("experiment"))
+            if par and par != x["key"] and x["key"] in reach(par):
+                errs.append(f"plan {key}: experiment {x['key']} inherits {par}, which (through inheritance or task dependencies) depends on {x['key']}: an inheritance/dependency cycle that could never start")
         out["plans"].append(norm)
     if errs:
         raise PlanSpecError(errs)
@@ -422,6 +458,22 @@ def _plan_changes(p: Project, norm_plan: Dict[str, Any], st: Optional[Dict[str, 
             changed = {f: v for f, v in e.items() if f not in ("key", "id") and v != old_exps[ek].get(f)}
             if changed:
                 ops.append({"op": "update_experiment", "key": ek, "fields": changed})
+    from . import fork, workspace as W
+    for ek, e in new_exps.items():
+        inh = e.get("inherits")
+        if not inh:
+            continue
+        par = inh["experiment"]
+        if par not in new_exps and not any(x.get("id") == par for x in new_exps.values()) and not p.exists("experiment", par) and not exp_ids.get(par):
+            conflicts.append(f"experiment {key}/{ek}: inherits {par!r}, which does not exist")
+        if inh == (old_exps.get(ek) or {}).get("inherits"):
+            continue
+        eid = exp_ids.get(ek) or e.get("id")
+        if eid and p.exists("experiment", eid):
+            if fork.inherited(p, eid):
+                conflicts.append(f"experiment {key}/{ek} ({eid}): its inherited revision is already pinned and cannot change. Add a new experiment (or `research experiment fork`).")
+            elif any(t["status"] != "todo" for t in p.list("task", "related_experiment_id=?", (eid,))) or W.has_workspace(p, eid):
+                conflicts.append(f"experiment {key}/{ek} ({eid}): it already has work or a worktree, so it cannot start inheriting now. Add a new experiment.")
     old_tasks = {t["key"]: t for t in old.get("tasks_flat", [])}
     new_tasks = {t["key"]: t for t in norm_plan["tasks"]}
     tstate = (st or {}).get("tasks") or {}
@@ -607,6 +659,7 @@ def apply(p: Project, text: str, dry_run: bool = False, source: str = "yaml", au
             elif k == "update_experiment":
                 f = dict(op["fields"])
                 f.pop("question", None)
+                f.pop("inherits", None)    # carried by the saved spec; pinned by the supervisor when the parent is verified
                 if f:
                     services.update_experiment(p, st["experiments"][op["key"]], **f)
             elif k in ("create_task", "adopt_task"):

@@ -102,6 +102,24 @@ def cmd_experiment_variant(a, p) -> int:
 
 
 @mut
+def cmd_experiment_fork(a, p) -> int:
+    from research import fork
+    r = fork.fork(p, a.id, a.title, at=a.at, override=a.override)
+    _done(a, r, msg=f"{r['experiment']}  forked from {r['parent']} at {r['base_rev'][:8]} ({r['revision']})  worktree {r['workspace']} on {r['branch']}")
+    if not a.json:
+        print(dim("  pinned: " + r["pin"] + " (main is not followed; `research experiment sync` brings code in when you ask)"))
+    return 0
+
+
+@mut
+def cmd_experiment_sync(a, p) -> int:
+    from research import fork
+    r = fork.sync(p, a.id, a.source)
+    _done(a, r, msg=f"{r['experiment']}: " + (f"merged {a.source} ({r['merged'][:8]})" if r["synced"] else r["note"]))
+    return 0
+
+
+@mut
 def cmd_experiment_status(a, p) -> int:
     e = S.set_experiment_status(p, a.id, a.to_status, a.reason)
     _done(a, e, msg=f"{e['id']} → {e['status']}")
@@ -792,6 +810,14 @@ def attach(sub, add, group) -> None:
     x.add_argument("--question", "-q")
     x = add(g, "show", cmd_experiment_show, "experiment detail: runs, metrics, artifacts, synthesis")
     x.add_argument("id")
+    x = add(g, "fork", cmd_experiment_fork, "new experiment whose worktree starts from another experiment's pinned code (no promotion needed)")
+    x.add_argument("id", help="the parent experiment")
+    x.add_argument("--title", required=True)
+    x.add_argument("--at", default="verified", help="verified (default) | a run id (RUN-…) | a git commit")
+    x.add_argument("--override", metavar="REASON", help="bypass synthesis-before-new-experiment (logged)")
+    x = add(g, "sync", cmd_experiment_sync, "explicitly merge main (or an EXP-/commit) into a forked experiment's branch")
+    x.add_argument("id")
+    x.add_argument("--from", dest="source", default="main", help="main (default) | EXP-id (its verified code) | a git commit")
     x = add(g, "update", cmd_experiment_update, "edit experiment fields")
     x.add_argument("id")
     x.add_argument("--title")

@@ -159,6 +159,47 @@ failure and the supervisor itself never submits. **Result contract** (also in ev
 `$RESEARCH_RUN_DIR/outputs/`, metrics to `$RESEARCH_RUN_DIR/metrics.jsonl`, and register each file in `$RESEARCH_RUN_DIR/artifacts.jsonl`,
 otherwise they stay on the cluster. Job environment (modules, venv) goes in `hpc.clusters.<name>.slurm.setup`.
 
+### Forking an experiment from another's verified code
+
+Downstream experiments normally start from whatever `main` is. To branch from another experiment's code instead, with no promotion at all:
+
+```yaml
+experiments:
+  - key: baseline
+    title: Baseline
+    tasks: [...]
+  - key: method-a
+    title: Method A
+    inherits: {experiment: baseline, revision: verified}   # a key of this plan or an EXP- id; revision: verified (default) | RUN-… run | git commit
+    tasks: [...]
+  - key: method-b
+    title: Method B
+    inherits: {experiment: baseline}
+    tasks: [...]
+```
+
+- The supervisor holds `method-a` and `method-b` until every live task of `baseline` is verified (the status shows why they wait, and a blocked parent
+  keeps them waiting until you resolve it). Then it **pins** the parent's last verified commit once: one `inherit` record in `workspaces.jsonl` and the ref
+  `refs/research/forks/EXP-00N`, which keeps the commit alive after the parent's worktree is archived. Each child gets its **own worktree and branch** from
+  that commit, so `method-a` editing a baseline file never reaches `method-b`.
+- `verified` fails closed. Every live task of the parent needs a *supervisor-verified* attempt and the pin is the tip of those attempts' commits. A task a
+  human accepted without verification, an uncommitted result (`supervisor.commit_verified_work` off) or a verified run that changed no files gives nothing to
+  pin: the fork is refused (or the YAML children keep waiting, with the reason in the status) and you name a commit with `--at <commit>` or `--at RUN-NNNN`.
+  A worktree HEAD or base revision is never substituted.
+- Forking from the UI: **Work → Experiment worktrees → Fork an experiment…** (same rules as the CLI). Creating the new experiment follows the usual
+  governance (for example synthesis-before-new-experiment); the supervisor itself never creates experiments when it pins a YAML fork, so unattended YAML forks
+  need no `--override`.
+- A fork never follows `main`: automatic promotion's "start from the integrated main" step skips it, and nothing else merges into it. To bring code in
+  yourself: `research experiment sync EXP-002 [--from main|EXP-001|<commit>]` (a recorded merge; refused with uncommitted changes or active runs; a
+  conflict is aborted and nothing changes).
+- Promotion is separate and optional: forking works with `auto_promotion` off. Promoting a fork promotes only its own commits, so promote the parent first.
+- A pin never changes. Editing `inherits` of a pinned experiment, or adding it to an experiment that already has work or a worktree, is a conflict in
+  `plan yaml diff/apply` (add a new experiment instead). `inherits` counts as a scientific change, so an agent's patch containing it needs your approval.
+  Self-inheritance, unknown parents and cycles (including a parent task that depends on a child's task) fail `plan yaml validate`.
+- By hand: `research experiment fork EXP-001 --title "Method A" [--at verified|RUN-…|<commit>]` creates the experiment (parent set), pins and creates the worktree.
+- Provenance: every run records `workspace.forked_from` (parent, revision, pinned commit) next to its own `head` and source snapshot; `research workspace show`
+  and `plan status` list the pin.
+
 ### Parallel agents and promotion
 
 `max_parallel_agents` (plan or project; the cap applies per plan, so several plans can each use their own cap) lets agents of *different* experiments work at the same time, including different providers;
