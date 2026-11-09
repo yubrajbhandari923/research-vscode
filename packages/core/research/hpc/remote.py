@@ -110,7 +110,8 @@ def doctor(p: Project, cluster_name: Optional[str] = None, compute: bool = False
     req = [str(x) for x in (cluster.get("required_packages") or [])]
     setup = [str(x) for x in ((cluster.get("slurm") or {}).get("setup") or [])]
     if req and py_ok:
-        imports = "; ".join(f"import {x.split('[')[0].replace('-', '_')}" for x in req)
+        from ..envcheck import import_name
+        imports = "; ".join(f"import {import_name(x)}" for x in req)
         snippet = "; ".join(setup + [f"{shlex.quote(py)} -c {shlex.quote(imports)}"])
         r = ssh.run_shell(f"bash -lc {shlex.quote(snippet)} 2>&1 | tail -2; echo EXIT=${{PIPESTATUS[0]}}")
         ok = "EXIT=0" in r.stdout

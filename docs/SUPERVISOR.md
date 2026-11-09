@@ -291,6 +291,10 @@ For overnight plans where experiment 2 needs the code experiment 1 wrote. **Off 
    run state with a fingerprint of the verification policy. If `promotion.test_command`, `auto_promotion.numerical_command`, `reviewer_profile`,
    `protected_test_globs` or `promotion.main_branch` change afterwards the plan becomes **suspended** (fail closed) until re-authorized.
    Agents cannot authorize, and cannot enable it through a proposal (changing `execution` is a scientific-class change that needs you).
+   You can authorize **before** `plan run` (the plan only has to be applied and declare the flag): nothing starts, no agent launches and no
+   run state is created; the authorization (and its fingerprint) is kept beside the plan and becomes part of the run when you run it. A policy
+   change between the two leaves the plan suspended, exactly as after a run began. `research plan autopromote PLAN status|revoke` work before
+   the run too; `retry` needs a run.
 
 **Settings** (`.research/config.yaml`):
 ```yaml

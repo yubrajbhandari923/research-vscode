@@ -148,7 +148,8 @@ def cmd_plan_autopromote(a, p) -> int:
     pin = AP.read_pin() if a.action == "authorize" and AP.is_set() else None
     r = SV.autopromote(p, a.id, a.action, note=a.note, pin=pin, item=a.item)
     def lines(d):
-        out = [bold(f"automatic promotion: {d['mode']}") + (f" (authorized by {d['by']})" if d.get("by") else "") + (f" — {d['why']}" if d.get("why") else "")]
+        out = [dim("authorization recorded; it applies when you run the plan: `research plan run " + a.id + "`")] if a.action == "authorize" and not SV.load_run(p, SV._plan_state(p, a.id)["plan_id"]) else []
+        out += [bold(f"automatic promotion: {d['mode']}") + (f" (authorized by {d['by']})" if d.get("by") else "") + (f" — {d['why']}" if d.get("why") else "")]
         out += [f"  {i['id']} {i['experiment']:<10} {i['status']:<16} {i.get('main_after') or ''}" + (yellow(f"  {i['error'][:100]}") if i.get("error") else "") for i in d["items"]]
         out += [dim(f"  pending {x['experiment']}: {', '.join(x['commits'])}") for x in d["pending"]]
         return out
@@ -167,6 +168,8 @@ for _f in (cmd_plan_run, cmd_plan_pause, cmd_plan_resume, cmd_plan_stop, cmd_pla
 def _sv_start(a, p) -> int:
     from research import machine
     machine.remember(p.root)
+    from research import localbin
+    localbin.install(p.root)    # agents the supervisor starts run the CLI through it
     if a.foreground:
         return SV.run_forever(p.root, a.exit_when_idle)
     return _emit(a, SV.daemon_start(p, detach=True, exit_when_idle=a.exit_when_idle),
@@ -516,7 +519,7 @@ def attach_plan(g, add) -> None:
     x.add_argument("--dry-run", action="store_true", help="apply: preview only")
     x = add(g, "promote", cmd_plan_promote, "prepare promotion candidates from verified, committed work (nothing merges)")
     x.add_argument("id"); x.add_argument("--experiment"); x.add_argument("--title")
-    x = add(g, "autopromote", cmd_plan_autopromote, "unattended code promotion into main (off by default): status | authorize (human, PIN) | revoke | retry")
+    x = add(g, "autopromote", cmd_plan_autopromote, "unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry")
     x.add_argument("id"); x.add_argument("action", choices=["status", "authorize", "revoke", "retry"])
     x.add_argument("--note", help="authorize: why"); x.add_argument("--item", help="retry: the paused item (AP-001)")
     for name, fn, h in (("run", cmd_plan_run, "let the supervisor execute a plan"), ("pause", cmd_plan_pause, "pause scheduling for a plan"),

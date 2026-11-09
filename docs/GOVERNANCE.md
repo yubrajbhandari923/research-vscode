@@ -112,5 +112,6 @@ The file covers project, layout, Git remote, agents and model allocation, superv
 
 `research plan autopromote PLAN authorize` is a protected action: human only, approval PIN, rationale. Agents are refused, the YAML flag
 `execution.auto_promotion` alone does nothing, and any change to the verification commands or reviewer suspends the authorization.
+It may be given before `plan run` (it starts nothing; the fingerprint is checked when the run uses it).
 The supervisor's integration is recorded as `system/supervisor` naming the authorizing human; it is code-only, fast-forward-only, never
 approves scientific claims, and the manual `research promote approve|integrate` gates are unchanged. See SUPERVISOR.md section 14.

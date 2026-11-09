@@ -139,3 +139,15 @@ def test_no_link_inside_experiment_worktrees_and_the_launcher_template_is_symlin
     os.symlink(cli["bin"], tmp_path / "elsewhere")                      # a link from any directory, relative cwd
     r = subprocess.run([str(tmp_path / "elsewhere"), "approval", "status"], cwd=cli["repo"], env=env_for(cli["xdg"]), capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_opening_a_project_without_a_launcher_restores_it(proj, monkeypatch):
+    root = proj.root
+    from research import daemonlib, notify, rpc
+    monkeypatch.setattr(daemonlib, "ensure_current", lambda root: None)
+    monkeypatch.setattr(notify, "ensure_running", lambda p: None)
+    path = localbin.launcher(root)
+    os.remove(path)
+    assert localbin.status(root)["exists"] is False
+    rpc._on_open(root)
+    assert localbin.status(root)["exists"] is True

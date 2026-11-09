@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.1
+
+- **Discord setup survives rate limits.** `GET /users/@me/guilds` answering HTTP 429 no longer ends setup: `Retry-After` (header or body) is honoured, waits of 10 s or less are retried automatically (four attempts, announced as they happen), a longer wait stops with the time Discord asked for, and nothing is saved on failure. Setup also stops asking Discord for the same server list twice.
+- **`research chat doctor [--live]`** checks each chat step (token, library, server/chat, home channel, pairing, gateway) and prints the exact fix for each; `research chat status` now names the command that fixes what is missing, including how to start a gateway that is not running.
+- **Auto-promotion can be authorized before `plan run`.** `research plan autopromote PLAN authorize` (PIN) no longer needs a run: nothing starts, the authorization is bound to the verification-policy fingerprint, persisted, and kept when the run starts; a policy change in between suspends it as before.
+- **Environment check maps distributions to imports** (`PyYAML` is checked as `yaml`, also `scikit-learn`, `Pillow`, `opencv-python`, …), and understands version specifiers and markers; the HPC job-environment check uses the same mapping.
+- **The project launcher is restored automatically.** `.research/bin/research` is git-ignored and per machine, so a clone, an older project or a failed `init` had none and `research doctor` only suggested `research bin install`. Opening a project in the UI and `research supervisor start` now create it (cheap when it is current). New: `research init --template -o research-os.yaml` writes the documented bootstrap file (a copy is `examples/research-os.yaml`).
+
 ## 3.2.0
 
 - **Experiment forking with pinned code.** `research experiment fork EXP-001 --title "…" [--at verified|RUN-…|<commit>]`, and `inherits: {experiment: baseline, revision: verified}` on an experiment in the plan YAML. The supervisor waits for the parent to be verified, pins its last verified commit (`refs/research/forks/EXP-00N`, kept after the worktree is archived), and gives each child its own worktree from that commit, so siblings never see each other's edits. A fork never follows `main` (`research experiment sync` merges code in only when you ask). Promotion stays separate and optional. `plan yaml validate/diff/apply` check parents, cycles and pinned changes; runs record `forked_from`. See [docs/SUPERVISOR.md](docs/SUPERVISOR.md).
