@@ -322,7 +322,7 @@ OPTIONS: List[Option] = [
 
     _o("environment.python", "str", "environment", "Project Python", "The Python used on this machine by agents, task checks and `{python}` in check commands: a venv folder or an interpreter path (relative paths are under the project folder). Empty uses whatever `python3` is on PATH.",
        nullable=True, why="Without it, an agent's `python3` and your checks may use an interpreter that lacks your packages.", effect="Takes effect for the next agent session and check run.", affects=[".research/bin/py"]),
-    _o("environment.packages", "list", "environment", "Packages the project needs", "Importable package names that `research env check` verifies (for example numpy, matplotlib).",
+    _o("environment.packages", "list", "environment", "Packages the project needs", "Packages that `research env check` verifies, written as on PyPI (for example numpy, PyYAML, scikit-learn>=1.4); each is checked by its import name (yaml, sklearn).",
        why="Finds a missing package before an agent session does.", effect="Only used by the check."),
     _o("supervisor.poll_seconds", "int", "supervisor", "Polling interval", "How often the supervisor looks for ready tasks, finished agents and HPC jobs.",
        why="Short intervals react faster; long ones are gentler on shared filesystems.", effect="Takes effect on the daemon's next cycle.", min_=1, max_=3600, unit="seconds"),

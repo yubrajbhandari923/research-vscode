@@ -100,7 +100,7 @@ It applies when a provider is unavailable or reports a limit, tries each provide
 ## 4. Set up a project from one YAML file
 
 ```bash
-research init --template > research-os.yaml        # complete, documented defaults
+research init --template -o research-os.yaml     # complete, documented defaults (a copy: examples/research-os.yaml)
 research init --from research-os.yaml --dry-run    # validate and preview the tree; writes nothing
 research init --from research-os.yaml --apply
 research init --export                             # the current project's portable settings
