@@ -63,6 +63,19 @@ def _rs_path(p: Project, plan_id: str) -> str:
     return sdir(p, "plans", plan_id + ".json")
 
 
+def _pre_path(p: Project, plan_id: str) -> str:
+    return sdir(p, "plans", plan_id + ".preauth")     # not *.json: all_runs() lists only run states
+
+
+def _load_pre(p: Project, st: Dict[str, Any]) -> Dict[str, Any]:
+    """The authorization recorded before the plan was ever run: a stub with the shape `autopromote` expects of a run state, started nowhere."""
+    try:
+        with open(_pre_path(p, st["plan_id"]), encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"plan_id": st["plan_id"], "plan_key": st["plan_key"], "tasks": {}, "history": []}
+
+
 def load_run(p: Project, plan_id: str) -> Optional[Dict[str, Any]]:
     try:
         with open(_rs_path(p, plan_id), encoding="utf-8") as f:
@@ -154,9 +167,15 @@ def plan_run(p: Project, ref: str, start_daemon: bool = True) -> Dict[str, Any]:
             return status(p, ref)
         rs = rs or {"plan_id": st["plan_id"], "plan_key": st["plan_key"], "tasks": {}, "budgets": {"attempts": 0, "wall_seconds": 0.0},
                     "created_at": now_iso(), "approvals": {}, "history": []}
+        pre = _load_pre(p, st) if os.path.exists(_pre_path(p, st["plan_id"])) else None
+        if pre and not (rs.get("autopromote") or {}).get("authorized"):     # an authorization given before the first run carries into it
+            rs["autopromote"] = pre["autopromote"]
+            rs["history"] += pre["history"]
         rs.update(state="running", started_at=rs.get("started_at") or now_iso(), last_tick=time.time())
         rs["history"].append({"ts": now_iso(), "event": "run"})
         save_run(p, rs)
+        if pre:
+            os.remove(_pre_path(p, st["plan_id"]))
     p.event("plan", st["plan_id"], "supervisor_run", f"plan {st['plan_key']} run requested")
     out = status(p, ref)
     if start_daemon:
@@ -170,8 +189,11 @@ def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, p
     if action != "status":
         require_human(p, f"autopromote {action}")
     rs = load_run(p, st["plan_id"])
-    if not rs:
-        raise ResearchError(f"{st['plan_key']} has not been run yet", hint=f"`research plan run {st['plan_id']}`")
+    pre = rs is None      # before `plan run`: authorize/revoke/status work on a stub; nothing is started
+    if pre:
+        if action == "retry":
+            raise ResearchError(f"{st['plan_key']} has not been run yet", hint=f"`research plan run {st['plan_id']}`")
+        rs = _load_pre(p, st)
     if action == "status":
         return AP.summary(p, st, rs)
     if action == "authorize":
@@ -179,7 +201,7 @@ def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, p
         from . import approval            # prompts for the PIN BEFORE the state lock is taken
         approval.confirm(p, f"Authorize unattended code promotion for plan {st['plan_key']}", note, pin)
     with _lock(p):
-        rs = load_run(p, st["plan_id"])
+        rs = load_run(p, st["plan_id"]) or _load_pre(p, st)
         if action == "authorize":
             out = AP.authorize(p, st, rs, note)
         elif action == "revoke":
@@ -188,7 +210,10 @@ def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, p
             out = AP.retry(p, st, rs, item or "")
         else:
             raise ResearchError("action must be authorize, revoke, retry or status")
-        save_run(p, rs)
+        if pre:
+            _atomic_write(_pre_path(p, st["plan_id"]), json.dumps(rs, indent=1, sort_keys=True, default=str) + "\n")
+        else:
+            save_run(p, rs)
     p.event("plan", st["plan_id"], "autopromote_" + action, f"plan {st['plan_key']}: automatic promotion {action}" + (f" ({note})" if note else ""))
     return out
 
@@ -353,7 +378,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
             "forks": [{"experiment": e["key"], "id": st["experiments"].get(e["key"]), "inherits": e["inherits"],
                        "pinned": FK.inherited(p, st["experiments"].get(e["key"]))} for e in st["spec"].get("experiments", []) if e.get("inherits")],
             "proposals": [x for x in list_proposals(p) if x.get("plan_key") == st["plan_key"] and x["status"] == "pending"],
-            "auto_promotion": AP.summary(p, st, rs) if rs else AP.mode(p, st, {}),
+            "auto_promotion": AP.summary(p, st, rs or _load_pre(p, st)),
             "concurrency": concurrency(p, st, rs), "health": plan_health(p, st, rs), "waiting_provider": waiting_provider(rs),
             "daemon": daemon_status(p), "enforced": {"completion": bool(c["enforce_completion"])}}
 

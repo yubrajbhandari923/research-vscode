@@ -92,3 +92,19 @@ def test_rpc_ops_for_the_extension(repo, tmp_path, monkeypatch):
     with pytest.raises(Exception, match="not available from chat"):
         api.call("chat_pair", s, {"code": "X"}, surface="chat")
     assert [o for n, o in api.OPS.items() if o.mcp and n.startswith(("chat_", "telegram_"))] == [], "agents never see chat configuration"
+
+
+def test_status_and_doctor_say_what_to_do_next(env):
+    code, out = env("chat", "status")
+    assert "research chat setup telegram" in out and "research chat doctor" in out
+    code, out = env("chat", "doctor")
+    assert code == 0 and "Telegram is not set up" in out and "research chat setup discord" in out
+    env("chat", "setup", "--token", FakeTelegram and TOKEN, "--chat-id", "1")
+    env("chat", "gateway", "stop")
+    code, out = env("chat", "status")
+    assert "gateway: not running - start it with `research chat gateway start`" in out
+    code, out = env("chat", "doctor", "--live")
+    assert "Telegram accepts the token" in out and "gateway" in out
+    env("chat", "gateway", "start")
+    code, out = env("chat", "doctor")
+    assert code == 0 and "gateway is running" in out

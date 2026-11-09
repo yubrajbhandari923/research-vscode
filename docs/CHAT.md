@@ -20,7 +20,8 @@ chat gateway (ONE process per machine)  --tails every enabled project's outbox, 
 1. In Telegram, talk to **@BotFather**, create a bot, copy the token.
 2. `research chat setup` (hidden token prompt). Then open your bot and send it any message: that private chat becomes the first paired user
    (operator) and `notifications.telegram.enabled` is switched on for the project. Or use Control Center → Plans → *Chat (Telegram)*.
-3. `research chat status` shows the token/chat/gateway state and the paired people; `research chat test` sends a message; `research chat remove` deletes the credentials.
+3. `research chat status` shows the token/chat/gateway state and the paired people, with the command that fixes whatever is missing;
+   `research chat doctor` checks every step (add `--live` to ask Telegram/Discord whether the saved token still works) and prints one fix per problem; `research chat test` sends a message; `research chat remove` deletes the credentials.
 
 The old `research telegram setup|status|test|remove|poll` still works (hidden aliases). An existing Telegram setup needs no edits: the same
 `telegram.json` and `notifications.telegram.enabled` keep working; on first gateway start a private chat id becomes an operator entry.
@@ -40,7 +41,10 @@ The bot connects **outbound** to Discord; nothing listens on a public URL.
    Optional `--channel ID` makes that channel this project's alert channel and the home channel.
 4. Send the bot a **direct message**. It answers with a pairing code; type it at the setup prompt (or later: `research chat pair CODE`).
    Run `/sethome` in the channel that should receive digests and machine alerts.
-5. `research chat status`, `research chat test discord` (posts to the home channel), `research chat remove discord` (deletes the token, disables Discord for this project).
+   Discord answers HTTP 429 now and then (setup makes two requests to Discord). Research OS reads `Retry-After` and retries by itself when the wait is
+   10 seconds or less (up to four attempts, saying so as it waits). A longer wait, or a limit that does not clear, stops with the time Discord asked for;
+   nothing is saved at that point, so run the same command again afterwards.
+5. `research chat status`, `research chat doctor`, `research chat test discord` (posts to the home channel), `research chat remove discord` (deletes the token, disables Discord for this project).
 
 What you get:
 

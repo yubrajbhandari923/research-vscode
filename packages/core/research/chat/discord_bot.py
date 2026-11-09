@@ -108,16 +108,60 @@ def status(p=None) -> Dict[str, Any]:
 
 
 # ----------------------------------------------------------------------------------------------- REST (setup and `test`; urllib)
+REST_TRIES = 4          # attempts per request when Discord answers 429
+REST_MAX_WAIT = 10.0    # seconds: a longer Retry-After is reported, not slept through
+NOTICE: Callable[[str], None] = lambda msg: None      # setup commands print what the wait is for
+_sleep = time.sleep
+
+
+def _retry_after(ex: "urllib.error.HTTPError") -> float:
+    """Seconds Discord asks us to wait: the Retry-After header, else `retry_after` in the JSON body, else a short default."""
+    try:
+        return max(0.0, float(ex.headers.get("Retry-After")))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    try:
+        return max(0.0, float(json.loads(ex.read().decode() or "{}").get("retry_after")))
+    except (ValueError, TypeError, OSError, AttributeError):
+        return 2.0
+
+
+def _fmt_wait(s: float) -> str:
+    return f"{s:.0f} s" if s >= 10 else f"{s:.1f} s"
+
+
 def _rest(token: str, method: str, route: str, body: Optional[Dict[str, Any]] = None) -> Any:
+    for attempt in range(1, REST_TRIES + 1):
+        try:
+            return _rest_once(token, method, route, body)
+        except urllib.error.HTTPError as ex:
+            if ex.code != 429:
+                msg, hint = _http_error(ex.code)
+                raise ResearchError(msg, hint=hint) from None
+            wait = _retry_after(ex)
+            if wait > REST_MAX_WAIT or attempt == REST_TRIES:
+                raise ResearchError(f"Discord is rate-limiting this bot (HTTP 429 on {route}); it asks for {_fmt_wait(wait)} more"
+                                    + ("" if attempt < REST_TRIES else f" (still limited after {attempt} tries)"),
+                                    hint="Nothing was saved. Wait that long and run the command again; it is Discord's own limit, not a wrong token.") from None
+            NOTICE(f"Discord rate-limited {route}; retrying in {_fmt_wait(wait)} (attempt {attempt + 1} of {REST_TRIES})…")
+            _sleep(wait)
+        except (urllib.error.URLError, OSError, ValueError) as ex:
+            raise ResearchError(f"Discord is unreachable: {type(ex).__name__}", hint="Check the network connection (and any proxy), then run the command again.") from None
+
+
+def _http_error(code: int) -> Tuple[str, str]:
+    if code == 401:
+        return "Discord rejected the token", "Copy the token again from the Bot tab of your application (Reset Token shows a new one)."
+    if code == 403:
+        return "Discord refused the request (HTTP 403)", "The bot lacks access: re-invite it with the invite URL from `research chat setup discord`."
+    return f"Discord refused the request (HTTP {code})", "Run `research chat doctor --live` to see what Discord reports."
+
+
+def _rest_once(token: str, method: str, route: str, body: Optional[Dict[str, Any]] = None) -> Any:
     req = urllib.request.Request(REST + route, method=method, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Authorization": "Bot " + token, "Content-Type": "application/json", "User-Agent": "DiscordBot (research-os, 1)"})
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read().decode() or "null")
-    except urllib.error.HTTPError as ex:
-        raise ResearchError("Discord rejected the token" if ex.code == 401 else f"Discord refused the request (HTTP {ex.code})") from None
-    except (urllib.error.URLError, OSError, ValueError) as ex:
-        raise ResearchError(f"Discord is unreachable: {type(ex).__name__}") from None
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode() or "null")
 
 
 def inspect_token(token: str) -> Dict[str, Any]:

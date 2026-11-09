@@ -31,7 +31,9 @@ restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries
 uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"   (from a wheel or from source: see Install)
 research version
 
-# 2. Create a project (a preview; add --apply to create it)
+# 2. Create a project (a preview; add --apply to create it). For every setting with its default and a comment,
+#    start from the documented file instead: research init --template -o research-os.yaml (copy: examples/research-os.yaml), edit it, then
+#    research init --from research-os.yaml --apply
 research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude
 research init sparse-ct --layout ledger --name "Sparse CT" --goal "What you are trying to find out" --agents claude --apply
 cd sparse-ct/main && research doctor

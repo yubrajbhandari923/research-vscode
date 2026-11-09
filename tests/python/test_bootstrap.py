@@ -71,3 +71,13 @@ def test_apply_refuses_an_existing_project_and_invalid_files(tmp_path):
         BS.apply(yamlio.dump(doc(), block=True), str(root))             # never overwrites records or history
     with pytest.raises(ResearchError):
         BS.apply("schema_version: 1\nproject: [", str(tmp_path / "q"))
+
+
+def test_template_out_writes_once_and_matches_the_committed_example(tmp_path, monkeypatch):
+    from research_cli.main import main
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--template", "-o", "research-os.yaml"]) == 0
+    got = (tmp_path / "research-os.yaml").read_text()
+    assert got == BS.TEMPLATE
+    assert got == open(os.path.join(os.path.dirname(__file__), "..", "..", "examples", "research-os.yaml"), encoding="utf8").read()  # regenerate: research init --template > examples/research-os.yaml
+    assert main(["init", "--template", "-o", "research-os.yaml"]) != 0  # never overwrites

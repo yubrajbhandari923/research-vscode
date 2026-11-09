@@ -66,3 +66,21 @@ def test_wizard_plans_and_creates_the_environment(tmp_path, monkeypatch):
         assert EC.resolve_python(p) == str(root / ".venv" / "bin" / "python")
     bad = IP.plan(str(tmp_path / "other"), {"name": "p", "python": {"mode": "existing", "path": "/no/such/python"}})
     assert not bad["ok"] and any("Existing Python" in x for x in bad["problems"])
+
+
+@pytest.mark.parametrize("spec,mod", [("PyYAML", "yaml"), ("pyyaml>=6.0", "yaml"), ("PyYAML[extra]==6.0.1 ; python_version >= '3.8'", "yaml"),
+                                      ("scikit-learn~=1.4", "sklearn"), ("Pillow", "PIL"), ("opencv-python-headless", "cv2"),
+                                      ("numpy", "numpy"), ("torch>=2", "torch"), ("my-own-pkg", "my_own_pkg"), ("ruamel.yaml", "ruamel.yaml")])
+def test_import_name_maps_the_distribution_to_its_module(spec, mod):
+    assert EC.import_name(spec) == mod
+
+
+def test_check_imports_pyyaml_as_yaml(proj, venv):
+    site = subprocess.run([str(venv / "bin" / "python"), "-c", "import sysconfig;print(sysconfig.get_paths()['purelib'])"], capture_output=True, text=True).stdout.strip()
+    open(os.path.join(site, "yaml.py"), "w").close()      # what a PyYAML install provides
+    proj.config["environment"] = {"python": str(venv), "packages": ["PyYAML>=6"]}
+    proj.save_config()
+    r = EC.check(proj)
+    assert r["packages"] == {"PyYAML>=6": True} and r["ok"] and not r["problems"]
+    r = EC.check(proj, ["PyYAML>=6", "nonexistent-dist-xyz"])
+    assert r["packages"]["nonexistent-dist-xyz"] is False and "nonexistent-dist-xyz" in r["problems"][0]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-panel"
-version = "3.2.0"
+version = "3.2.1"
 description = "ResearchOS: a CLI, terminal UI and supervisor for autonomous research with coding agents (Claude Code, Codex, Antigravity, opencode): plans, experiments, approvals, results."
 readme = "README.md"
 requires-python = ">=3.8"

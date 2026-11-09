@@ -332,3 +332,61 @@ def test_restart_mid_promotion_is_idempotent(ap, repo):
         assert head(repo, "main") == before
     finally:
         p2.close()
+
+
+# ------------------------------------------------------------------------------------------------ authorization before `plan run`
+def preauthorize(p, exps=CHAIN[:2]):
+    PS.apply(p, plan(exps))
+    SV.autopromote(p, "ap", "authorize", note="before the run")
+    return PS.load_state(p, "ap")["plan_id"]
+
+
+def test_authorize_before_run_starts_nothing_and_carries_into_the_run(ap, repo):
+    main0 = head(repo, "main")
+    pid = preauthorize(ap)
+    # recorded and visible, but no run exists: no state file, no attempts, no worktrees, no executions, main untouched
+    assert SV.load_run(ap, pid) is None and SV.all_runs(ap) == [] and W.list_workspaces(ap) == []
+    assert not [t for t in ap.list("task") if t["status"] in ("in_progress", "done")]
+    assert head(repo, "main") == main0
+    st = SV.status(ap, "ap")
+    assert st["auto_promotion"]["mode"] == "active" and st["auto_promotion"]["authorization"]["note"] == "before the run"
+    auth = st["auto_promotion"]["authorization"]
+    assert os.path.exists(SV._pre_path(ap, pid))
+    # starting the run keeps exactly that authorization (same fingerprint, same author and time) and the stub is gone
+    SV.plan_run(ap, "ap", start_daemon=False)
+    assert SV.load_run(ap, pid)["autopromote"]["authorized"] == auth and not os.path.exists(SV._pre_path(ap, pid))
+    assert [h["event"] for h in SV.load_run(ap, pid)["history"]][-2:] == ["autopromote_authorized", "run"]
+    run_to(ap, pid, lambda rs: rs["state"] == "completed")
+    assert set(item_status(ap, pid)) == {"integrated"}
+    assert open(os.path.join(repo, "lib2.py")).read().strip() == "V=2"
+
+
+def test_policy_change_after_a_pre_run_authorization_fails_closed(ap, repo):
+    main0 = head(repo, "main")
+    pid = preauthorize(ap, CHAIN[:1])
+    ap.config["auto_promotion"] = {**ap.config["auto_promotion"], "numerical_command": "true && true"}      # the verification policy changed
+    ap.save_config()
+    assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "suspended"
+    SV.plan_run(ap, "ap", start_daemon=False)
+    assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "suspended"
+    run_to(ap, pid, lambda rs: rs["state"] == "completed")
+    assert items(ap, pid) == [] and head(repo, "main") == main0, "a stale authorization promotes nothing"
+    SV.autopromote(ap, "ap", "authorize", note="re-authorized after the change")
+    assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "active"
+
+
+def test_pre_run_authorization_rules(ap, repo):
+    PS.apply(ap, plan(CHAIN[:1], auto=False, key="plain"))
+    with pytest.raises(ResearchError, match="does not declare"):
+        SV.autopromote(ap, "plain", "authorize", note="x")                       # still only for plans that declare it
+    pid = preauthorize(ap, CHAIN[:1])
+    with pytest.raises(ResearchError, match="has not been run yet"):
+        SV.autopromote(ap, "ap", "retry", item="AP-001")
+    human, ap.author = ap.author, AGENT
+    with pytest.raises(PolicyBlocked):
+        SV.autopromote(ap, "ap", "revoke")                                       # agents cannot touch it, before or after a run
+    ap.author = human
+    SV.autopromote(ap, "ap", "revoke")
+    assert not os.path.exists(SV._pre_path(ap, pid)) or SV.status(ap, "ap")["auto_promotion"]["mode"] == "manual"
+    SV.plan_run(ap, "ap", start_daemon=False)
+    assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "manual" and not SV.load_run(ap, pid)["autopromote"]["authorized"]

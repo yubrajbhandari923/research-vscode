@@ -8,6 +8,7 @@ into an environment it did not create unless you ask (`research env install`).
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -63,6 +64,20 @@ def expand(p: Project, command: str) -> str:
     return command.replace("{python}", shlex.quote(resolve_python(p) or shutil.which("python3") or sys.executable))
 
 
+# Distributions whose import name is not their name. Keys are normalized (lowercase, `-`/`_`/`.` -> `-`). Unlisted names import as themselves.
+IMPORT_NAMES = {"pyyaml": "yaml", "scikit-learn": "sklearn", "scikit-image": "skimage", "opencv-python": "cv2", "opencv-python-headless": "cv2",
+                "opencv-contrib-python": "cv2", "pillow": "PIL", "beautifulsoup4": "bs4", "python-dateutil": "dateutil", "protobuf": "google.protobuf",
+                "attrs": "attr", "pyserial": "serial", "python-dotenv": "dotenv", "pymupdf": "fitz", "pytorch-lightning": "pytorch_lightning",
+                "msgpack-python": "msgpack", "python-igraph": "igraph", "pyzmq": "zmq", "pycryptodome": "Crypto", "biopython": "Bio",
+                "umap-learn": "umap", "ruamel-yaml": "ruamel.yaml", "tensorflow-cpu": "tensorflow", "faiss-cpu": "faiss", "faiss-gpu": "faiss"}
+
+
+def import_name(spec: str) -> str:
+    """`PyYAML>=6` -> `yaml`: a requirement string (extras, version specifiers, markers) to the module `import` needs."""
+    name = re.split(r"[\[\s;<>=!~@(]", spec.strip(), maxsplit=1)[0]
+    return IMPORT_NAMES.get(re.sub(r"[-_.]+", "-", name).lower()) or name.replace("-", "_")
+
+
 def check(p: Project, packages: Optional[List[str]] = None) -> Dict[str, Any]:
     py = resolve_python(p)
     cfg = p.config.get("environment") or {}
@@ -75,7 +90,7 @@ def check(p: Project, packages: Optional[List[str]] = None) -> Dict[str, Any]:
     r = subprocess.run([py, "-c", "import sys;print(sys.version.split()[0])"], capture_output=True, text=True, timeout=30)
     out["version"] = r.stdout.strip() or None
     for pk in pkgs:
-        mod = pk.split("[")[0].replace("-", "_").split("==")[0].split(">=")[0]
+        mod = import_name(pk)
         ok = subprocess.run([py, "-c", f"import {mod}"], capture_output=True, text=True, timeout=60).returncode == 0
         out["packages"][pk] = ok
         if not ok:

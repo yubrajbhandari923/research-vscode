@@ -25,18 +25,34 @@ def _human_only(p, what: str) -> None:
 
 
 def _status_lines(d):
-    t = d["platforms"]["telegram"]
-    g = d["gateway"]
-    lines = [("telegram: " + ("token saved" if t["token_set"] else "no token") + ", " + ("chat linked" if t["chat_id_set"] else "no chat linked")
-              + f", {'enabled' if t['enabled'] else 'disabled'} for this project; stored at {t['stored_at']}")]
-    lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in t["users"]] or ["  no paired users (message the bot to get a pairing code)"]
-    lines.append("gateway: " + (f"running (pid {g['pid']}, {', '.join(g['platforms']) or 'no platform'})" + (" - restart needed (older version)" if g["stale"] else "") if g["running"] else "not running"))
-    dc = d["platforms"]["discord"]
-    lines.append("discord: " + ("token saved" if dc["token_set"] else "no token") + (", server linked" if dc["guild_set"] else ", no server")
-                 + (", home channel set" if dc["home_channel_set"] else ", no home channel (use /sethome)") + f", {'enabled' if dc['enabled'] else 'disabled'} for this project"
-                 + ("" if dc["library"] else f"; discord.py missing: {dc['install']}"))
-    lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in dc["users"]]
+    t, dc, g = d["platforms"]["telegram"], d["platforms"]["discord"], d["gateway"]
+    lines = [("telegram: " + ("token saved" if t["token_set"] else "no token (set up with `research chat setup telegram`)") + ("" if not t["token_set"] else
+              ", " + ("chat linked" if t["chat_id_set"] else "no chat linked (message the bot, then research chat setup telegram)")
+              + f", {'enabled' if t['enabled'] else 'disabled'} for this project; stored at {t['stored_at']}"))]
+    lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in t["users"]] or ["  no paired users (message the bot to get a pairing code, then research chat pair CODE)"]
+    lines.append("gateway: " + (f"running (pid {g['pid']}, {', '.join(g['platforms']) or 'no platform'})" + (" - older than the installed version: research chat gateway restart" if g["stale"] else "")
+                               if g["running"] else "not running" + (" - start it with `research chat gateway start` (also starts with `research supervisor start`); "
+                                                                      "`research chat gateway run` shows errors in the foreground" if t["token_set"] or dc["token_set"] else "")))
+    lines.append("discord: " + ("token saved" if dc["token_set"] else "no token (set up with `research chat setup discord`)") + ("" if not dc["token_set"] else
+                 (", server linked" if dc["guild_set"] else ", no server (open the invite URL from `research chat setup discord`)")
+                 + (", home channel set" if dc["home_channel_set"] else ", no home channel (type /sethome in the alert channel)") + f", {'enabled' if dc['enabled'] else 'disabled'} for this project"
+                 + ("" if dc["library"] else f"; discord.py missing: {dc['install']}")))
+    if dc["token_set"]:
+        lines += [f"  {u['user_id']}  {u['role']}  {u.get('label') or ''}" for u in dc["users"]] or ["  no paired users (DM the bot to get a pairing code, then research chat pair CODE)"]
+    lines.append(dim("something wrong? `research chat doctor` checks each step and prints the fix; add --live to test the saved tokens"))
     return lines
+
+
+def _doctor_lines(d):
+    mark = {"ok": green("✓ "), "info": dim("· "), "warn": yellow("! "), "error": yellow("✗ ")}
+    out = []
+    for c in d["checks"]:
+        out.append(mark[c["level"]] + c["message"])
+        if c["fix"]:
+            out.append(dim("    → " + c["fix"]))
+    n = d["counts"]
+    out.append(f"{n['error']} error(s), {n['warn']} warning(s)" + ("" if d["live"] else dim("   (offline; --live also tests the saved tokens)")))
+    return out
 
 
 def _setup_discord(a, p) -> int:
@@ -47,6 +63,7 @@ def _setup_discord(a, p) -> int:
     token = a.token or AP.read_pin("Bot token (not shown): ")
     if not token:
         raise ResearchError("No token entered (a terminal is needed, or pass --token)")
+    discord_bot.NOTICE = lambda m: print(yellow("! ") + m)       # say why we are waiting when Discord rate-limits (429)
     info = manage.inspect_discord(token)                        # GET /users/@me, then /users/@me/guilds
     print(green("✓ ") + f"token is valid for bot {info['name']}\nInvite URL (scopes bot + applications.commands, minimal permissions):\n  {info['invite_url']}")
     gs, guild = info["guilds"], a.guild
@@ -58,7 +75,7 @@ def _setup_discord(a, p) -> int:
         for i, g in enumerate(gs, 1):
             print(f"  {i}. {g['name']} ({g['id']})")
         guild = gs[int(input("Which server? number: ") or 0) - 1]["id"] if tty else None
-    r = manage.setup_discord(p, token, guild, channel_id=a.channel)
+    r = manage.setup_discord(p, token, guild, channel_id=a.channel, info={**info, "guilds": gs})
     print(green("✓ ") + f"Discord connected to {r['guild']}; token stored only on this machine (0600)")
     print(green("✓ ") + "chat gateway " + ("running" if r["gateway"].get("running") or r["gateway"].get("action") in ("none", "start") else "will start with the supervisor"))
     print("Now send the bot a direct message; it replies with a pairing code. Run /sethome in the channel that should receive alerts.")
@@ -95,6 +112,10 @@ def cmd_chat(a, p) -> int:
     act, args = a.action, a.args
     if act == "status":
         return _emit(a, manage.status(p), _status_lines)
+    if act == "doctor":
+        r = manage.doctor(p, live=a.live)
+        _emit(a, r, _doctor_lines)
+        return 1 if r["counts"]["error"] else 0
     if act in ("setup", "pair", "test", "remove", "gateway", "unpair"):
         _human_only(p, "configure chat")
     if act == "setup":
@@ -142,16 +163,17 @@ cmd_telegram = mut(cmd_telegram)
 
 
 def attach(sub, add, group) -> None:
-    x = add(sub, "chat", cmd_chat, "chat gateway (opt-in): setup [telegram|discord] | status | pair CODE | unpair PLATFORM USER | test [PLATFORM] | remove [PLATFORM] | gateway start|stop|restart|status|run")
-    x.add_argument("action", choices=["setup", "status", "pair", "unpair", "test", "remove", "gateway"])
+    x = add(sub, "chat", cmd_chat, "chat gateway (opt-in): setup [telegram|discord] | status | doctor [--live] | pair CODE | unpair PLATFORM USER | test [PLATFORM] | remove [PLATFORM] | gateway start|stop|restart|status|run")
+    x.add_argument("action", choices=["setup", "status", "doctor", "pair", "unpair", "test", "remove", "gateway"])
     x.add_argument("args", nargs="*", help="setup: the platform · pair: the code · gateway: start|stop|restart|status|run")
     x.add_argument("--token", help="setup: the bot token (prefer the hidden prompt; arguments are visible in process lists)")
     x.add_argument("--chat-id", dest="chat_id", help="setup: the chat id (default: the first chat that messages the bot)")
     x.add_argument("--role", choices=["viewer", "operator", "approver"], help="pair: the role (default: operator for the first user, viewer after)")
+    x.add_argument("--live", action="store_true", help="doctor: also ask Telegram/Discord whether the saved tokens still work")
     x.add_argument("--guild", help="setup discord: the server id (default: the one the bot is in)")
     x.add_argument("--channel", help="setup discord: the channel id for this project's alerts (also the home channel)")
     x = add(sub, "telegram", cmd_telegram, None)
     x.add_argument("action", choices=["setup", "status", "test", "remove", "poll"])
     x.add_argument("--token")
     x.add_argument("--chat-id", dest="chat_id")
-    x.set_defaults(role=None, args=[], guild=None, channel=None)
+    x.set_defaults(role=None, args=[], guild=None, channel=None, live=False)

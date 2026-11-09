@@ -1,0 +1,82 @@
+# Research OS project bootstrap. Preview:  research init --from research-os.yaml --dry-run
+#                                Apply:    research init --from research-os.yaml --apply
+# Nothing here is a secret. The approval PIN is never part of this file: set it with `research approval set-pin`.
+schema_version: 1
+
+project:
+  name: my-project              # required
+  goal: ""                      # one sentence: what are you trying to find out?
+  context: ""                   # optional background written into README.md
+
+layout:                         # three sibling folders (relative to the folder you initialize)
+  main_dir: main                # your code; GitHub's root
+  ledger_dir: ledger            # research records (branch research/ledger)
+  experiments_dir: experiments  # one git worktree per experiment
+
+git:
+  remote_url: null              # https://..., git@... or ssh://...; added as `origin`, never pushed
+
+agents:
+  enabled: [claude]             # any of: claude, codex, agy, opencode
+  default: claude
+  strategy: balanced_first      # balanced_first | deep_first | fast_max | balanced_heavy (model allocation; levels come from the default agent's level pack)
+  models: {}                    # optional per-provider model, e.g. {claude: claude-sonnet-5-5}
+  handoff:                      # continue a task with another provider
+    enabled: false              # opt-in automatic fallback; the "Continue with another agent" action always works
+    fallback_order: [claude, codex, agy, opencode]
+    on_provider_unavailable: pause     # pause | try_next
+    on_unknown_execution_state: pause  # always pause
+
+supervisor:                     # limits and retries
+  max_parallel_agents: 1
+  max_attempts_per_task: 3
+  max_total_attempts: 20
+  max_wall_minutes: 480
+  attempt_timeout_minutes: 90
+  on_failure: diagnose_and_repair      # diagnose_and_repair | pause | stop
+  auto_apply_operational: true         # can only tighten governance.tasks, never loosen it
+  max_auto_tasks: 5
+
+governance:                     # agents propose, you approve
+  experiments:
+    agent_creation: propose_only       # propose_only | human_only
+  tasks:
+    agent_creation: bounded_auto       # bounded_auto | propose_only | human_only
+    allowed_auto_types: [bugfix, diagnostic, verification]
+    max_auto_per_experiment: 3
+  scientific_changes:
+    require_human_approval: true
+  approval:
+    require_pin: true                  # asks for your PIN once you set one
+    require_rationale: true
+    record_rejections: true
+    confirm_human_experiment_creation: false   # true: ask for the PIN when YOU create an experiment
+
+verification:
+  independent_review: true
+
+tools:
+  packs: []                     # extra skill packs, e.g. [scientific-python, machine-learning]; Core Research is always on
+  link_skills: true
+  starter_hooks: true           # nine cheap, non-blocking hooks, approved for you
+
+python:
+  mode: none                    # none | create (uv) | existing
+  path: null                    # create: venv folder (default .venv); existing: venv or interpreter (machine-specific)
+  packages: []
+
+hpc:                          # references only; no connection is made while initializing
+  enabled: false
+  cluster: null               # name of a cluster in your machine config (~/.config/research-os/config.yaml)
+  # or describe one here (machine-specific):  ssh_host, workspace_root, partition
+
+guide:
+  enabled: true                 # the Scientist Guide (Quarto book)
+  publish: true                 # GitHub Actions workflow that publishes it on push to main
+  trigger: result               # manual | result | checkpoint
+  max_words: 150
+  max_sections: 3
+  max_figures: 1
+
+workspace:
+  create: true                  # write <name>.code-workspace

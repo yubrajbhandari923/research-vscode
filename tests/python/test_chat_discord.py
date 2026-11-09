@@ -3,6 +3,7 @@ select menu, authenticator modal, role checks, chunking, attachments, rate limit
 API surface when the extra is installed."""
 import asyncio
 import inspect
+import json
 import os
 import stat
 import sys
@@ -473,3 +474,132 @@ def test_real_transport_uses_only_discord_py_attributes_that_exist():
         return t._view(D.Parts(buttons=[("a", "a:x", "primary")], options=[("o", "v")])), t._kw(D.Parts(embed={"description": "x", "color": 1, "fields": []}), edit=True)
     v, kw = asyncio.run(build())
     assert len(v.children) == 2 and kw["view"] is None and len(kw["embeds"]) == 1
+
+
+# ----------------------------------------------------------------------------------------------- HTTP 429 during setup, and `chat doctor`
+class _Resp:
+    def __init__(self, body): self._b = json.dumps(body).encode()
+    def read(self): return self._b
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def _http_429(headers=None, body=None):
+    import email.message
+    import io
+    import urllib.error
+    h = email.message.Message()
+    for k, v in (headers or {}).items():
+        h[k] = v
+    return urllib.error.HTTPError("https://discord.com/api/v10/x", 429, "Too Many Requests", h, io.BytesIO(json.dumps(body or {}).encode()))
+
+
+@pytest.fixture
+def wire(monkeypatch):
+    """Scripted Discord REST: a list of outcomes per route (an exception is raised, anything else returned); sleeps are recorded, not slept."""
+    script, sleeps, notices = {}, [], []
+
+    def urlopen(req, timeout=0):
+        route = req.full_url.split("/api/v10")[1]
+        out = script[route].pop(0) if len(script[route]) > 1 else script[route][0]
+        if isinstance(out, Exception):
+            raise out
+        return _Resp(out)
+    monkeypatch.setattr(D.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(D, "_sleep", sleeps.append)
+    monkeypatch.setattr(D, "NOTICE", notices.append)
+    monkeypatch.setattr(D, "available", lambda: True)
+    monkeypatch.setattr(manage.gateway, "ensure_running", lambda p=None: {"action": "none"})
+    from research import notify
+    monkeypatch.setattr(notify, "ensure_running", lambda p: {"action": "none"})
+    script["sleeps"], script["notices"] = sleeps, notices
+    return script
+
+
+ME = {"id": "42", "username": "ResearchBot", "bot": True}
+
+
+def test_429_with_retry_after_header_waits_then_succeeds(wire):
+    wire["/users/@me/guilds"] = [_http_429({"Retry-After": "1.5"}), [{"id": "G1", "name": "Lab"}]]
+    assert D.guilds("tok") == [{"id": "G1", "name": "Lab"}]
+    assert wire["sleeps"] == [1.5] and "retrying in 1.5 s" in wire["notices"][0] and "/users/@me/guilds" in wire["notices"][0]
+
+
+def test_429_reads_retry_after_from_the_json_body_and_retries_more_than_once(wire):
+    wire["/users/@me/guilds"] = [_http_429(body={"retry_after": 0.5}), _http_429(body={"retry_after": 2}), []]
+    assert D.guilds("tok") == [] and wire["sleeps"] == [0.5, 2.0]
+
+
+def test_429_asking_for_a_long_wait_fails_clearly_without_sleeping(wire):
+    wire["/users/@me/guilds"] = [_http_429({"Retry-After": "90"})]
+    with pytest.raises(ResearchError, match=r"rate-limiting this bot.*90 s") as ei:
+        D.guilds("tok")
+    assert "Nothing was saved" in ei.value.hint and wire["sleeps"] == []
+
+
+def test_429_is_bounded_when_discord_keeps_limiting(wire):
+    wire["/users/@me/guilds"] = [_http_429({"Retry-After": "1"})]
+    with pytest.raises(ResearchError, match=r"still limited after 4 tries"):
+        D.guilds("tok")
+    assert wire["sleeps"] == [1.0, 1.0, 1.0]
+
+
+def test_setup_recovers_from_429_and_stores_only_complete_credentials(tmp_path, wire):
+    root = tmp_path / "proj"
+    root.mkdir()
+    Project.init(str(root), name="proj", goal="g").close()
+    wire["/users/@me"] = [ME]
+    wire["/users/@me/guilds"] = [_http_429({"Retry-After": "2"}), [{"id": "G1", "name": "Lab"}]]
+    with Project(str(root)) as p:
+        r = manage.setup_discord(p, "good-token")
+        assert r["guild"] == "Lab" and D.credentials()["token"] == "good-token" and D.credentials()["guild_id"] == "G1"
+        assert wire["sleeps"] == [2.0]
+        manage.remove_discord(p)
+    # a limit that does not clear leaves nothing behind: no token, no half-linked server, Discord stays disabled
+    wire["/users/@me/guilds"] = [_http_429({"Retry-After": "120"})]
+    with Project(str(root)) as p:
+        with pytest.raises(ResearchError, match="rate-limiting"):
+            manage.setup_discord(p, "good-token")
+        assert not D.credentials() and not os.path.exists(D.path()) and D.status(p)["enabled"] is not True
+
+
+def test_setup_with_an_inspection_makes_no_second_round_trip(tmp_path, wire):
+    root = tmp_path / "proj"
+    root.mkdir()
+    Project.init(str(root), name="proj", goal="g").close()
+    wire["/users/@me"] = [ME]
+    wire["/users/@me/guilds"] = [[{"id": "G1", "name": "Lab"}]]
+    calls = []
+    real = D._rest_once
+    D._rest_once = lambda *a, **k: (calls.append(a[2]), real(*a, **k))[1]
+    try:
+        with Project(str(root)) as p:
+            info = manage.inspect_discord("good-token")
+            manage.setup_discord(p, "good-token", info=info)
+    finally:
+        D._rest_once = real
+    assert calls.count("/users/@me/guilds") == 1
+
+
+def test_chat_doctor_names_each_problem_and_its_fix(tmp_path, wire, monkeypatch):
+    root = tmp_path / "proj"
+    root.mkdir()
+    Project.init(str(root), name="proj", goal="g").close()
+    monkeypatch.setattr(manage.gateway, "status", lambda: {"running": False, "pid": None, "platforms": [], "stale": False})
+    with Project(str(root)) as p:
+        d = manage.doctor(p)
+        assert d["ok"] and {c["id"] for c in d["checks"]} >= {"telegram", "discord", "gateway"} and d["counts"]["error"] == 0
+        D.save(token="t", application_id="42")                     # a half-finished Discord setup
+        d = {c["id"]: c for c in manage.doctor(p)["checks"]}
+        assert d["discord.guild"]["level"] == "error" and "research chat setup discord" in d["discord.guild"]["fix"]
+        assert d["gateway"]["level"] == "error" and "research chat gateway start" in d["gateway"]["fix"]
+        assert d["discord.home"]["level"] == "warn" and "/sethome" in d["discord.home"]["fix"]
+        # --live reports Discord's own answer, including a rate limit, and the offline run never touches the network
+        wire["/users/@me"] = [_http_429({"Retry-After": "60"})]
+        live = {c["id"]: c for c in manage.doctor(p, live=True)["checks"]}
+        assert live["discord.live"]["level"] == "error" and "rate-limiting" in live["discord.live"]["message"] and "Wait that long" in live["discord.live"]["message"]
+        wire["/users/@me"] = [ME]
+        wire["/users/@me/guilds"] = [[{"id": "OTHER", "name": "Elsewhere"}]]
+        D.save(guild_id="G1")
+        live = {c["id"]: c for c in manage.doctor(p, live=True)["checks"]}
+        assert live["discord.live"]["level"] == "ok" and live["discord.member"]["level"] == "error" and "oauth2/authorize" in live["discord.member"]["fix"]

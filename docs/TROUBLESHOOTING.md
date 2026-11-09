@@ -49,7 +49,7 @@ Start with `research doctor`. It is read-only, checks the project, agents, git w
 
 | Symptom | Cause and fix |
 |---|---|
-| Nothing arrives on Telegram or Discord | `research chat status` shows the token, paired users and whether the gateway runs. Then `research chat gateway restart` and read `~/.config/research-os/gateway/gateway.log` |
+| Nothing arrives on Telegram or Discord | `research chat doctor` names each problem with its fix (`--live` tests the tokens). `research chat status` shows the token, paired users and whether the gateway runs. Then `research chat gateway restart` and read `~/.config/research-os/gateway/gateway.log` |
 | The bot ignores you | Only paired people are obeyed. Message the bot to get a code and pair at your computer with `research chat pair CODE`. `/whoami` shows your role |
 | "Several projects use this bot" | Choose one with `/project use NAME` |
 | Chat stopped after moving to another machine | The gateway runs where the project lives. Each machine needs its own gateway and bot token |

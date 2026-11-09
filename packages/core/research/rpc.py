@@ -34,6 +34,8 @@ def _on_open(root: str) -> None:
         from .store import Project
         machine.remember(root)
         if os.path.isdir(os.path.join(root, ".research")):
+            from . import localbin
+            localbin.install(root)    # a clone, an older project or a failed init has no launcher; cheap when current
             with Project(root, sync=False) as p:
                 notify.ensure_running(p)
             daemonlib.ensure_current(root)

@@ -254,7 +254,13 @@ def cmd_init_from(a) -> int:
 def cmd_init(a) -> int:
     if a.template:
         from research import bootstrap as BS
-        print(BS.TEMPLATE, end="")
+        if a.out:
+            if os.path.exists(a.out):
+                raise ResearchError(f"{a.out} already exists; remove it or choose another name")
+            open(a.out, "w", encoding="utf8").write(BS.TEMPLATE)
+            print(green("✓ ") + f"wrote {a.out}; edit it, then: research init --from {a.out} --dry-run")
+        else:
+            print(BS.TEMPLATE, end="")
         return 0
     if a.export:
         from research import bootstrap as BS
@@ -516,6 +522,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("--apply", action="store_true", help="with --from: perform the setup")
     x.add_argument("--dry-run", action="store_true", help="with --from: preview only (the default)")
     x.add_argument("--template", action="store_true", help="print a complete documented bootstrap file")
+    x.add_argument("-o", "--out", metavar="FILE", help="with --template: write the file instead of printing it (never overwrites)")
     x.add_argument("--export", action="store_true", help="print this project's portable settings as a bootstrap file")
     x.add_argument("path", nargs="?")
     x.add_argument("--name")
