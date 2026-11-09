@@ -188,6 +188,7 @@ def test_decisions_tab_lists_options_and_badges(proj):
         assert "What now?" in d and "Retry with a hint" in d and "one more attempt" in d and "needs your PIN" in d
         assert app.query_one("#decisions").row_count == 1 and "(1)" in str(app.query_one("#tabs").get_tab("t5").label)
         await pilot.press("question_mark")
+        await pilot.press("right", "right", "right", "right")                 # the guide opens at "Start here"; the keys are its fifth section
         assert "Decisions: pick that option" in "".join(str(w.render()) for w in app.screen.query("Static"))
     go(app, then)
     assert D.load(p, did)["status"] == "open"
