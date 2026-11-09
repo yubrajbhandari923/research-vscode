@@ -14,20 +14,19 @@ from textual.theme import Theme
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Label, OptionList, Static
 
-TABS = ["Overview", "Runs", "Findings", "Plans & Approvals", "Decisions", "Records", "Doctor", "Inbox"]
+TABS = ["Home", "Runs", "Findings", "Plans & approvals", "Decisions", "Experiments", "System", "Inbox", "Worktrees", "Agents", "Guide & site", "Settings"]   # in tab-id order t1..t12
 from .helptext import KEYS      # noqa: E402  (one list for the Help screen and the docs)
-GLYPHS = {"letters": {
-    "R": ["████ ", "█   █", "████ ", "█  █ ", "█   █"], "E": ["█████", "█    ", "████ ", "█    ", "█████"],
-    "S": [" ████", "█    ", " ███ ", "    █", "████ "], "A": [" ███ ", "█   █", "█████", "█   █", "█   █"],
-    "C": [" ████", "█    ", "█    ", "█    ", " ████"], "H": ["█   █", "█   █", "█████", "█   █", "█   █"],
-    "O": [" ███ ", "█   █", "█   █", "█   █", " ███ "]}}
-BANNER = [" ".join(GLYPHS["letters"][c][i] for c in "RESEARCHOS") for i in range(5)]  # 59 columns
-GRADIENT = [(0, 215, 255), (60, 120, 255), (200, 80, 255)]  # cyan -> blue -> magenta
-STATUS = {"blue": "running queued submitted created active investigating verify",
-          "green": "pass passed ok succeeded completed done supported approved applied healthy answered",
-          "red": "fail failed error refuted rejected contradicted",
-          "dark_orange": "pending warn proposed needs_review needs_work blocked revision_requested ready open preliminary",
-          "grey62": "cancelled archived superseded abandoned expired todo reversed unknown"}   # every core status must appear (test_tui_badges)
+# Scientific Midnight: teal = brand and verified evidence, violet = agents and automation, amber = needs a decision, coral = failed or blocked.
+MIDNIGHT, SLATE, TEAL, VIOLET, AMBER, CORAL, CLOUD, MUTED = "#0D1626", "#172439", "#39D5C4", "#958BFF", "#F1B85B", "#F07880", "#EAF0F7", "#94A5BB"
+# The mark: an R whose leg is the handle of a lens (violet), drawn in half blocks. Three rows, eight columns.
+MARK = ["█▀▀▄", "█▀█▀", "█ ▀▄"]
+BANNER = MARK      # kept for callers that size things by the header
+MARK_STYLE = [(TEAL,) * 4, (TEAL, TEAL, TEAL, VIOLET), (TEAL, TEAL, VIOLET, VIOLET)]
+STATUS = {VIOLET: "running queued submitted created active investigating verify",
+          TEAL: "pass passed ok succeeded completed done supported approved applied healthy answered",
+          CORAL: "fail failed error refuted rejected contradicted",
+          AMBER: "pending warn proposed needs_review needs_work blocked revision_requested ready open preliminary",
+          MUTED: "cancelled archived superseded abandoned expired todo reversed unknown"}   # every core status must appear (test_tui_badges)
 
 
 def plain() -> bool:
@@ -37,18 +36,35 @@ def plain() -> bool:
 def badge(status: Any) -> Text:
     s = str(status or "")
     col = next((c for c, names in STATUS.items() if s in names.split()), None)
-    return Text(s) if plain() or not col else Text(f"● {s}", style=f"bold {col}")
+    return Text(s) if plain() or not col else Text(f"● {s}", style=col)
 
 
-def gradient(text: str) -> Text:
-    out = Text(no_wrap=True)
-    n = max(len(text) - 1, 1)
-    for i, ch in enumerate(text):
-        x = i / n * (len(GRADIENT) - 1)
-        lo = min(int(x), len(GRADIENT) - 2)
-        c = [round(GRADIENT[lo][j] + (GRADIENT[lo + 1][j] - GRADIENT[lo][j]) * (x - lo)) for j in range(3)]
-        out.append(ch, style="" if plain() else f"bold rgb({c[0]},{c[1]},{c[2]})")
-    return out
+def mark_rows() -> list:
+    rows = []
+    for r, row in enumerate(MARK):
+        t = Text(no_wrap=True)
+        for ch, col in zip(row, MARK_STYLE[r]):
+            t.append(ch, style="" if plain() else col)
+        rows.append(t)
+    return rows
+
+
+def wordmark() -> Text:
+    """`research` in cloud, `-os` in teal, like the logo."""
+    return Text.assemble(("research", "bold"), ("-os", "bold" if plain() else f"bold {TEAL}"))
+
+
+WRAP = [54]       # characters available to a detail pane; the app updates it on resize
+
+
+def kv(t: Text, k: str, v: Any, key_w: int = 13) -> None:
+    """A label and a value on one line; a long value wraps under itself, not under the label."""
+    import textwrap
+    s = "—" if v in (None, "") else str(v)
+    lines = textwrap.wrap(s, width=max(18, WRAP[0] - key_w), break_long_words=True) or [""]
+    t.append(k.ljust(key_w), style="" if plain() else MUTED).append(lines[0] + "\n")
+    for ln in lines[1:]:
+        t.append(" " * key_w + ln + "\n")
 
 
 def git_branch(root: str) -> str:
@@ -236,7 +252,11 @@ def tail(path: Optional[str], n: int = 40) -> str:
         return ""
 
 
-DARK = Theme(name="researchos", primary="#3c78ff", secondary="#c850ff", accent="#00d7ff", warning="#ffaf00", error="#ff5f5f",
-             success="#5fd787", foreground="#e4e4ef", background="#10121c", surface="#171a28", panel="#1e2236", dark=True)
-LIGHT = Theme(name="researchos-light", primary="#2457d6", secondary="#9b30d0", accent="#0086b3", warning="#c77700", error="#c62828",
-              success="#2e7d32", foreground="#1c1e2a", background="#f6f7fb", surface="#ffffff", panel="#e8ebf5", dark=False)
+DARK = Theme(name="researchos", primary=TEAL, secondary=VIOLET, accent=TEAL, warning=AMBER, error=CORAL, success=TEAL, foreground=CLOUD, background=MIDNIGHT,
+             surface=SLATE, panel="#1E2E47", dark=True,
+             variables={"block-cursor-foreground": MIDNIGHT, "block-cursor-background": TEAL, "footer-key-foreground": TEAL, "footer-background": MIDNIGHT,
+                        "input-selection-background": "#39D5C455", "border": "#2B3E5C", "border-blurred": "#22324D", "text-muted": MUTED})
+LIGHT = Theme(name="researchos-light", primary="#12857A", secondary="#5B4FD6", accent="#12857A", warning="#A86B00", error="#C23B48", success="#12857A", foreground="#0D1626",
+              background="#F6F8FB", surface="#FFFFFF", panel="#E8EEF6", dark=False,
+              variables={"block-cursor-foreground": "#FFFFFF", "block-cursor-background": "#12857A", "footer-key-foreground": "#12857A", "footer-background": "#E8EEF6",
+                         "border": "#B9C6D8", "border-blurred": "#D3DCE8", "text-muted": "#55657C"})

@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from rich.text import Text
 
-from .widgets import badge, plain
+from .widgets import WRAP, badge, kv, plain
 
 LEVELS = {"action": "REQUIRES YOUR ACTION", "followup": "Recommended follow-up", "info": "Informational"}
 ORDER = {"action": 0, "followup": 1, "info": 2}
@@ -208,24 +208,37 @@ def counts(items: List[Dict[str, Any]]) -> Dict[str, int]:
 
 
 # ----------------------------------------------------------------------------------------------- rendering
+GLYPH = {"action": ("!" if plain() else "●", "bold #F07880"), "followup": ("~" if plain() else "◐", "#F1B85B"), "info": ("-" if plain() else "○", "dim")}
+SHORT = {"action": "needs you", "followup": "recommended", "info": "info"}
+
+
 def row(i: Dict[str, Any]) -> tuple:
-    mark = {"action": ("!" if plain() else "●", "bold red"), "followup": ("~" if plain() else "◐", "bold dark_orange"), "info": ("-" if plain() else "○", "dim")}[i["level"]]
-    lvl = Text(f"{mark[0]} {LEVELS[i['level']].capitalize() if i['level'] != 'action' else 'Action'}", style="" if plain() else mark[1])
-    return (i["key"], lvl, i["source"], i["title"][:70], "blocks" if i["blocks"] else "")
+    g, st = GLYPH[i["level"]]
+    title = Text(i["title"][:62], style="" if i["level"] != "info" or plain() else "dim")
+    if i["blocks"]:
+        title.append("  blocks work", style="" if plain() else "#F07880")
+    return (i["key"], Text(g, style="" if plain() else st), title, i["source"].replace("Experiment ", "").replace("Governance proposal", "Proposal")[:22])
+
+
+def _kv(t: Text, k: str, v: str) -> None:
+    kv(t, k, v)
 
 
 def detail(i: Dict[str, Any], ctx: Optional[Text] = None) -> Text:
+    g, st = GLYPH[i["level"]]
     t = Text()
-    t.append(LEVELS[i["level"]] + "\n", style="bold" if plain() else {"action": "bold red", "followup": "bold dark_orange", "info": "dim"}[i["level"]])
+    t.append(f"{g} {LEVELS[i['level']]}\n", style="bold" if plain() else st)
     t.append(i["title"] + "\n\n", style="bold")
-    t.append("Source: ", style="bold").append(i["source"] + "\n")
-    t.append("Blocks execution: ", style="bold").append(("yes, something is waiting for this" if i["blocks"] else "no, work continues without it") + "\n")
-    t.append("Why it matters: ", style="bold").append(i["why"] + "\n")
-    t.append("Next step: ", style="bold").append(i["next"] + "\n\n")
+    _kv(t, "From", i["source"])
+    _kv(t, "Blocks work", "yes: something is waiting for this" if i["blocks"] else "no: work continues without it")
+    _kv(t, "Why", i["why"])
+    _kv(t, "Next", i["next"])
     if ctx is not None:
-        t.append_text(ctx)
+        t.append("\n").append_text(ctx)
     if i["actions"]:
-        t.append("Enter or x: actions   w: what does this mean?\n", style="dim")
+        t.append("\n")
+        t.append("Enter", style="bold" if plain() else "bold #39D5C4").append(" choose an action    ")
+        t.append("w", style="bold" if plain() else "bold #39D5C4").append(" what does this mean\n")
     return t
 
 
@@ -244,23 +257,32 @@ def experiment_context(p, call, exp_id: str) -> Text:
     st = call("experiment_state", id=exp_id)
     t = Text()
     cur = e["status"]
-    t.append("Lifecycle  ", style="bold")
-    for k, s in enumerate(LIFECYCLE):
-        t.append(("» " if plain() else "▶ ") if s == cur else "  ", style="bold")
-        t.append(s, style="bold" if s == cur else "dim")
-        t.append("  ->" if k < len(LIFECYCLE) - 1 else "")
-    t.append(f"\nNow: {cur} - {LIFECYCLE_WHY.get(cur, '')}\n")
-    t.append(f"Runs: {st['runs']} total, {st['active']} active, {st['finished']} finished, {st['unsynthesized']} not yet synthesized, {st['unreviewed_failed']} failed unreviewed\n")
-    if st["unsynthesized_ids"]:
-        t.append("Unsynthesized: " + ", ".join(st["unsynthesized_ids"]) + "\n")
+    t.append("Lifecycle\n", style="bold")
+    width = 0
+    for k, s_ in enumerate(LIFECYCLE):
+        on = s_ == cur
+        seg = s_ + ("  ›  " if k < len(LIFECYCLE) - 1 else "")
+        if width + len(seg) > WRAP[0]:
+            t.append("\n")
+            width = 0
+        width += len(seg)
+        t.append(s_, style=("bold #39D5C4" if on and not plain() else "bold" if on else "" if plain() else "dim"))
+        t.append("  ›  " if k < len(LIFECYCLE) - 1 else "", style="" if plain() else "dim")
+    t.append(f"\n{LIFECYCLE_WHY.get(cur, '')}\n\n")
+    _kv(t, "Runs", f"{st['runs']} total · {st['active']} active · {st['finished']} finished")
+    _kv(t, "Synthesis", f"{st['unsynthesized']} run(s) not yet synthesized" + (": " + ", ".join(st["unsynthesized_ids"]) if st["unsynthesized_ids"] else ""))
+    if st["unreviewed_failed"]:
+        _kv(t, "Failed", f"{st['unreviewed_failed']} failed run(s) not reviewed")
     pol = p.policy
-    t.append(f"Policy: synthesis is due when runs finish with none active; at {pol.get('max_runs_without_synthesis')} unsynthesized runs new runs are refused.\n", style="dim")
+    _kv(t, "Policy", f"new runs are refused at {pol.get('max_runs_without_synthesis')} unsynthesized runs")
     t.append("\nWho does what\n", style="bold")
-    t.append("  automatic:         detect finished runs, check evidence, notice a synthesis is due, write a grounded draft brief\n")
-    t.append("  agent-assisted:    an analyst may interpret results against the hypothesis (only when YOU launch it)\n")
-    t.append("  researcher-only:   accept or edit the interpretation, close the experiment, establish findings, decide\n")
-    t.append("\n")
-    t.append_text(artifact_text(artifact_rows(p, exp_id)))
+    _kv(t, "Automatic", "detect finished runs, check evidence, notice a synthesis is due, draft a brief")
+    _kv(t, "Agent", "an analyst interprets the results, only when you launch it")
+    _kv(t, "You", "accept or edit the interpretation, close the experiment, decide")
+    rows = artifact_rows(p, exp_id)
+    if rows:
+        t.append("\nArtifacts\n", style="bold")
+        t.append_text(artifact_text(rows))
     return t
 
 
