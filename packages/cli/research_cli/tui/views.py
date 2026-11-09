@@ -168,6 +168,19 @@ def gather_status(call: Callable[..., Any], plans: List[Dict[str, Any]], records
             "gateway": {"known": bool(gw), "running": bool(gw.get("running")), "platforms": gw.get("platforms") or [], "paired": len(users or [])}}
 
 
+def inbox_chip(c: Dict[str, int]) -> Text:
+    """First thing on the status bar: how many things need you, how many are recommended, never blurred together."""
+    t = Text()
+    if c.get("action"):
+        t.append(f"{'!' if plain() else '●'} {c['action']} need{'s' if c['action'] == 1 else ''} your action", style="bold" if plain() else "bold red")
+    if c.get("followup"):
+        t.append(("  " if t.plain else "") + f"{'~' if plain() else '◐'} {c['followup']} recommended", style="" if plain() else "bold dark_orange")
+    if not t.plain:
+        t.append("nothing needs you" if not c.get("info") else f"nothing needs you ({c['info']} informational)", style="dim")
+    t.append("  (i: Inbox)", style="dim")
+    return t
+
+
 def _chip(t: Text, text: str, style: str) -> None:
     if t.plain:
         t.append(SEP, style="dim")

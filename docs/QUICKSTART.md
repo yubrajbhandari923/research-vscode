@@ -269,18 +269,34 @@ that waits for your PIN (section 7).
 research tui
 ```
 
-It has seven tabs: Overview, Runs, Findings, Plans & Approvals, Decisions, Records and Doctor. It refreshes by itself.
+It has eight tabs: Overview, Runs, Findings, Plans & Approvals, Decisions, Records, Doctor and **Inbox**. It refreshes by itself.
+
+**Start with the Inbox (`i`).** It gathers everything that needs a person, from every part of ResearchOS, and keeps three kinds apart:
+**Action** (something is waiting for you: a decision, an approval, a blocked task, evidence that changed or is missing), **Recommended follow-up** (a scientific step is due
+but nothing is stuck: a synthesis, a finding awaiting independent review, artifacts that cannot be verified), and **Informational** (nothing to do, for example a planned
+experiment). Each row says where it comes from, why it matters, whether it blocks execution and the next step. `Enter` or `x` opens the actions for the row; `w` explains what
+it means. An experiment that says `needs_review` is a follow-up about interpretation, not a decision request, so Decisions can be empty while the Inbox is not.
+
+For an experiment that is due for **synthesis** the actions follow the division of work: *Check evidence* (automatic), *Prepare analyst draft* (writes a brief; **starts nothing**),
+*Launch analyst* (starts a real agent after you confirm; it may cost money), *Record synthesis* (a text box prefilled with the recorded facts: you write and review the
+interpretation, nothing is recorded until you save and confirm, and it never closes the experiment) and *Mark completed* (a separate, explicit step). For artifacts the TUI says
+whether each file is local, collected, inaccessible (external storage this machine cannot reach), missing or modified, and why: a Slurm job that exited 0 does not prove its files are
+here. Nothing is rewritten; *Re-check* and *Sync HPC runs* are offered. The Records tab shows an experiment's lifecycle (`proposed → ready → running → needs_review → completed`) and what drives it.
+`?` opens the built-in guide from any screen (the research loop, statuses, who does what, reviews versus approvals, keys, troubleshooting).
 
 | Key | Does |
 |---|---|
-| `1`-`7`, or `[` and `]` | switch tab (on Decisions, the digits pick an option) |
+| `i` | open the Inbox |
+| `Enter` or `x` | actions for the selected Inbox row |
+| `w` | what does the selected status or item mean? |
+| `1`-`8`, or `[` and `]` | switch tab (on Decisions, the digits pick an option) |
 | `r` | refresh |
 | `/` | filter the rows (an empty filter clears it) |
 | `k` | cancel the selected run |
 | `a` / `d` | approve or reject the selected proposal (asks for your PIN) |
 | `t` | on Decisions: answer in your own words |
 | `Ctrl+T` | dark or light theme |
-| `?` | help |
+| `?` | the guide (← → move between its sections) |
 | `q` | quit |
 
 **The VS Code Control Center.** Run **Research: Open Control Center** (or `Ctrl/Cmd+Alt+R` for Home). Home lists what needs you; **Plans** shows phases, attempts,
