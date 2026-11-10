@@ -547,3 +547,15 @@ experiment's own branch. The **ledger** (`.research/`, the shared ledger) is Res
   bulky outputs, `commit_exclude` paths, caches, compiled files and secrets do not. The attempt records what was committed and skipped (`commit_report`).
 * **Headless.** Every git call is non-interactive (no prompts, editors, pager or credential helper) with a timeout; a hook, identity or signing problem is an error with the fix, never a hang. Supervisor commits
   use the supervisor's identity without signing.
+
+## 25. Headless permissions: what an agent may run, and what happens when it is refused
+
+A headless Claude agent (nobody can answer a prompt) may edit files and run the `research` CLI; arbitrary Bash is refused. That default stays.
+
+* **Run the declared checks without Bash:** `research agent check T-001` runs the task's own checks (read-only: no state change, nothing recorded). The brief says so.
+* **Allow a command on purpose:** `agents.profiles.<name>.allow_commands: ["python scripts/smoke.py *"]` adds exactly those commands (one pattern each) to the profile's allow-list; nothing else widens.
+* **A refusal is a permission failure.** The provider's own result lists the denied commands; the attempt is `permission_denied`, not missing metrics or an environment problem. The task is blocked with the commands, the two ways out above and
+  the command to continue (`research supervisor resolve T-001 --unblock`). Nothing was submitted by that attempt; it stays in the ledger exactly as it was; the next attempt counts against the normal budget; checks, budgets and
+  `max_hpc_resubmissions` are untouched, so an HPC job already submitted is never duplicated.
+* **Before launch** the supervisor compares commands the task text tells the agent to run (in backticks or after `$ `) with the profile's allow-list (Claude only, where it is known). A conflict is an event
+  (`supervisor_permission_conflict`), a `permission_notes` field in `plan status --json`, and a "Permissions (read first)" section in the agent's brief.

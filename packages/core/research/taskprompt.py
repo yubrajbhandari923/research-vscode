@@ -135,6 +135,12 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
         f"  research agent propose {tid} --file /tmp/patch.yaml --rationale \"...\"   # keep the patch outside your workspace; plan changes need approval",
         f"  research agent finish {tid} --request-verification   # when you believe you are done",
         "You cannot mark the task done or verified; the supervisor verifies after you exit. Do not edit or weaken checks or frozen tests."]), "supervisor")
+    notes = (entry or {}).get("permission_notes") if isinstance(entry, dict) else None
+    if notes:
+        add("Permissions (read first)", "\n".join([
+            "These commands from your task cannot be run directly: your headless policy allows edits and the research CLI only:"] + [f"  {x}" for x in notes] + [
+            f"Run the task's declared checks with `research agent check {tid}` instead (it needs no Bash). Do not submit computational jobs until the checks you can run pass.",
+            f"If you still cannot proceed, say so: research agent problem {tid} --category environment --message \"...\""]), "supervisor")
     add("Results and provenance (required)", "\n".join([
         "Any report, chapter or figure you write must be generated from the recorded data it describes: read values from the run's metrics and take the run, experiment and artifact "
         "you cite from the records you actually used.",

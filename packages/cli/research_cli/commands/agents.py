@@ -539,6 +539,16 @@ def cmd_agent(a, p) -> int:
         SV.report(p, a.task, "propose", message=f"{pr['id']} {pr['classification']} {pr['status']}")
         return _emit(a, {k: pr[k] for k in ("id", "classification", "status")}, lambda d: [green("✓ ") + f"{d['id']} ({d['classification']}): {d['status']}"
                      + ("" if d["status"] == "applied" else " (waits for approval)")])
+    if kind == "check":     # the task's declared checks, run by Research OS: read-only, no state change, nothing recorded; no Bash permission needed
+        from research import verification as VF
+        r = VF._task_checks(p, a.task, transition=False, log=False)
+        if a.json:
+            out_json({"task": a.task, "passed": r["passed"], "results": [{k: x.get(k) for k in ("check", "ok", "detail", "output")} for x in r["results"]]})
+        else:
+            for x in r["results"]:
+                print((green("✓ ") if x["ok"] else red("✗ ")) + f"{x['check']}  ({x['detail']})" + (f"\n{x['output'].strip()}" if not x["ok"] and x.get("output") else ""))
+            print(("all declared checks pass; finish with `research agent finish %s --request-verification`" % a.task) if r["passed"] else "some checks fail; fix them, then run this again")
+        return 0 if r["passed"] else 1
     if kind == "finish":
         kind = "finish"
         f["message"] = f["message"] or "finished; verification requested"
@@ -674,7 +684,7 @@ def attach(sub, add, group) -> None:
     for name, h in (("progress", "free-text progress"), ("milestone", "a named milestone"), ("artifact", "an output file (workspace-relative)"),
                     ("metric", "a metric value"), ("run", "a computational run id"), ("hpc-job", "an HPC job id"), ("code", "a commit / changed files"),
                     ("problem", "a problem with a failure category"), ("report", "summary of what was done and found"),
-                    ("finish", "request verification"), ("propose", "propose a plan change (YAML patch)")):
+                    ("check", "run the task's declared checks (read-only; the supported way to run them without Bash)"), ("finish", "request verification"), ("propose", "propose a plan change (YAML patch)")):
         x = add(g, name, cmd_agent, h)
         x.set_defaults(action=name)
         x.add_argument("task", help="task id (T-001)")

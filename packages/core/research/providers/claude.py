@@ -15,6 +15,17 @@ LEVELS = {"fast": {"model": "claude-haiku-5-5", "effort": None},
           "deep": {"model": "claude-opus-5-5", "effort": None}}
 
 
+DEFAULT_TOOLS = ["Bash(research *)", "Bash(.research/bin/research *)", "Bash(./.research/bin/research *)", "Bash(*/.research/bin/research *)",
+                 "Bash(cd * && research *)", "Bash(cd * && .research/bin/research *)", "Bash(cd * && ./.research/bin/research *)", "mcp__research"]
+
+
+def allowed_tools(prof) -> List[str]:
+    """The headless tool allow-list: the profile's own `allowed_tools`, else the restrictive default (edits and the research CLI). `allow_commands` adds exactly the
+    commands a project names (one pattern each, e.g. `python scripts/smoke.py *`); it never widens anything else."""
+    base = [str(x) for x in as_list(prof.get("allowed_tools"))] or list(DEFAULT_TOOLS)
+    return base + [f"Bash({c})" for c in as_list(prof.get("allow_commands")) if str(c).strip()]
+
+
 def build(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
     argv = [prof.get("command") or "claude", *[str(a) for a in as_list(prof.get("args"))]]
     if headless:
@@ -22,9 +33,7 @@ def build(prof, model, effort, prompt, cwd, dirs, headless) -> List[str]:
     for d in dirs:
         argv += ["--add-dir", d]
     if headless:   # nobody can answer a permission prompt: allow edits and the research CLI only, never arbitrary Bash
-        tools = prof.get("allowed_tools") or ["Bash(research *)", "Bash(.research/bin/research *)", "Bash(./.research/bin/research *)", "Bash(*/.research/bin/research *)",
-                 "Bash(cd * && research *)", "Bash(cd * && .research/bin/research *)", "Bash(cd * && ./.research/bin/research *)", "mcp__research"]
-        argv += ["--allowedTools", ",".join(as_list(tools)), "--permission-mode", str(prof.get("permission_mode") or "acceptEdits")]
+        argv += ["--allowedTools", ",".join(allowed_tools(prof)), "--permission-mode", str(prof.get("permission_mode") or "acceptEdits")]
     if model:
         argv += ["--model", str(model)]
     return argv + [prompt]
