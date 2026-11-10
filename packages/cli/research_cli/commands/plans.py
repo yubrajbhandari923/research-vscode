@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from research import plans as P
+from research.util import ResearchError
 from research.schema import STATUSES, TASK_TYPES, TASK_ROLES
 
 from .agents import _dispatch_args, cmd_dispatch
@@ -255,6 +256,87 @@ def cmd_task_note(a, p) -> int:
 
 
 @mut
+def cmd_task_intervene(a, p) -> int:
+    """The human control menu for one task: state, why it stopped, attempts used of allowed, the agent, and deterministic actions with a preview."""
+    from research import takeover as TK
+    if not a.action:
+        m = TK.menu(p, a.id)
+        if a.json:
+            out_json(m)
+            return 0
+        out_menu(m)
+        return 0
+    pv = TK.preview(p, a.id, a.action, a.value, a.stop_agent)
+    if a.json and not a.yes:
+        out_json(pv)
+        return 0
+    if a.action in ("logs", "worktree") or a.yes:
+        r = TK.run(p, a.id, a.action, a.value, a.note, stop_agent=a.stop_agent)
+        if a.json:
+            out_json(r)
+        elif a.action == "logs":
+            print(r["out"] or dim("(no output yet)"))
+            if r["err"]:
+                print(dim("--- stderr ---\n") + r["err"])
+        elif a.action == "worktree":
+            print(r["worktree"])
+        else:
+            print(green("✓ ") + f"{a.id}: {a.action} done" + (f" ({r['intervention']} {r['state']})" if r.get("intervention") else "")
+                  + (f"\n  worktree: {r['worktree']}" if r.get("worktree") else "") + (dim("\n  the agent that was running keeps running; it finishes normally") if r.get("agent_still_running") else ""))
+        return 0
+    print(bold(f"{a.id}: {a.action}" + (f" {a.value}" if a.value else "")))
+    for line in pv["lines"]:
+        print("  " + line)
+    if pv["available"]:
+        print(dim(f"  to apply: research task intervene {a.id} {a.action}" + (f" {a.value}" if a.value else "") + " --yes" + (" --stop-agent" if a.stop_agent else "")))
+    return 0
+
+
+def out_menu(m) -> None:
+    at, pb = m["attempts"], m["plan_budget"]
+    print(bold(f"{m['task']} {m['title']}") + dim(f"  (plan {m['plan']}, {m['plan_state']})"))
+    print(f"  state: {m['phase']}" + (f" — {m['reason'][:160]}" if m.get("reason") else ""))
+    print(f"  attempts: {at['used']} of {at['allowed']}" + (red("  EXHAUSTED") if at["exhausted"] else "") + (dim(f" (+{at['voided']} voided)") if at["voided"] else "")
+          + f"   plan: {pb['used']} of {pb['max']}" + (red("  EXHAUSTED") if pb["exhausted"] else ""))
+    ag = m.get("agent")
+    print("  agent: " + (f"{ag['profile']} attempt {ag['attempt']} ({ag.get('execution_state') or ag['state']}{', running' if ag['running'] else ''})" if ag else "none has run"))
+    if m.get("takeover"):
+        print(red("  HUMAN TAKEOVER") + f" since {m['takeover']['since']} by {m['takeover']['by']}")
+    if m.get("worktree"):
+        print(f"  worktree: {m['worktree']}")
+    for i in m["interventions"]:
+        print(dim(f"  open intervention {i['id']} [{i['state']}] {i['instruction']}"))
+    print("  actions:")
+    for x in m["actions"]:
+        arg = f" {x['arg']}" if x.get("arg") else ""
+        print(("    " + green("•") + f" {x['id']}{arg}".ljust(24) + x["label"] + (dim("  (PIN)") if x["needs_pin"] else "")) if x["available"]
+              else dim(f"    · {x['id']}{arg}".ljust(26) + f"{x['label']}  [{x['why_not']}]"))
+    print(dim(f"  preview then apply: research task intervene {m['task']} ACTION [VALUE] [--yes]"))
+
+
+@mut
+def cmd_task_budget(a, p) -> int:
+    """Change the attempt budget of several tasks at once: named ones, or every stuck / not-started task of a plan. Previews unless --yes."""
+    from research import approval, takeover as TK
+    ids = list(a.ids or [])
+    if a.stuck or a.todo:
+        ids += [t for t in TK.select(p, a.plan, a.stuck, a.todo) if t not in ids]
+    if not ids:
+        raise ResearchError("name tasks (T-006 T-007) or select them with --stuck / --todo [--plan PLAN]")
+    pin = approval.read_pin() if a.yes and approval.is_set() else None      # asked once for all of them
+    rows = TK.set_attempts(p, ids, a.max_attempts, a.note, pin, apply=a.yes)
+    if a.json:
+        out_json(rows)
+        return 0
+    for r in rows:
+        print(f"  {r['task']:<7} {str(r['phase']):<10} attempts {r['used']} used, budget {r['from']} -> {r['to']}" + (dim("  (an agent is running; not affected)") if r["running"] else "")
+              + (f"  {green('✓ ' + r['intervention'] + ' ' + r['state'])}" if r.get("intervention") else "") + (red(f"  not available: {r['why_not']}") if not r["ok"] else ""))
+    if not a.yes:
+        print(dim("  preview only; add --yes to apply (a resource change: approved with your PIN, recorded, attempt history untouched)"))
+    return 0
+
+
+@mut
 def cmd_task_release(a, p) -> int:
     t = P.release_task(p, a.id, a.note)
     _done(a, t, msg=f"{t['id']} released → todo")
@@ -355,6 +437,16 @@ def attach(sub, add, group) -> None:
     x = add(g, "release", cmd_task_release, "give a claimed task back (→ todo) with a hand-off note")
     x.add_argument("id")
     x.add_argument("--note")
+    x = add(g, "intervene", cmd_task_intervene, "human control menu for a supervised task: research task intervene T-006 · … attempts 12 · … takeover · … release (previews first; --yes applies)")
+    x.add_argument("id"); x.add_argument("action", nargs="?", choices=["attempts", "plan-budget", "retry", "reverify", "profile", "pause", "logs", "worktree", "takeover", "release"])
+    x.add_argument("value", nargs="?", help="attempts / plan-budget: the number · profile: the agent profile")
+    x.add_argument("--yes", action="store_true", help="apply (without it the action is only previewed)")
+    x.add_argument("--note", help="why (recorded)"); x.add_argument("--stop-agent", action="store_true", help="takeover: also stop the running agent (kept as evidence, not voided); default leaves it running")
+    x = add(g, "budget", cmd_task_budget, "set the attempt budget of tasks: research task budget T-006 T-007 --max-attempts 12 · or --stuck / --todo [--plan PLAN] (previews; --yes applies)")
+    x.add_argument("ids", nargs="*", help="task ids"); x.add_argument("--max-attempts", type=int, required=True, help="the new per-task attempt budget")
+    x.add_argument("--stuck", action="store_true", help="every blocked / attention / taken-over task of the plan"); x.add_argument("--todo", action="store_true", help="every task that has not started")
+    x.add_argument("--plan", help="the plan for --stuck / --todo (needed when several plans have run)"); x.add_argument("--yes", action="store_true", help="apply")
+    x.add_argument("--note", help="why (recorded)")
     x = add(g, "note", cmd_task_note, "add a progress note: research task note T-003 \"loader done, tests next\"")
     x.add_argument("id")
     x.add_argument("text", nargs="+")

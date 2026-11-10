@@ -259,7 +259,34 @@ def intervention_action(p, id: str, action: str, note: Optional[str] = None, pin
         return I.cancel(p, id)
     if action == "plan":
         return I.plan_it(p, id)
-    raise ResearchError("action must be approve, reject, cancel or plan")
+    if action == "retry":
+        return I.retry(p, id, note)
+    raise ResearchError("action must be approve, reject, cancel, plan or retry")
+
+
+@op(sync=False)
+def intervention_diagnose(p, id: str) -> Dict[str, Any]:
+    from .. import intervene as I
+    return I.diagnose(p, id)
+
+
+@op(sync=False)
+def task_intervene_menu(p, task: str) -> Dict[str, Any]:
+    """The human control menu for one supervised task (CLI `research task intervene`, the TUI and the panel show the same thing). Read-only."""
+    from .. import takeover
+    return takeover.menu(p, task)
+
+
+@op(sync=False)
+def task_intervene_preview(p, task: str, action: str, value: Optional[str] = None, stop_agent: bool = False) -> Dict[str, Any]:
+    from .. import takeover
+    return takeover.preview(p, task, action, value, stop_agent)
+
+
+@op(mutates=True)
+def task_intervene_run(p, task: str, action: str, value: Optional[str] = None, note: Optional[str] = None, pin: Optional[str] = None, stop_agent: bool = False) -> Dict[str, Any]:
+    from .. import takeover
+    return takeover.run(p, task, action, value, note, pin, stop_agent)
 
 
 @op(mutates=True)

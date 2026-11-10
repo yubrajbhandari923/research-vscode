@@ -573,3 +573,35 @@ The supervisor commits verified work itself and records that commit on the attem
 | ambiguous | two tasks claim it (parallel agents in one worktree) | stops the candidate until decided |
 
 Decide a stopped commit with `research plan autopromote PLAN attribute --commit SHA --task T-003 --note "why"` (the task must be verified) or `exclude --commit SHA`, then `retry --item AP-001`. Attributions are written once to the run state (`commit_provenance`) with their basis; attempts are never edited and history is never rewritten. Dates and trailers are what the committer wrote: this is attribution evidence, and the reviewer, frozen-test and test gates still apply to everything promoted. A paused item whose candidate predates some attributed commits says so in `plan status`; `retry` prepares a new candidate from the same verified work.
+
+## 27. Human controls and takeover
+
+`research task intervene T-006` opens a menu for one supervised task: state and why it stopped, attempts used of allowed (the task's and the plan's), the agent, the worktree, and the actions that apply now (each unavailable one says why). No model is involved. Name an action to see its preview (current and new numbers, whether anything running is affected); add `--yes` to apply it.
+
+```bash
+research task intervene T-006                       # the menu
+research task intervene T-006 attempts 12           # preview
+research task intervene T-006 attempts 12 --yes     # apply (a resource change: recorded, PIN-approved, attempt history untouched)
+research task intervene T-006 retry --yes
+research task intervene T-006 takeover --yes        # you work in the worktree; nothing is launched for this task
+research task intervene T-006 release --yes         # the supervisor verifies your work normally
+research task budget T-006 T-007 --max-attempts 12 --yes      # several tasks; or --stuck / --todo --plan PLAN
+```
+
+Rules: opening the menu never stops an agent; a budget change applies at once and does not touch a running attempt; `retry` and `profile` are refused while the attempt budget is exhausted (raise it first); attempts are never reset or voided by these controls. The limit for a task's attempts is the plan's `max_total_attempts`, which `plan-budget N` raises. **Takeover:** the task is neither launched, repaired nor escalated until `release`; a running agent keeps running and finishes normally unless you pass `--stop-agent` (its attempt is kept as evidence). `release` re-runs the declared checks on the latest attempt as you left the worktree, commits the work like any verified work, and applies the usual budgets if the checks fail. The TUI offers the same menu (Inbox, `x`, Intervene; or ctrl+p).
+
+## 28. Failed and partly applied interventions
+
+Before an intervention runs, all of it is applied in memory to the complete plan and validated against the plan schema (including `agent.role`: planner, implementer, verifier, analyst, human), so a later invalid action cannot leave earlier ones applied. If one still ends `failed` with some actions applied (an older version, or a plan edited meanwhile):
+
+```bash
+research intervention diagnose INT-003                    # what was applied (stays applied), what was not, whether the rest can apply
+research intervention edit INT-003 2 --action-json '{"type": "add_task", "task": {"key": "e01-oracle-review", "title": "Oracle review", "prompt": "Review the oracle.", "agent": {"role": "verifier"}}}'
+research intervention approve INT-003 --note "corrected the role"      # the edit returns it to `proposed`: a protected change needs the PIN again
+research intervention retry INT-003                       # only if it was approved and the text is now valid
+```
+
+Applied actions are flagged and never repeated or edited; an `add_task` for a task already in the plan counts as applied. Nothing is voided and no history is rewritten.
+
+A halt diagnosis or automatic investigation refused by a provider's usage limit waits for the reset (the account's limit is remembered) and runs again by itself.
+

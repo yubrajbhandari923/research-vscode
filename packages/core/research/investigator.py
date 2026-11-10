@@ -126,6 +126,9 @@ def investigate(p, task: Optional[str] = None, plan: Optional[str] = None, quest
     p.event("task", tid, "investigator_started", f"{(text or question or 'diagnose')[:160]}")
     try:
         r = I.run_assistant_full(p, f"Investigate {tid}", PROMPT.format(ask=ask, context=json.dumps(ctx, default=str, indent=1)[:24000]))
+    except I.ProviderLimited:
+        p.event("task", tid, "investigator_waiting", "the provider's usage limit is reached; it runs again after the reset")
+        raise
     except ResearchError as ex:
         p.event("task", tid, "investigator_failed", str(ex)[:300])
         return _plain(tid, f"the investigator agent did not run ({str(ex)[:160]})")

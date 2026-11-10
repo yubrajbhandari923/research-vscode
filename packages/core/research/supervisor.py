@@ -291,7 +291,7 @@ def _topo(st: Dict[str, Any]) -> List[str]:
 
 
 ACTIVE_PHASES = ("running", "verifying", "waiting_hpc", "ready", "repair_pending")
-HUMAN_PHASES = ("blocked", "attention", "awaiting_approval")
+HUMAN_PHASES = ("blocked", "attention", "awaiting_approval", "takeover")
 
 
 def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str, Any]:
@@ -500,6 +500,9 @@ def _schedule(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, A
         if task["status"] == "done":
             e["phase"] = "verified" if e.get("phase") != "verified" else "verified"
             continue
+        if e.get("takeover") and e["phase"] not in ("running", "verifying", "waiting_hpc"):
+            e["phase"], e["reason"] = "takeover", f"a human has taken over (since {e['takeover'].get('since')}); `research task intervene {tid} release` returns it to the supervisor"
+            continue                      # never launched, repaired or escalated while a person works in its worktree; a running agent is not touched
         if e["phase"] in ("running", "verifying", "waiting_hpc", "attention", "blocked", "awaiting_approval") and e["phase"] != "awaiting_approval":
             continue
         if e["phase"] == "waiting_provider" and not _resume_after_limit(p, tid, e, c):
@@ -1437,6 +1440,8 @@ def _verified(p, st, rs, tid, e, a, out) -> None:
         P.update_task(p, tid, status="verify")
         P.complete_task(p, tid, result=taskprompt.redact(summary) or f"verified by Research OS after attempt {a['n']}", completed_by="supervisor")
     e.update(phase="verified", reason=None)
+    if e.pop("takeover", None):
+        _event(p, tid, "takeover_ended", "the running agent's attempt verified: the human takeover is over")
     a["state"] = "verified"
     try:
         sha = _commit_verified(p, tid, a, spec_title=p.get("task", tid)["title"], plan_key=st["plan_key"], c=cfg(p, st))

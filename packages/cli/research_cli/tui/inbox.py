@@ -196,7 +196,7 @@ def _blocked(p, items) -> None:
             todo = (f"Read the objection above, fix the code on the experiment branch, then `research plan autopromote {b.get('plan')} retry --item {b['task']}`. "
                     "Verified tasks and finished runs are not re-run.")
         items.append(_item("blocked_task", "action", b["task"], f"{b['task']} blocked: {str(b.get('title') or '')[:60]}", why, todo,
-                           ["open_approvals", "help"], "t4", blocks=True, source=f"Plan {b.get('plan', '')}".strip()))
+                           ["open_approvals", "help"] if b.get("promotion") else ["intervene", "open_approvals", "help"], "t4", blocks=True, source=f"Plan {b.get('plan', '')}".strip()))
 
 
 def _promotions(call, items) -> None:
@@ -248,6 +248,7 @@ def detail(i: Dict[str, Any], ctx: Optional[Text] = None) -> Text:
 
 
 ACTION_LABELS = {
+    "intervene": "Intervene: budgets, retry, switch agent, take over (no AI needed; previews first)",
     "open": "Open the record", "open_approvals": "Go to Plans & Approvals", "open_decisions": "Go to Decisions", "help": "What does this mean?",
     "prepare_analyst": "Prepare analyst draft (writes a brief; starts nothing)", "launch_analyst": "Launch analyst (starts an agent; may cost money)",
     "check": "Check evidence now (experiment check)", "record_synthesis": "Record synthesis (your interpretation)",
