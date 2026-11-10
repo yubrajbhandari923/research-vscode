@@ -71,6 +71,8 @@ The step-by-step guide, with a worked example, is [docs/QUICKSTART.md](https://g
 | Keep scientific decisions in human hands | [Governance and the approval PIN](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GOVERNANCE.md) |
 | Survive provider usage limits unattended | [Usage limits](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/QUICKSTART.md#8-usage-limits) |
 | See and publish your results as a website (local preview, one-push GitHub Pages) | `research site status`, [Research website](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md#the-research-website-research-site) |
+| Keep git clean: see what is uncommitted and why it matters, commit scaffolding after review, ignore generated files | `research git status`, `research git commit --scaffold`, [Git hygiene](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md#24-git-hygiene-what-is-uncommitted-and-the-reviewed-commit) |
+| Recover from HPC results that arrive after Slurm says completed | [Late evidence](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/SUPERVISOR.md#23-late-evidence-hpc-results-that-arrive-after-slurm-says-completed) |
 | Tell the story of your results | [Scientist Guide](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/GUIDE.md) |
 | Give agents skills, hooks and MCP tools | [Skills, hooks and MCP](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/AGENT_TOOLS.md) |
 | Fix a problem | [Troubleshooting](https://github.com/yubrajbhandari923/research-vscode/blob/main/docs/TROUBLESHOOTING.md) |

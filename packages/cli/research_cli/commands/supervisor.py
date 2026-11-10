@@ -100,6 +100,7 @@ cmd_plan_yaml = mut(cmd_plan_yaml)
 
 # ----------------------------------------------------------------------------------------------- plan run control
 def _status_lines(s) -> list:
+    from research import recovery
     h = s.get("health") or {}
     shown = h.get("label") if s["state"] == "running" and h.get("label") else s["state"]
     shown = (red(bold(shown)) if h.get("state") == "halted" else yellow(shown) if h.get("state") == "waiting_for_approval" else shown)
@@ -109,14 +110,24 @@ def _status_lines(s) -> list:
         out.append(f"  {t['id']:<7} {t['phase']:<18} {t['title'][:44]:<44}" + (f" attempt {t['attempts']}" if t["attempts"] else "")
                    + (f" [{ex.get('state')}]" if ex.get("state") and t["phase"] in ("running", "verifying") else "")
                    + (dim(f"  — {t['reason'][:90]}") if t.get("reason") else ""))
+        r = t.get("recovery")
+        if r and t["phase"] in ("waiting_hpc", "blocked", "attention", "repair_pending"):
+            out += [dim("          " + x) for x in recovery.line(r).splitlines()]
     if h.get("state") in ("halted", "waiting_for_approval"):
         out.append((red if h["state"] == "halted" else yellow)(f"  {h['label']}: nothing is running; waiting on " + ", ".join(b["task"] for b in h["blocking"])
                                                               + "   (research supervisor debug · research supervisor instruct T-… -m \"…\")"))
+    for it in (s.get("auto_promotion") or {}).get("items") or []:
+        if it["status"] == "paused":
+            out.append(red(f"  promotion {it['id']} ({it['experiment']}) is PAUSED: {it.get('error') or 'no reason recorded'}"))
+            out.append(dim(f"      the verified tasks are untouched; fix it, then: research plan autopromote {s['plan']} retry --item {it['id']}"))
     cc = s.get("concurrency")
     if cc:
         out.append(dim(f"  parallel agents: {cc['effective']} ({cc['source']}); {cc['running']} running, {cc['ready_waiting']} ready"))
     for pr in s.get("proposals", []):
         out.append(yellow(f"  proposal {pr['id']} ({pr['classification']}) waits for approval: {pr['rationale'][:80]}"))
+    if s.get("git_preflight"):
+        from research import githygiene as GH
+        out += [yellow(l) if l.startswith("Git preflight") else dim(l) for l in GH.lines(s["git_preflight"])]
     d = s["daemon"]
     out.append(dim("  supervisor process: " + (f"running (pid {d['pid']})" if d.get("running") else "not running; `research supervisor start`")))
     return out

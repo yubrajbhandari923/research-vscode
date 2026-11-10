@@ -61,6 +61,19 @@ The agent also may not touch human-owned chapters, `ideas.qmd`, `references.bib`
 draft was prepared and reports every overrun; the Guide page shows it. The agent records what it drafted with
 `research guide draft done F-003`. The trigger only controls the reminder: an agent never writes into the guide on its own.
 
+## Generated reports: data-driven, never hardcoded
+
+An agent (or a script it writes) that generates a chapter must read the numbers from the run's recorded metrics and the attribution (which run, experiment and artifact) from the records it
+used. A typed-in `RUN-0003`, a fixed number, or a sentence about what another run did is stale or false on other data. Research OS checks this with the validators it already has:
+
+* `research guide validate` reports an identifier in scientific prose (`identifier_in_scientific_text`), a cited record that is not in this project (`stale_attribution`, anywhere in the chapter,
+  researcher-only blocks included) and a claim that quotes a number different from the metric it cites (`stated_value_mismatch`). Internal identifiers belong in provenance (`research guide claim add`,
+  `research guide figure add`) or a researcher-only block, never in the prose a reader sees.
+* A **promotion** that adds or changes `.qmd` chapters has a `scientific_content` gate with the same chapter checks: it must pass before approval or integration. A promotion with no Quarto change
+  is `not_applicable` and is never held up by it.
+* `research site add` refreshes a published experiment's generated files and, if you have not edited the draft page, its commit line and file lists; an edited page is left alone with a warning.
+* Agent briefs and the project's AGENTS.md carry these rules.
+
 ## Citations and references
 
 `references.bib` exists from the start. Cite a source in any chapter as `[@key]` (several: `[@a2020; @b2021]`; in the text:

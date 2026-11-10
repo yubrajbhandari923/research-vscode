@@ -28,7 +28,12 @@ def cmd_site_init(a, p) -> int:
                      + [dim("Existing files are never overwritten, so this also repairs a half-created website."), "Then: research site init --apply"])
     return _emit(a, r, lambda d: [green("✓ ") + f"website ready in {d['guide_dir']}/ ({len(d['created'])} file(s) created, {len(d['left_untouched'])} left untouched)"]
                  + ([green("✓ ") + "pages: " + ", ".join(d["pages"]["created"])] if d["pages"]["created"] else [])
-                 + [dim("  " + n) for n in d["next"]])
+                 + [dim("  " + n) for n in d["next"]] + [dim("  " + l) for l in _scaffold_hint(p)])
+
+
+def _scaffold_hint(p):
+    from research import githygiene as GH
+    return GH.scaffold_hint(p)
 
 
 def cmd_site_status(a, p) -> int:

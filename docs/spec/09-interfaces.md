@@ -73,6 +73,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research workspace` | `ws` | experiment worktrees: info \| create \| attach \| list \| show \| link-task \| assign \| archive |
 | `research sandbox` |  | optional job isolation: list \| show NAME \| doctor \| verify NAME \| preview EXP |
 | `research hpc` |  | remote execution: doctor \| init \| submit \| status \| sync \| collect \| import \| bundle \| datasets \| inspect \| cancel \| clusters \| config |
+| `research git` |  | git hygiene: status \| preflight \| ignore \| commit (reviewed, scoped, never pushes) |
 
 **`research project`** actions: `set` (set name/goal/description)
 
@@ -103,6 +104,8 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 **`research skills`** actions: `list` (list skills); `show` (print a skill's SKILL.md); `add` (import skill(s) from a folder or git repo (URL, owner/repo, …/tree/main/skills/x)); `remove` (remove a skill (moved to .research/cache/removed-skills)); `update` (re-import skills from their recorded source); `set` (project settings for a skill); `verify` (run a protocol skill's machine-checkable requirements); `audit` (which skills gate managed dispatch, and what direct Claude Code/Codex sessions can see); `link` ((re)create .claude/skills and .agents/skills links); `catalog` (the skills catalog: first-party, bundled (attributed copies) and install-from-source entries); `packs` (skill packs: list | enable ID [--optional] | disable ID); `install` (install catalog skill(s) (bundled copy, or fetched from the source at the pinned commit)); `enable` (turn a skill on (it stays on disk either way)); `disable` (turn a skill off: not suggested, not linked; files kept); `upgrade` (bring bundled and first-party skills to this release's version (never replaces a skill you changed)); `new` (create a skill); `duplicate` (copy a skill)
 
 **`research site`** actions: `init` (preview the website files; --apply creates them (never overwrites; also repairs)); `status` (quarto, workflow, remote, Pages URL, published experiments and the exact next commands); `preview` (live local website with hot reload (no GitHub needed)); `build` (render the static site locally and check its links (never runs code)); `add` (publish a verified experiment's committed report and figures as a draft page you can edit); `remove` (unpublish an experiment: move it out of the site (nothing is deleted); previews unless --apply); `list` (experiments on the website and their state); `sync` (publish verified experiments that have committed reports and are not on the site yet (adds only))
+
+**`research git`** actions: `status` (main repo, experiment worktrees, promotions and ledger: what is uncommitted and why it matters); `preflight` (the check run before a plan starts/resumes or promotion is authorized (exit 2 when blocked)); `ignore` (preview (default) or --apply a managed .gitignore block for generated and internal files); `commit` (show the staged diff of the named files; --yes commits exactly those files on main (humans only, never pushes))
 
 Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `telegram`, `usage`.
 <!-- /generated:cli -->
@@ -145,7 +148,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-220 operations.
+225 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -228,6 +231,11 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `experiment_synthesize` | id | yes | `experiment_synthesize` |  |
 | `finding_create` | title, statement, kind, confidence, supports, contradicts, questions, limitations | yes | `finding_create` |  |
 | `freeze_tests` | task, paths | yes |  |  |
+| `git_commit` | paths, scaffold, message, confirm | yes |  |  |
+| `git_commit_preview` | paths, scaffold, message |  |  |  |
+| `git_health` |  |  |  |  |
+| `git_ignore` | apply, patterns | yes |  |  |
+| `git_preflight` | purpose |  |  |  |
 | `governance` |  |  |  |  |
 | `guide_build` | edition, pdf, allow_invalid | yes |  |  |
 | `guide_cite_add` | bibtex, key, title, authors, year, doi, journal, url | yes |  |  |

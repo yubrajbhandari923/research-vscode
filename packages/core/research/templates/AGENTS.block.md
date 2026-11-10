@@ -107,5 +107,11 @@ research task start T-001          # claim + mark running
 research task complete T-001 --result "summary of what happened"   # runs the task's checks first
 ```
 
+### Reports and results: data-driven, never typed in
+A report or chapter you write must be generated from the recorded data it describes: read numbers from the run's metrics and the attribution (which run, experiment
+and artifact) from the records you actually used. Never hardcode a result, a RUN-/EXP-/A- identifier or a statement about what another run did, and never invent run
+history: on other data it would be stale or false. Keep internal identifiers out of scientific prose; cite them through provenance (`research guide claim add`,
+`research guide figure add`) or a researcher-only block. `research guide validate` and promotion check this.
+
 For skills: `research skill show <name>`. For details: `research show <ID>`.
 <!-- research:end -->

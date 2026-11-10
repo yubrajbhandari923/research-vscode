@@ -460,6 +460,17 @@ def add(p: Project, exp: str, at: str = "verified", dry_run: bool = False) -> Di
         _atomic_write(page, text)
         rec["files"]["index.qmd"] = _sha(text.encode("utf-8"))        # tracked only to tell your later edits from ours; the page is never rewritten
         written.append("index.qmd")
+    elif refreshed or written:
+        # publication metadata (the commit line, chapter and figure lists) follows the refreshed chapters, but only on a page you have not edited
+        texts = _draft_page(p, exp, rec, [os.path.relpath(os.path.join(PV.guide_dir(p), c), base).replace(os.sep, "/") for c in chapters], figures)
+        current = open(page, "rb").read()
+        if rec["files"].get("index.qmd") == _sha(current):
+            if current != texts.encode("utf-8"):
+                _atomic_write(page, texts)
+                rec["files"]["index.qmd"] = _sha(texts.encode("utf-8"))
+                refreshed.append("index.qmd")
+        else:
+            warnings.append(f"index.qmd: you edited it, so its commit line and file lists were left as they are and may show an older commit than {sha[:10]}")
     keys = [f"experiments/{slug}/index.qmd"] + chapters
     _list_in_book(p, keys)
     rec["chapters"] = keys

@@ -41,13 +41,13 @@ def ap(repo, tmp_path, monkeypatch):
     p.close()
 
 
-def install_reviewer(monkeypatch, p, verdict="approve", name="reviewer", before=None):
+def install_reviewer(monkeypatch, p, verdict="approve", name="reviewer", before=None, note="scripted independent review"):
     def fake(p_, item, pol):
         if before:
             before()
         human, p_.author = p_.author, {"author_type": "agent", "author_name": name, "author_model": None}
         try:
-            PR.review(p_, item["promotion"], verdict, "scripted independent review")
+            PR.review(p_, item["promotion"], verdict, note)
         finally:
             p_.author = human
         return {"at": now_iso(), "epoch": time.time(), "profile": name, "pid": 0}
@@ -369,10 +369,15 @@ def test_policy_change_after_a_pre_run_authorization_fails_closed(ap, repo):
     assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "suspended"
     SV.plan_run(ap, "ap", start_daemon=False)
     assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "suspended"
-    run_to(ap, pid, lambda rs: rs["state"] == "completed")
+    run_to(ap, pid, lambda rs: all(e["phase"] == "verified" for e in rs["tasks"].values()) and len(rs["tasks"]) == 1)
+    run_until(ap, lambda: False, 3)
     assert items(ap, pid) == [] and head(repo, "main") == main0, "a stale authorization promotes nothing"
+    st = SV.status(ap, "ap")
+    assert st["state"] == "running" and st["health"]["state"] == "halted" and "policy changed" in st["health"]["blocking"][0]["reason"]   # not "completed": a promotion is owed
     SV.autopromote(ap, "ap", "authorize", note="re-authorized after the change")
     assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "active"
+    run_to(ap, pid, lambda rs: rs["state"] == "completed")
+    assert set(item_status(ap, pid)) == {"integrated"}
 
 
 def test_pre_run_authorization_rules(ap, repo):
@@ -390,3 +395,70 @@ def test_pre_run_authorization_rules(ap, repo):
     assert not os.path.exists(SV._pre_path(ap, pid)) or SV.status(ap, "ap")["auto_promotion"]["mode"] == "manual"
     SV.plan_run(ap, "ap", start_daemon=False)
     assert SV.status(ap, "ap")["auto_promotion"]["mode"] == "manual" and not SV.load_run(ap, pid)["autopromote"]["authorized"]
+
+
+# ------------------------------------------------------------------------------------------------ all tasks verified is not "plan completed"
+TWO = [("e1", [task("a1", "echo V=1 > lib1.py", checks=["file:lib1.py"]), task("a2", "test -f lib1.py && echo W=1 > lib1b.py", deps=["a1"], checks=["file:lib1b.py"])])]
+
+
+def paused_after_all_verified(ap, monkeypatch):
+    install_reviewer(monkeypatch, ap, verdict="changes", note="rename the helper and add a docstring")
+    pid = start(ap, TWO)
+    run_to(ap, pid, lambda rs: rs["autopromote"]["items"] and rs["autopromote"]["items"][0]["status"] == "paused")
+    run_until(ap, lambda: False, 3)
+    return pid
+
+
+def test_all_tasks_verified_with_a_paused_promotion_is_not_completed_anywhere(ap, repo, monkeypatch):
+    from research import notify
+    from research.api import chat as CH
+    pid = paused_after_all_verified(ap, monkeypatch)
+    rs = SV.load_run(ap, pid)
+    st = SV.status(ap, "ap")
+    assert st["progress"] == "2/2" and all(t["phase"] == "verified" for t in st["tasks"])        # every task verified ...
+    assert rs["state"] == "running" and "completed" not in [h["event"] for h in rs["history"]]   # ... the persisted plan is NOT completed (not only a display matter)
+    h = st["health"]
+    assert h["state"] == "halted" and "HALTED" in h["label"] and h["blocking"][0]["promotion"] and "rename the helper" in h["blocking"][0]["reason"]
+    from research_cli.commands import supervisor as CLS
+    lines = "\n".join(CLS._status_lines(st))
+    assert "PAUSED" in lines and "rename the helper and add a docstring" in lines and "retry --item AP-001" in lines and "HALTED" in lines
+    msg = notify.message_for({"state": "none"}, {"plan": "ap", "blocking": [dict(b, plan="ap") for b in h["blocking"]]})
+    assert "rename the helper" in msg                                                             # Discord/Telegram halt text carries the objection
+    tasks = CH.chat_cmd_tasks(ap)
+    assert "Promotion paused" in str(tasks) and "rename the helper" in str(tasks)
+    pytest.importorskip("research_cli.tui.inbox")
+    from research_cli.tui import inbox
+    items_ = []
+    inbox._blocked(ap, items_)
+    assert "rename the helper" in items_[0]["why"] and "retry --item AP-001" in items_[0]["next"] and "not re-run" in items_[0]["next"]
+    assert not os.path.exists(os.path.join(repo, "lib1.py")), "nothing merged"
+
+
+def test_recovering_the_paused_promotion_reruns_nothing_and_ends_integrated(ap, repo, monkeypatch):
+    pid = paused_after_all_verified(ap, monkeypatch)
+    before = {t: [(a["n"], a.get("commit"), a.get("execution")) for a in e["attempts"]] for t, e in SV.load_run(ap, pid)["tasks"].items()}
+    runs_before = [r["id"] for r in ap.q("SELECT id FROM runs")]
+    install_reviewer(monkeypatch, ap, verdict="approve", note="addressed")
+    SV.autopromote(ap, "ap", "retry", item="AP-001")
+    run_to(ap, pid, lambda rs: rs["state"] == "completed")
+    rs = SV.load_run(ap, pid)
+    assert {t: [(a["n"], a.get("commit"), a.get("execution")) for a in e["attempts"]] for t, e in rs["tasks"].items()} == before   # no task restarted, same commits
+    assert [r["id"] for r in ap.q("SELECT id FROM runs")] == runs_before                                                           # no run (so no HPC job) was created
+    it = items(ap, pid)[0]
+    assert it["status"] == "integrated" and it["objections"][0]["why"].endswith("rename the helper and add a docstring")          # the objection stays on record
+    assert os.path.exists(os.path.join(repo, "lib1b.py")) and SV.status(ap, "ap")["health"]["state"] == "completed"
+
+
+def test_a_plan_persisted_as_completed_with_a_paused_promotion_is_reopened(ap, repo, monkeypatch):
+    pid = paused_after_all_verified(ap, monkeypatch)
+    rs = SV.load_run(ap, pid)
+    rs["state"] = "completed"                                                                      # what an older version stored
+    SV.save_run(ap, rs)
+    st = PS.load_state(ap, "ap")
+    assert SV.plan_health(ap, st, SV.load_run(ap, pid))["state"] == "promotion_unresolved"          # honest even before it is reopened
+    SV.tick(ap)
+    rs = SV.load_run(ap, pid)
+    assert rs["state"] == "running" and rs["history"][-1]["event"] == "reopened"
+    assert SV.status(ap, "ap")["health"]["state"] == "halted"
+    SV.autopromote(ap, "ap", "retry", item="AP-001")                                               # still recoverable
+    assert items(ap, pid)[0]["status"] == "queued"

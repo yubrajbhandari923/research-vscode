@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-120 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+127 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -115,6 +115,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `layout.main_dir` | str | `null` |  | Folder name of the main git checkout (informational; set by Initialize Project). |
 | `layout.ledger_dir` | str | `null` |  | Folder name of the shared-ledger worktree (informational; set by Initialize Project). |
 | `git.commit_checkpoints` | bool | `False` |  | Creating a checkpoint also commits `.research/` to git (never pushes, and only `.research/`). |
+| `git.preflight` | enum | `'warn'` | human only | Before a plan starts or resumes, or promotion is authorized: warn = report uncommitted files and why they matter, then continue; block = refuse until you have reviewed and committed what matters; off = do not check. |
 | `promotion.main_branch` | str | `'main'` | human only | The branch that promotions are prepared from and merged into. |
 | `promotion.test_command` | str | `null` | human only | The command run in a promotion candidate (for example `pytest -q`). Its result is bound to the candidate's exact commit; without it nothing can be verified or approved. |
 | `auto_promotion.numerical_command` | str | `null` | human only | Run after the promotion test command in an automatic-promotion candidate (for example `pytest -q -m oracle`). Optional; recorded as not configured when empty. |
@@ -156,7 +157,13 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor.context_max_chars` | int | `24000` |  | Upper bound for the context the supervisor assembles for an agent attempt (project docs, objectives, prerequisites, history). |
 | `supervisor.commit_verified_work` | bool | `True` | human only | When a task verifies, its changes are committed on the experiment's own branch (never main, never pushed) so they can be promoted and traced to the task. |
 | `supervisor.commit_exclude` | list | `['outputs/', 'results/', 'patch*.yaml', '*.pyc', '__pycache__/', '.venv/']` |  | Folders (relative to the worktree) the supervisor never commits, such as bulky results. |
+| `supervisor.commit_keep` | list | `['*.png', '*.svg', '*.pdf', '*.md', '*.qmd', '*.csv']` |  | File patterns that are still committed with verified work when they sit in an excluded folder (outputs/, results/) and are small, so figures and reports stay with the code that made them. |
+| `supervisor.commit_max_file_mb` | int | `5` |  | Files bigger than this are left out of the experiment-branch commit and listed in the attempt record. |
 | `supervisor.hpc_poll_seconds` | int | `30` |  | How often waiting computational runs are reconciled with the cluster. Unavailable status never causes a resubmission. |
+| `supervisor.recovery.enabled` | bool | `True` | human only | Wait for a finished Slurm job's results to be collected before verifying, and re-verify a failed task unchanged when its missing results arrive. It never relaxes a check, changes the science, raises a budget or submits a job. |
+| `supervisor.recovery.collection_wait_minutes` | int | `120` |  | How long a task whose Slurm job finished waits for its results to be collected and ingested before it is verified on what exists. |
+| `supervisor.recovery.max_reverifications` | int | `5` |  | Most times one attempt is re-verified automatically because its evidence changed. |
+| `supervisor.recovery.max_syncs` | int | `100` |  | Most cluster syncs the recovery step runs for one stopped task while it waits for results. |
 | `supervisor.max_hpc_resubmissions` | int | `1` | human only | How many extra runs an agent may submit per task after failures before the task is blocked. |
 | `supervisor_assistant.profile` | str | `null` | human only | The agent profile used for the read-only planning agent (interventions) and the debug agent (halts). Empty uses `claude`. |
 | `supervisor_assistant.model` | str | `null` | human only | Model for the planning and debug agents. Empty uses the strongest Claude (claude-opus-5-5) when the profile is Claude, otherwise the profile's own model. |
@@ -167,7 +174,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `notifications.summary` | enum | `'facts'` |  | facts = a template filled from recorded facts only (free, instant, no agent). agent = a read-only agent (ask.profile / ask.model) writes a short plain-language summary from the same facts; it is read-only, may cost money, and falls back to the facts if it fails. |
 | `notifications.discord.mention` | bool | `True` |  | Mention the paired operators on Discord alerts that need a human (warnings and errors), so Discord sends a push notification even when the server only notifies for @mentions. |
 | `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
-| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
+| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified', 'recovery']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
 | `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |

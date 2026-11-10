@@ -280,6 +280,9 @@ def cmd_init(a) -> int:
         if not a.no_agents_md:
             print(dim("  AGENTS.md created/updated (only between research markers)"))
         print(dim("  next: research question create \"…\"   ·   research resume"))
+        from research import githygiene as GH
+        for l in GH.scaffold_hint(p):
+            print(dim("  " + l))
     p.close()
     return 0
 

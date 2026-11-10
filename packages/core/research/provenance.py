@@ -425,6 +425,24 @@ def _stale(src: Dict[str, Any], live: Dict[str, Dict[str, Any]]) -> Optional[str
     return f"{src['ref']} changed since it was last read ({d})" if d else None
 
 
+def _stated_value_issues(p: Project, statement: str, ref: str) -> List[Dict[str, Any]]:
+    """A claim that quotes a number next to the name of the metric it cites must quote the value that metric has NOW. A fixed number typed into a generated
+    report stays the same on other data while the record changes; this is the check that catches it. Statements that quote no number are not judged."""
+    m = _METRIC.match(ref)
+    val = ref_state(p, ref).get("value")
+    if not m or val is None:
+        return []
+    stated = re.findall(rf"\b{re.escape(m.group(2))}\b[^0-9+\-.]{{0,40}}([-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)", statement, re.I)
+    if not stated:
+        return []
+    def agrees(x: str) -> bool:
+        d = len(x.split(".")[1].split("e")[0]) if "." in x else 0
+        return abs(round(float(val), d) - float(x)) < 1e-12 or abs(float(val) - float(x)) <= 1e-3 * max(abs(float(val)), 1e-12)
+    if any(agrees(x) for x in stated):
+        return []
+    return [_issue("error", "stated_value_mismatch", f"the statement says {m.group(2)} {stated[0]} but {ref} is {val:.6g} in the record: results are read from the data, never typed in", ref)]
+
+
 def _claim_report(p: Project, cid: str, c: Dict[str, Any], figs: Dict[str, Any], claims: Dict[str, Any],
                   live: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     issues: List[Dict[str, Any]] = []
@@ -446,6 +464,8 @@ def _claim_report(p: Project, cid: str, c: Dict[str, Any], figs: Dict[str, Any],
     stale = []
     for s in srcs:
         issues += _source_issues(p, s, hist, c["kind"] in EVIDENTIAL, live)
+        if s.get("role") == "supports" and not hist and ref_type(s["ref"]) == "metric":
+            issues += _stated_value_issues(p, c.get("statement") or "", s["ref"])
         if s["ref"].startswith("CLM-"):
             dep = claims.get(s["ref"])
             if dep and dep.get("status") == "retired":

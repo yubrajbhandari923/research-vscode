@@ -65,7 +65,7 @@ REVIEW = """Six different things, easy to confuse:
 Nothing here bypasses your PIN or an approval gate: the TUI calls the same operations as the CLI and asks for the PIN when they need it.
 """
 KEYS = [("i", "open the Inbox"), ("Enter / x", "actions for the selected item"), ("w", "what does this mean? (selected status or item)"), ("?", "this guide (any screen)"),
-        ("1-8", "switch tab (not on Decisions)"), ("1-9", "Decisions: pick that option"), ("[ ]", "previous / next tab"), ("r", "refresh now (also every 5 s)"), ("/", "filter rows"),
+        ("h", "Git health: uncommitted files, worktrees, reviewed commit"), ("1-8", "switch tab (not on Decisions)"), ("1-9", "Decisions: pick that option"), ("[ ]", "previous / next tab"), ("r", "refresh now (also every 5 s)"), ("/", "filter rows"),
         ("k", "cancel the selected run"), ("a / d", "approve / reject a proposal (PIN)"), ("t", "Decisions: answer in your own words"),
         ("ctrl+t", "dark / light theme"), ("q", "quit")]
 TROUBLE = """The Decisions tab is empty but an experiment says needs_review.   That is a status, not a question: see the Inbox (i).

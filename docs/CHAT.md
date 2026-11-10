@@ -158,7 +158,7 @@ so alerts that need a person (warnings and errors) also **@mention the paired op
 not ping). For the best result set the Discord channel's notifications to "Only @mentions" and turn on mobile push in Discord.
 
 Kinds (`notifications.alerts.on`, default all): `halt`, `task_failed`, `approval_needed`, `promotion_ready`, `plan_finished`, `run_failed`, `budget`,
-`supervisor_down`, `decision`, `provider_limit`, `plan_started`, `experiment_started`, `experiment_finished`, `run_finished`, `task_started`, `task_verified`. The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
+`supervisor_down`, `decision`, `provider_limit`, `plan_started`, `experiment_started`, `experiment_finished`, `run_finished`, `task_started`, `task_verified`, `recovery` (a task recovered by itself when late results arrived; medium level). The same alert is suppressed for `notifications.alerts.cooldown_minutes` (30), then repeated once as
 "still: ..."; after `escalate_after` (3) failures in a row for one task the message suggests a next step; "moving again" is sent once. More than five alerts
 for one project in a minute fold into one summary. Approval card buttons disappear after `approval_expiry_hours` (24); the proposal stays pending (waiting never approves or denies).
 

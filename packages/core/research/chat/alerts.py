@@ -14,7 +14,7 @@ from ..store import append_jsonl, _atomic_write
 
 KINDS = ("halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down",
          "decision", "provider_limit",                 # these two: H.7 and H.10 producers (WP14b / later packages)
-         "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "answer")
+         "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "answer", "recovery")
 # `notifications.level` is a preset over the kinds: each kind has the lowest level that sends it. An unlisted kind counts as "medium".
 #   low     the plan starts or ends, plus failures (a halt is a failure: nothing can move)
 #   medium  (default) plus each experiment starting and FINISHING with its recorded results, and what waits for you (approvals, decisions...)
@@ -25,7 +25,7 @@ LEVEL_HELP = {"off": "nothing automatic (commands still work)",
               "medium": "plus each experiment started and finished (with the results it recorded) and anything waiting for you",
               "high": "plus every run and every task"}
 KIND_LEVEL = {"halt": 1, "task_failed": 1, "run_failed": 1, "budget": 1, "supervisor_down": 1, "plan_started": 1, "plan_finished": 1,
-              "approval_needed": 2, "decision": 2, "promotion_ready": 2, "provider_limit": 2, "experiment_started": 2, "experiment_finished": 2,
+              "approval_needed": 2, "recovery": 2, "decision": 2, "promotion_ready": 2, "provider_limit": 2, "experiment_started": 2, "experiment_finished": 2,
               "run_finished": 3, "task_started": 3, "task_verified": 3,
               "answer": 0}      # a reply to something you asked for (/ask): never filtered by the level or the kind list
 SUGGEST = {"halt": "continue with another agent, pause the plan, or run /debug", "task_failed": "continue with another agent (/continue T-n PROFILE) or pause the plan"}

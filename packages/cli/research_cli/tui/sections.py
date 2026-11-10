@@ -334,4 +334,109 @@ class Settings(Section):
             app.refresh_data()
 
 
-SECTIONS: Dict[str, Section] = {s.table: s for s in (Work(), Agents(), Guide(), Settings())}
+# ----------------------------------------------------------------------------------------------- git health
+class Git(Section):
+    table, title = "git", "Git health"
+    columns = ("Kind", "Item", "Where", "State")
+    empty = ("Git is clean: nothing is waiting to be reviewed.\n\nThis page keeps three places apart: your main repository (yours: Research OS commits there only what you review and confirm), "
+             "the experiment worktrees (the supervisor commits verified work on each experiment's own branch) and the ledger (Research OS's own records).")
+
+    def __init__(self) -> None:
+        self._r: Dict[str, Any] = {}
+
+    def rows(self, app) -> List[Row]:
+        r = self._r = app.safe("git_health") or {}
+        m, out = r.get("main") or {}, []
+        sc = [e for e in (m.get("untracked") or []) + (m.get("tracked_changes") or []) if e["kind"] in ("scaffold", "website")]
+        if sc:
+            out.append(("scaffold", Text("scaffold", style="" if plain() else TEAL), f"generated project files ({len(sc)})", "main", Text("not committed", style="" if plain() else AMBER)))
+        for e in (m.get("tracked_changes") or []) + (m.get("untracked_meaningful") or []):
+            out.append((f"f:{e['path']}", Text(e["kind"], style="" if plain() else VIOLET), short(e["path"], 40), "main", Text(e["state"], style="" if plain() else AMBER)))
+        for e in m.get("secrets") or []:
+            out.append((f"f:{e['path']}", Text("secret", style="" if plain() else "#F07880"), short(e["path"], 40), "main", Text("never committed", style="" if plain() else "#F07880")))
+        if m.get("untracked_noise"):
+            out.append(("noise", Text("generated", style="" if plain() else MUTED), f"{len(m['untracked_noise'])} path(s) not ignored", "main", Text("add to .gitignore", style="" if plain() else AMBER)))
+        for w in r.get("worktrees") or []:
+            st = f"{w['dirty']} modified, {w['untracked']} untracked, {w['unpromoted_commits']} unpromoted" if w["present"] else "not on this machine"
+            out.append((f"wt:{w['id']}", Text("worktree", style="" if plain() else VIOLET), w["id"], w.get("experiment") or "", st))
+        for x in r.get("promotions") or []:
+            out.append((f"pr:{x['id']}", Text("promotion", style="" if plain() else TEAL), x["id"], x.get("experiment") or "", badge(x.get("state"))))
+        led = r.get("ledger") or {}
+        if led.get("uncommitted_files"):
+            out.append(("led", Text("ledger", style="" if plain() else MUTED), "Research OS records", "ledger", f"{led['uncommitted_files']} uncommitted"))
+        return out
+
+    def detail(self, app, key: str) -> Text:
+        r, t = self._r, Text()
+        m = r.get("main") or {}
+        kind, _, ident = key.partition(":")
+        if key == "scaffold":
+            files = [e["path"] for e in (m.get("untracked") or []) + (m.get("tracked_changes") or []) if e["kind"] in ("scaffold", "website")]
+            _head(t, "Generated project files", "Rules and agent configuration Research OS wrote. Committing them gives every worktree and clone the same rules.")
+            for f in files:
+                t.append("  " + f + "\n")
+            t.append("\nChoose Review to see the staged diff, then Commit. Only these files are committed; nothing is pushed.\n", style="" if plain() else MUTED)
+        elif kind == "f":
+            e = next((x for x in (m.get("tracked_changes") or []) + (m.get("untracked") or []) if x["path"] == ident), {})
+            _head(t, ident, f"{e.get('kind', '')} · {e.get('state', '')}")
+            t.append(str(e.get("why") or "") + "\n")
+            if e.get("kind") == "secret":
+                t.append("\nResearch OS will not commit this. Add it to .gitignore so it cannot be added by accident.\n", style="" if plain() else "#F07880")
+        elif key == "noise":
+            _head(t, "Generated or internal files that are not ignored", "Caches, compiled files and Research OS runtime state.")
+            for e in m.get("untracked_noise") or []:
+                t.append(f"  {e['path']}\n")
+            t.append("\nChoose Preview ignore rules: a managed block is added to .gitignore. Source, plans, reports and documentation are never ignored.\n", style="" if plain() else MUTED)
+        elif kind == "wt":
+            w = next((x for x in r.get("worktrees") or [] if x["id"] == ident), {})
+            _head(t, f"{ident}  {w.get('experiment') or ''}", "An experiment's own worktree. The supervisor commits verified work on its branch; it is not committed on main.")
+            for k in ("branch", "path", "dirty", "untracked", "unpromoted_commits"):
+                _line(t, k.replace("_", " "), short(w.get(k), 90))
+            for f in w.get("files") or []:
+                t.append("  " + f + "\n")
+        elif kind == "pr":
+            x = next((y for y in r.get("promotions") or [] if y["id"] == ident), {})
+            _head(t, f"{ident}  {x.get('title') or ''}", "Verified code on its way into main; each gate is a separate human step (Worktrees page).")
+            for k in ("state", "experiment", "branch"):
+                _line(t, k, short(x.get(k), 90))
+        else:
+            led = r.get("ledger") or {}
+            _head(t, "Ledger", "Research OS's own records. Reported only: its own checkpoint commands manage it, never the commit action here.")
+            _line(t, "path", short(led.get("path"), 90))
+            _line(t, "uncommitted", short(led.get("uncommitted_files")))
+        return t
+
+    def actions(self, app, key: str) -> List[Tuple[str, str]]:
+        kind = key.partition(":")[0]
+        if key == "scaffold":
+            return [("review", "Review the staged diff"), ("commit", "Commit the generated scaffolding (asks first)")]
+        if kind == "f":
+            e = next((x for x in ((self._r.get("main") or {}).get("tracked_changes") or []) + ((self._r.get("main") or {}).get("untracked") or []) if x["path"] == key[2:]), {})
+            return [("ignore_secret", "Add to .gitignore")] if e.get("kind") == "secret" else [("review", "Review the staged diff"), ("commit", "Commit this file only (asks first)")]
+        if key == "noise":
+            return [("ignore", "Preview ignore rules, then add them to .gitignore")]
+        return []
+
+    def act(self, app, key: str, action: str) -> None:
+        from .widgets import Confirm
+        kind, _, ident = key.partition(":")
+        paths = [ident] if kind == "f" else None
+        if action in ("review", "commit"):
+            pv = app.safe("git_commit_preview", paths=paths, scaffold=key == "scaffold") or {}
+            if not pv.get("files"):
+                return app.notify("Nothing to commit there: " + "; ".join(x["why"] for x in pv.get("refused") or []) if pv.get("refused") else "Nothing to commit.", severity="warning")
+            app.query_one("#git-d").update(Text(f"Staged diff of {len(pv['files'])} file(s)\n{pv['stat']}\n{pv['diff'][:8000]}"))
+            if action == "commit":
+                app.push_screen(Confirm(f"Commit exactly these {len(pv['files'])} file(s) on {(self._r.get('main') or {}).get('branch')}?\n{pv['stat'][:700]}\nMessage: {pv['message']}\nNothing else is committed and nothing is pushed."),
+                                lambda ok: ok and app._do("git_commit", paths=paths, scaffold=key == "scaffold", confirm=True))
+        elif action == "ignore":
+            pl = app.safe("git_ignore", apply=False) or {}
+            if not pl.get("add"):
+                return app.notify("Nothing to add: generated files are already ignored.")
+            app.push_screen(Confirm("Add a managed block to .gitignore for generated and internal files?\n" + ", ".join(pl["add"][:10]) + "\nYour own lines are untouched; source, plans, reports and docs are never ignored."),
+                            lambda ok: ok and app._do("git_ignore", apply=True))
+        elif action == "ignore_secret":
+            app.push_screen(Confirm(f"Add {ident} to .gitignore so it can never be committed by accident?"), lambda ok: ok and app._do("git_ignore", apply=True, patterns=[ident]))
+
+
+SECTIONS: Dict[str, Section] = {s.table: s for s in (Work(), Agents(), Guide(), Settings(), Git())}
