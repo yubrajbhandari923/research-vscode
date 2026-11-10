@@ -167,6 +167,11 @@ def run_debug(p, plan_ref: str, halt: Optional[Dict[str, Any]] = None, tasks: Op
                              "class": o.get("class") if o.get("class") in ("operational", "implementation", "scientific", "resource") else "implementation"})
         rec.update(state="done", summary=(str(raw.get("summary") or "") + ("\n\n" + extra if extra else ""))[:1800], options=opts,
                    recommended=raw.get("recommended") if isinstance(raw.get("recommended"), int) and 0 <= raw["recommended"] < len(opts) else None, finished=now_iso())
+    except I.ProviderLimited as ex:
+        if ex.waitable:      # not a failure: the same diagnosis runs again by itself when the limit resets (see `step`)
+            rec.update(state="waiting_provider", error=str(ex)[:300], resume_at=ex.until, provider=ex.provider, finished=now_iso())
+        else:
+            rec.update(state="failed", error=str(ex)[:400], finished=now_iso())
     except (ResearchError, ValueError) as ex:
         rec.update(state="failed", error=str(ex)[:400], finished=now_iso())
     _write(_dir(p, "latest.json"), rec)
@@ -204,6 +209,8 @@ def message_for(rec: Dict[str, Any], halt: Dict[str, Any]) -> str:
         else:
             body += "\n\nNo obvious fix. Reply /say <your instruction>."
         return head + body
+    if rec.get("state") == "waiting_provider":
+        return head + f"\n\n(The diagnosis is waiting: {rec.get('error')}. It runs again by itself when the limit resets; or reply /say <instruction>.)"
     return head + ("\n\n(The debug agent failed: " + str(rec.get("error"))[:160] + ")" if rec.get("state") == "failed" else "\n\nReply /debug for a diagnosis or /say <instruction>.")
 
 
@@ -366,10 +373,11 @@ def step(p) -> None:
             if not m or m.get("fingerprint") != h["fingerprint"]:
                 m = {"fingerprint": h["fingerprint"], "since": time.time(), "notified": False, "debugged": False}
                 _write(marker, m)
+            _resume_diagnosis(p, st["plan_key"], h, m)         # a diagnosis or investigator that a usage limit refused runs again after the reset
             if _auto_investigator(p) and not m.get("investigated") and time.time() - m["since"] >= float(c["halt_grace_seconds"]):
                 m["investigated"] = True
                 _write(marker, m)
-                threading.Thread(target=_auto_investigate, args=(p.root, h), daemon=True).start()       # H.5: once per halt, off the supervisor's tick
+                threading.Thread(target=_auto_investigate, args=(p.root, {**h, "plan": st["plan_key"]}), daemon=True).start()       # H.5: once per halt, off the supervisor's tick
             if time.time() - m["since"] < float(c["halt_grace_seconds"]) or m.get("notified"):
                 continue
             key = st["plan_key"] + h["fingerprint"]
@@ -399,6 +407,24 @@ def step(p) -> None:
             pass
 
 
+def _resume_diagnosis(p, plan_key: str, h: Dict[str, Any], m: Dict[str, Any]) -> None:
+    """A diagnosis (or the automatic investigator) that was refused by a provider's usage limit runs again once the reset time has passed. Time comes from the one
+    clock the supervisor's own limit waits use. Bounded: the limit is re-recorded each time it is hit, so it never spins."""
+    from . import supervisor as SV
+    now = SV._now_ts()
+    rec = latest_debug(p)
+    if rec and rec.get("state") == "waiting_provider" and rec.get("fingerprint") == h["fingerprint"] and now >= float(rec.get("resume_at") or 0):
+        key = plan_key + h["fingerprint"]
+        if not (key in _threads and _threads[key].is_alive()):
+            th = threading.Thread(target=_debug_and_alert, args=(p.root, plan_key, h), daemon=True)
+            _threads[key] = th
+            th.start()
+    if m.get("investigate_after") and now >= float(m["investigate_after"]):
+        m.pop("investigate_after")
+        m["investigated"] = False                  # the investigator was refused by a limit: arm it again
+        _write(_dir(p, "halt-" + plan_key + ".json"), m)
+
+
 def _auto_investigator(p) -> bool:
     from . import investigator
     return bool(investigator.cfg(p)["auto"])
@@ -408,12 +434,21 @@ def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:
     """Worker thread: the investigator once per blocked task of a halted plan (failures the rules could not settle or whose retries ran out; limits and
     approval waits are not blocked tasks). `maybe_auto` applies max_per_plan, budget_usd and once-per-(task, fingerprint)."""
     from .store import Project
-    from . import investigator
+    from . import intervene as I, investigator
     try:
         with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
             for b in halt["blocking"]:
                 if b["phase"] in ("blocked", "attention") and not b.get("promotion"):
-                    investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
+                    try:
+                        investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
+                    except I.ProviderLimited as ex:       # refused by a usage limit: try again after the reset, not never
+                        if ex.waitable:
+                            marker = _dir(p, "halt-" + str(halt.get("plan") or b.get("plan") or "") + ".json")
+                            _log(p, f"investigator waits for {ex.provider}: {ex}")
+                            m = _read(marker)
+                            if m is not None:
+                                m["investigate_after"] = ex.until
+                                _write(marker, m)
     except Exception:    # noqa: BLE001 - a diagnosis must never break the watcher
         pass
 

@@ -74,6 +74,7 @@ More in [CHAT.md](CHAT.md).
 | You edited a record file by hand | `research sync` imports hand-edited files |
 | The index looks wrong or is locked | Stop other clients and retry. `research rebuild` rebuilds the index from the canonical records. Back up `.research/` first |
 | The promotion's tests found no tests, or a verified task's file is missing from the candidate | An agent committed its own work, so no commit was recorded. Update to 3.5.3, `research supervisor restart`, `research plan autopromote PLAN coverage`, then `research plan autopromote PLAN retry --item AP-001` (no task re-runs) |
+| A task exhausted its attempts (or an intervention failed half-way) | `research task intervene T-006` shows why and what you can do; `attempts N --yes` raises the budget (no cap of 10), `takeover` lets you work in its worktree, `research intervention diagnose INT-003` recovers a partly applied intervention. See Supervisor §27-28 |
 | "Newer schema refused" | Install a newer release. Do not lower the stored schema version |
 
 If none of this helps, run `research doctor --all` and `research version --json` and include both when you report the problem.

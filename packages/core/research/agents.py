@@ -441,6 +441,7 @@ def run_headless(p: Project, d: Dict[str, Any], timeout: Optional[float] = None)
                    fingerprint=pol.get("fingerprint"), level=pol.get("level"), profile=d["profile"], model=d["model"],
                    wall_seconds=round(time.time() - t0, 1)) if parsed else None
     return {"exit_code": code, "timed_out": timed_out, "result": parsed.get("result_text") or out[-4000:], "stderr": err[-1000:],
+            "raw_stdout": out[-20000:], "raw_stderr": err[-20000:],       # what a provider's limit message is read from (the supervisor's attempts read their logs the same way)
             "usage": rec or "unavailable (the provider reported no usage for this session)"}
 
 

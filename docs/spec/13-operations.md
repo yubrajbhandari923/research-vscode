@@ -94,3 +94,9 @@ Automatic promotion promotes the verified commits of an experiment branch, whoev
 
 A diagnosis requested from chat (Diagnose, `/debug`) is an answer, not an alert: it is delivered regardless of the halt card's cooldown. A paused promotion is diagnosed from its own record without an agent; a failure of the diagnosis is itself reported.
 
+## 13.9 Interventions and human takeover
+
+An intervention is validated as a whole before any action runs: the remaining actions are applied in memory to the complete plan and normalized against the plan schema; `agent.role` is one of planner, implementer, verifier, analyst, human; the attempt budget is bounded by the plan's `max_total_attempts`, not a fixed constant. Applied actions are flagged; `add_task` is idempotent. A failed intervention is recovered with `diagnose`, `edit` (one not-yet-applied action; returns to `proposed`, so a protected change needs the PIN again) and `retry` (under its own approval). Human controls (`research task intervene`) are deterministic wrappers over existing operations; budget changes are recorded interventions; takeover is a flag on the task's run entry that the scheduler honours (phase `takeover`), released through normal verification of the latest attempt with `takeover` provenance on it. Nothing resets or voids an attempt; scientific, frozen-test and resource changes keep requiring human approval.
+
+A halt diagnosis or investigation refused by a usage limit is `waiting_provider` with a resume time on the account's limit record (the one clock the supervisor's task waits use), and re-runs after it; a credit balance is a failure.
+

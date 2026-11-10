@@ -453,6 +453,8 @@ class ResearchTUI(App):
             return self.goto(it["tab"], ref)
         if act == "help":
             return self.push_screen(Help(helptext.section_for(it["kind"])))
+        if act == "intervene":
+            return self.intervene(ref)
         if act == "artifacts":
             rows = IN.artifact_rows(self.srv.project(sync=False), ref)
             return self.query_one("#inbox-d", Static).update(IN.detail(it, IN.artifact_text(rows)))
@@ -482,6 +484,46 @@ class ResearchTUI(App):
             msg = {"completed": f"Mark {ref} completed?\nYou are accepting its synthesis as the scientific conclusion.",
                    "ready": f"Mark {ref} ready?\nYou accept this proposal; it can then be run.", "abandoned": f"Abandon {ref}?\nIt is kept for the record and no longer runs."}[status]
             self.push_screen(Confirm(msg), lambda ok: ok and self._do("set_status", id=ref, status=status, reason="decided in the TUI"))
+
+    # ---- human controls for one task (the same menu as `research task intervene`; no model involved)
+    def intervene_prompt(self) -> None:
+        self.push_screen(Prompt("Task id (T-006)"), lambda v: v and self.intervene(v.strip()))
+
+    def intervene(self, tid: str) -> None:
+        m = self.safe("task_intervene_menu", task=tid)
+        if not m:
+            return
+        a, head = m["attempts"], f"{tid} {m['title'][:36]}: {m['phase']}, attempts {m['attempts']['used']}/{m['attempts']['allowed']}"
+        head += "  EXHAUSTED" if a["exhausted"] else ""
+        head += "  (agent running: nothing here stops it)" if m["running"] else ""
+        head += "  HUMAN TAKEOVER" if m.get("takeover") else ""
+        opts = [(x["id"], x["label"] + ("" if x["available"] else f"  [{x['why_not']}]")) for x in m["actions"]]
+        self.push_screen(ActionMenu(head, opts), lambda act: act and self._intervene_pick(m, act))
+
+    def _intervene_pick(self, m: Dict[str, Any], act: str) -> None:
+        x = next(a for a in m["actions"] if a["id"] == act)
+        if not x["available"]:
+            return self.notify(f"Not available: {x['why_not']}", severity="warning")
+        if act == "worktree":
+            return self.notify(f"Worktree: {m['worktree']}  (cd there to work; `release` hands the task back)", timeout=20)
+        if act == "logs":
+            r = self.safe("task_intervene_run", task=m["task"], action="logs")
+            return self.push_screen(Help((r or {}).get("out") or "(no output yet)")) if r else None
+        if x.get("arg"):
+            return self.push_screen(Prompt(f"{x['label']}: enter {x['arg']}"), lambda v: v and self._intervene_confirm(m, act, v.strip()))
+        self._intervene_confirm(m, act, None)
+
+    def _intervene_confirm(self, m: Dict[str, Any], act: str, value: Optional[str]) -> None:
+        pv = self.safe("task_intervene_preview", task=m["task"], action=act, value=value)
+        if not pv:
+            return
+        if not pv["available"]:
+            return self.notify(f"Not available: {pv.get('why_not')}", severity="warning")
+
+        def go() -> None:
+            run = lambda **kw: self._do("task_intervene_run", task=m["task"], action=act, value=value, **kw)
+            return self._with_pin(lambda pin: run(pin=pin)) if pv["needs_pin"] else run()
+        self.push_screen(Confirm(f"{m['task']}: {act}{' ' + value if value else ''}\n\n" + "\n".join("- " + l for l in pv["lines"]) + "\n\nApply?"), lambda ok: ok and go())
 
     # ---- synthesis: automatic prepare, agent-assisted launch, researcher-controlled record
     def _prepare_analyst(self, exp: str) -> None:

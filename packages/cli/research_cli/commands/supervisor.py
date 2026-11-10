@@ -343,6 +343,16 @@ def _cmd_debug(a, p) -> int:
     return _emit(a, rec, lines)
 
 
+def _diagnosis_lines(d) -> list:
+    out = [bold(f"{d['id']} on {d['task']}: {d['state']}") + dim(f"  {d['applied']} applied, {d['pending']} not applied")]
+    if d.get("error"):
+        out.append(yellow("  " + d["error"][:400]))
+    out += [f"  {r['n']}. [{'applied' if r['applied'] else 'NOT applied'}] {r['summary']}" for r in d["actions"]]
+    out.append((green("  the rest can be applied now") if d["applicable_now"] else red("  the rest cannot be applied: " + str(d["problem"])[:300])))
+    out.append("  next: " + d["next"])
+    return out
+
+
 def cmd_intervention(a, p) -> int:
     from research import intervene as I
     act = a.action
@@ -353,7 +363,16 @@ def cmd_intervention(a, p) -> int:
         raise ResearchError(f"{act} needs an intervention id (INT-001)")
     if act == "show":
         return _emit(a, I.load(p, a.id), lambda d: (_show_intervention(d), [])[1])
-    if act == "approve":
+    if act == "diagnose":
+        return _emit(a, I.diagnose(p, a.id), _diagnosis_lines)
+    if act == "retry":
+        it = I.retry(p, a.id, a.note)
+    elif act == "edit":
+        import json as _json
+        if not a.n or not a.action_json:
+            raise ResearchError("edit needs the action number and --action-json '{\"type\": ...}'")
+        it = I.edit_action(p, a.id, a.n, _json.loads(a.action_json), a.note)
+    elif act == "approve":
         it = I.approve(p, a.id, a.note)
     elif act == "reject":
         it = I.reject(p, a.id, a.note)
@@ -560,9 +579,11 @@ def attach_plan(g, add) -> None:
 
 
 def attach(sub, add, group) -> None:
-    x = add(sub, "intervention", cmd_intervention, "supervisor interventions: list | show | approve | reject | cancel | plan")
-    x.add_argument("action", choices=["list", "show", "approve", "reject", "cancel", "plan"])
+    x = add(sub, "intervention", cmd_intervention, "supervisor interventions: list | show | approve | reject | cancel | plan | diagnose | retry | edit")
+    x.add_argument("action", choices=["list", "show", "approve", "reject", "cancel", "plan", "diagnose", "retry", "edit"])
     x.add_argument("id", nargs="?", help="INT-001 (list: optionally a task id to filter)")
+    x.add_argument("n", nargs="?", type=int, help="edit: the number of the not-yet-applied action to correct")
+    x.add_argument("--action-json", help="edit: the corrected action as JSON, e.g. '{\"type\": \"set_max_attempts\", \"value\": 12}'")
     x.add_argument("--note", help="approve: why · reject: reason")
     x = add(sub, "env", cmd_env, "the project's Python environment: check | create (uv) | install")
     x.add_argument("action", choices=["check", "create", "install"])
