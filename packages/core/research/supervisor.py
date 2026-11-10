@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import autopromote as AP, commitprov as CP, durability, fork as FK, githygiene as GH, planspec as PS, recovery as RC, registry, taskprompt
+from . import autopromote as AP, commitprov as CP, selfheal as SH, durability, fork as FK, githygiene as GH, planspec as PS, recovery as RC, registry, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
@@ -326,7 +326,7 @@ def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
         return out
     moving = [r for r in unfinished if r[2] in ACTIVE_PHASES]
     ap = (rs.get("autopromote") or {}).get("items") or []
-    promo = any(i["status"] not in ("integrated", "noop", "cancelled", "paused") for i in ap)
+    promo = any(i["status"] not in ("integrated", "noop", "cancelled", "paused") or AP.retrying(p, i) for i in ap)
     iv = False
     try:
         from . import intervene as IV
@@ -335,7 +335,7 @@ def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
         pass
     blocking = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason, "recovery": rec} for k, tid, ph, reason, rec in unfinished if ph in HUMAN_PHASES]
     paused_promos = [{"task": i["id"], "key": i["id"], "title": f"promotion of {i['experiment']}", "phase": "blocked", "reason": i.get("why"), "promotion": True}
-                     for i in open_promos if i["status"] in ("paused", "suspended")]
+                     for i in open_promos if i["status"] in ("paused", "suspended") and not i.get("retrying")]
     wp = waiting_provider(rs)
     wpx = {"waiting_provider": wp} if wp else {}
     if moving or promo or iv:
@@ -450,6 +450,7 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             _poll_hpc(p, st, rs, c, out)
             RC.step(p, st, rs, c, out)
             AP.step(p, st, rs, c, out)
+            SH.step(p, st, rs, c, out)          # self-healing (opt-in): the debug agent's diagnosis acts, within bounds
             from . import intervene as IV
             save_run(p, rs)          # interventions edit the run state through the public APIs; persist what this pass already did first
             IV.step(p, st, rs, out)
@@ -472,6 +473,11 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             save_run(p, rs)
     if busy:
         out.pop("next_wake", None)
+    try:
+        from . import jobs as JB
+        JB.step(p, out)            # delegated jobs: checkpointed, resumed after a restart; they only drive the machinery above
+    except Exception:   # noqa: BLE001
+        pass
     return out
 
 

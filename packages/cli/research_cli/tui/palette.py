@@ -11,6 +11,8 @@ class Finder(Provider):
         for ident, key, label, _ in NAV_ITEMS:
             yield f"Go to {label}", f"Show the {label} section ({key})", (lambda i=ident: app.action_nav(i))
         yield "Refresh now", "Reload everything from the project", app.action_refresh
+        yield "Settings profile…", "Apply default / interactive / overnight (or yours) to this project, with a preview", app.profile_prompt
+        yield "Is this safe to leave overnight?", "Check the project against the overnight profile", app.profile_check
         yield "Intervene on a task…", "Budgets, retry, switch agent, take over (previews first)", app.intervene_prompt
         yield "Open the guide", "What the statuses and actions mean", app.action_help
         yield "Switch theme", "Dark or light", app.action_theme

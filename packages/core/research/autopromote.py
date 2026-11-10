@@ -26,6 +26,7 @@ import fnmatch
 import hashlib
 import json
 import os
+import re
 import subprocess
 import time
 from typing import Any, Dict, Iterator, List, Optional
@@ -56,6 +57,72 @@ def fingerprint(p) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
+FINGERPRINT_KEYS = ("promotion.test_command", "promotion.main_branch", "auto_promotion.numerical_command", "auto_promotion.reviewer_profile",
+                    "auto_promotion.require_distinct_reviewer", "auto_promotion.protected_test_globs", "auto_promotion.max_file_mb")
+STANDING = "auto_promotion.auto_approve_verified_code"
+
+
+def standing_enabled(p) -> bool:
+    return bool(registry.section(p, "auto_promotion").get("auto_approve_verified_code"))
+
+
+def _standing_path(p) -> str:
+    return p.path("supervisor", "standing_authorization.json")
+
+
+def _standing_read(p) -> Optional[Dict[str, Any]]:
+    try:
+        with open(_standing_path(p), encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) and d.get("fingerprint") else None
+    except (OSError, ValueError):
+        return None
+
+
+def bind_standing(p, by: Optional[str] = None) -> Dict[str, Any]:
+    """Record the standing authorization: who turned it on (a human, with the PIN the setting needs) and the verification policy it was given for. One file per
+    project, so it covers every plan and survives restarts. A change to the policy made around Settings no longer matches it and suspends it."""
+    from .store import _atomic_write
+    rec = {"by": by or (p.author or {}).get("author_name") or os.environ.get("RESEARCH_AUTHOR") or "human", "ts": now_iso(), "fingerprint": fingerprint(p), "setting": STANDING}
+    os.makedirs(os.path.dirname(_standing_path(p)), exist_ok=True)
+    _atomic_write(_standing_path(p), json.dumps(rec, indent=1, sort_keys=True) + "\n")
+    return rec
+
+
+def on_settings_changed(p, keys) -> None:
+    """Called by Settings after a human's change was written. Turning the setting on binds the current policy; off removes the binding; a change to a policy key
+    while it is on re-binds (that change already needed the human's approval). Nothing here runs for an agent: agents cannot change policy settings."""
+    if STANDING in keys:
+        if standing_enabled(p):
+            bind_standing(p)
+        elif os.path.exists(_standing_path(p)):
+            os.unlink(_standing_path(p))
+    elif standing_enabled(p) and set(keys) & set(FINGERPRINT_KEYS):
+        bind_standing(p)
+
+
+def standing(p) -> Optional[Dict[str, Any]]:
+    """The standing authorization when the setting is on AND a human bound it through Settings. The setting alone never authorizes: config.yaml is a file an agent
+    could edit, so a value written around Settings has no binding and fails closed (see `mode`)."""
+    if not standing_enabled(p):
+        if os.path.exists(_standing_path(p)):
+            try:
+                os.unlink(_standing_path(p))               # turned off: the authorization is gone, not merely idle
+            except OSError:
+                pass
+        return None
+    return _standing_read(p)
+
+
+def authorization(p, rs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The authorization in force for this plan run: a human's per-plan one, else the project's standing one."""
+    a = _state(rs)["authorized"]
+    if a:
+        return a
+    s = standing(p)
+    return {"by": s["by"], "ts": s["ts"], "fingerprint": s["fingerprint"], "standing": True, "note": f"standing authorization ({STANDING})"} if s else None
+
+
 def _state(rs: Dict[str, Any]) -> Dict[str, Any]:
     return rs.setdefault("autopromote", {"authorized": None, "items": [], "integrated": {}})
 
@@ -65,19 +132,31 @@ def declared(st: Dict[str, Any]) -> bool:
 
 
 def mode(p, st, rs) -> Dict[str, Any]:
-    """`manual` (default) | `active` | `suspended` (declared and authorized but the policy changed: fail closed)."""
-    a = _state(rs)
-    if not declared(st) or not a["authorized"]:
-        return {"mode": "manual", "declared": declared(st), "authorized": bool(a["authorized"])}
-    if a["authorized"]["fingerprint"] != fingerprint(p):
-        return {"mode": "suspended", "why": "verification policy changed since authorization; re-authorize", "declared": True, "authorized": True}
-    return {"mode": "active", "declared": True, "authorized": True, "by": a["authorized"]["by"]}
+    """`manual` (default) | `active` | `suspended` (authorized but the policy changed or the setup is incomplete: fail closed). With the standing authorization on,
+    every plan of the project is eligible (no per-plan declaration or PIN); without it, only a plan that declares `execution.auto_promotion: true` and was authorized."""
+    auth = authorization(p, rs)
+    if not auth and standing_enabled(p):
+        return {"mode": "suspended", "why": f"{STANDING} is on but was not given through Settings (no human binding): run `research config set {STANDING} true` (your PIN) to authorize",
+                "declared": True, "authorized": False, "standing": True}
+    is_standing = bool(auth and auth.get("standing"))
+    decl = declared(st) or is_standing
+    if not decl or not auth:
+        return {"mode": "manual", "declared": decl, "authorized": bool(auth)}
+    if auth["fingerprint"] != fingerprint(p):
+        return {"mode": "suspended", "why": "verification policy changed outside Settings since authorization; " + ("save the setting again (turn it off and on) to re-authorize" if is_standing else "re-authorize"),
+                "declared": True, "authorized": True, "standing": is_standing}
+    if is_standing:
+        try:
+            check_ready(p, st)
+        except ResearchError as ex:
+            return {"mode": "suspended", "why": f"the standing authorization is on but automatic promotion is not set up: {ex}", "declared": True, "authorized": True, "standing": True}
+    return {"mode": "active", "declared": True, "authorized": True, "by": auth["by"], "standing": is_standing}
 
 
 def check_ready(p, st) -> None:
     c = policy(p)
-    if not declared(st):
-        raise ResearchError("The plan does not declare execution.auto_promotion: true", hint="Add it to the plan YAML, review the diff, apply it.")
+    if not (declared(st) or standing_enabled(p)):
+        raise ResearchError("The plan does not declare execution.auto_promotion: true", hint="Add it to the plan YAML, review the diff, apply it (or turn on auto_promotion.auto_approve_verified_code).")
     if not p.location.linked:
         raise ResearchError("Automatic promotion needs shared-ledger mode and experiment workspaces")
     if c["conflicts"]:
@@ -185,9 +264,46 @@ def _set(item: Dict[str, Any], status: str, **kw: Any) -> None:
     item["history"].append({"ts": now_iso(), "status": status, **({"error": kw["error"]} if kw.get("error") else {})})
 
 
-def _pause(item: Dict[str, Any], why: str, out: Dict[str, Any]) -> None:
-    _set(item, "paused", error=why)
-    out["events"].append(f"automatic promotion {item['id']} ({item['experiment']}) paused: {why}")
+_TRANSIENT = re.compile(r"moved since this candidate was prepared|index\.lock|another git process|unable to create|cannot lock ref|uncommitted changes; nothing was merged|"
+                        r"fast-forward merge was refused|database is locked|timed out|temporarily unavailable", re.I)
+
+
+def transient(ex: BaseException) -> bool:
+    """A failure that clears by itself: main moved while the candidate was being checked, a git lock, a briefly dirty main worktree. A policy refusal, failed tests, a
+    changes-requested review or failed provenance are real findings and never transient."""
+    return isinstance(ex, ResearchError) and not isinstance(ex, PolicyBlocked) and bool(_TRANSIENT.search(str(ex)))
+
+
+def retrying(p, item: Dict[str, Any]) -> bool:
+    """A paused item that will retry by itself (standing authorization on, transient failure, retries left): not something that needs you yet."""
+    if item.get("status") == "paused" and item.get("healing"):      # self-healing (selfheal.py) has a repair in progress for it: not something that needs you yet
+        return True
+    return bool(standing_enabled(p) and item.get("status") == "paused" and item.get("transient") and int(item.get("auto_retries") or 0) < int(policy(p)["auto_retry_attempts"]))
+
+
+def _pause(item: Dict[str, Any], why: str, out: Dict[str, Any], retry_in: Optional[float] = None) -> None:
+    _set(item, "paused", error=why, transient=retry_in is not None, retry_at=(time.time() + retry_in) if retry_in is not None else None)
+    out["events"].append(f"automatic promotion {item['id']} ({item['experiment']}) paused: {why}" + (f"; retrying by itself in {retry_in / 60:.0f} min" if retry_in is not None else ""))
+
+
+def _auto_retry(p, st, rs, item: Dict[str, Any], out: Dict[str, Any]) -> bool:
+    """Bounded recovery from a transient failure: the same human-retry path (the candidate is abandoned and kept, a new one is prepared from the CURRENT main and
+    re-tested, every gate runs again), taken by the supervisor, at most `auto_retry_attempts` times and only under the standing authorization."""
+    if not (standing_enabled(p) and item.get("transient")):
+        return False
+    n, limit = int(item.get("auto_retries") or 0), int(policy(p)["auto_retry_attempts"])
+    if n >= limit:
+        item["transient"] = False
+        item["error"] = f"{item.get('error')} (retried {n} time(s) automatically; this needs you)"
+        out["events"].append(f"automatic promotion {item['id']} could not recover after {n} automatic retries")
+        return False
+    if time.time() < float(item.get("retry_at") or 0):
+        return False
+    item["auto_retries"] = n + 1
+    retry(p, st, rs, item["id"])
+    item["transient"], item["retry_at"] = False, None
+    out["events"].append(f"automatic promotion {item['id']} retried by itself ({n + 1} of {limit})")
+    return True
 
 
 # ----------------------------------------------------------------------------------------------- scheduling hooks
@@ -256,7 +372,7 @@ def unresolved(p, st: Dict[str, Any], rs: Dict[str, Any]) -> List[Dict[str, Any]
     m = mode(p, st, rs)
     if m["mode"] == "manual":
         return []
-    rows = [{"id": i["id"], "experiment": i["experiment"], "status": i["status"], "why": i.get("error"), "promotion": i.get("promotion")} for i in _open(rs)]
+    rows = [{"id": i["id"], "experiment": i["experiment"], "status": i["status"], "why": i.get("error"), "promotion": i.get("promotion"), "retrying": retrying(p, i)} for i in _open(rs)]
     covered = {i["experiment"] for i in rows}
     rows += [{"id": f"pending:{e}", "experiment": e, "status": "suspended" if m["mode"] == "suspended" else "pending", "why": m.get("why"), "promotion": None}
              for (e, _w) in sorted(pending(p, st, rs)) if e not in covered]
@@ -290,14 +406,26 @@ def step(p, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any], out: Dict
     item = next(iter(_open(rs)), None)
     if item and item["status"] == "paused":
         _note_omissions(p, st, rs, item, out)
+        _auto_retry(p, st, rs, item, out)
     if not item or item["status"] == "paused":
         return
     try:
         _advance(p, st, rs, item, out)
     except (PolicyBlocked, ResearchError) as ex:
-        _pause(item, str(ex), out)
+        _pause(item, str(ex), out, _retry_delay(p, item) if standing_enabled(p) and transient(ex) else None)
     except Exception as ex:   # never crash the supervisor, never continue past the unknown
         _pause(item, f"{type(ex).__name__}: {ex}", out)
+
+
+def _retry_delay(p, item: Dict[str, Any]) -> float:
+    steps = []
+    for x in policy(p).get("auto_retry_minutes") or [1]:
+        try:
+            steps.append(float(x))
+        except (TypeError, ValueError):
+            pass
+    steps = steps or [1.0]
+    return 60.0 * steps[min(int(item.get("auto_retries") or 0), len(steps) - 1)]
 
 
 def coverage_hint(st) -> str:
@@ -320,7 +448,7 @@ def _note_omissions(p, st, rs, item, out) -> None:
 # ----------------------------------------------------------------------------------------------- the state machine
 def _advance(p, st, rs, item, out) -> None:
     from .supervisor import save_run
-    pol, auth = policy(p), _state(rs)["authorized"]
+    pol, auth = policy(p), authorization(p, rs)
     s = item["status"]
     if s == "queued":
         check_ready(p, st)
@@ -447,9 +575,26 @@ def _integrate(p, rs, item, auth, out) -> None:
     commit = c["integration"]["commit"]
     for x in item["sources"]:
         _state(rs)["integrated"][x["sha"]] = {"item": item["id"], "commit": commit}
-    _set(item, "integrated", main_after=commit, error=None)
+    _set(item, "integrated", main_after=commit, error=None, transient=False, retry_at=None)
     save_run(p, rs)
     _manifest(p, item, c)
+    _notify_integrated(p, rs.get("plan_key") or "plan", item, commit)
+
+
+def _notify_integrated(p, plan_key: str, item: Dict[str, Any], commit: str) -> None:
+    """One message per successful promotion (kind `promotion_done`, level medium). Never raises: a notification must not undo a merge."""
+    try:
+        from . import notify
+        if not notify.chat_enabled(p):
+            return
+        from .chat import alerts
+        tasks = sorted({x["task"] for x in item.get("sources") or []})
+        by = ""
+        alerts.raise_(p, f"promotion_done:{plan_key}:{item['id']}", "promotion_done", "ok",
+                      f"Promotion {item['id']} ({item['experiment']}) is in {PR._main_branch(p)} at {commit[:8]}: {len(item.get('sources') or [])} commit(s) from {', '.join(tasks) or 'verified tasks'}. "
+                      f"Tests and the independent review passed; no scientific claim was approved.{by}", once=True)
+    except Exception:    # noqa: BLE001
+        pass
 
 
 def _manifest(p, item, c) -> None:
@@ -520,6 +665,6 @@ def summary(p, st, rs) -> Dict[str, Any]:
     a = _state(rs)
     pol = policy(p)
     return {**mode(p, st, rs), "test_command": pol["test_command"], "test_command_source": pol["test_command_source"], "conflicts": pol["conflicts"],
-            "authorization": a["authorized"], "items": a["items"],
+            "authorization": authorization(p, rs), "items": a["items"],
             "pending": [{"experiment": e, "workspace": w, "commits": [x["sha"][:10] for x in v]} for (e, w), v in sorted(pending(p, st, rs).items())],
             "coverage": {w: r for w, r in sorted(CP.state(rs)["reports"].items())}}

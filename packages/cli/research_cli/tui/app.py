@@ -485,6 +485,38 @@ class ResearchTUI(App):
                    "ready": f"Mark {ref} ready?\nYou accept this proposal; it can then be run.", "abandoned": f"Abandon {ref}?\nIt is kept for the record and no longer runs."}[status]
             self.push_screen(Confirm(msg), lambda ok: ok and self._do("set_status", id=ref, status=status, reason="decided in the TUI"))
 
+    # ---- settings profiles: preview the difference, ask once, apply to THIS project; the overnight check
+    def profile_prompt(self) -> None:
+        data = self.safe("profiles_list")
+        if not data:
+            return
+        st = data["status"].get("applied")
+        opts = [(r["name"], f"{r['name']}  ({'built-in' if r['builtin'] else 'yours'}, {r['settings']} settings)  {r['description'][:60]}" + ("   <- applied" if r["name"] == st else ""))
+                for r in data["profiles"]]
+        self.push_screen(ActionMenu("Settings profile for this project", opts), lambda n: n and self._profile_confirm(n))
+
+    def _profile_confirm(self, name: str) -> None:
+        pv = self.safe("profile_preview", profile=name)
+        if not pv:
+            return
+        if not pv["changes"]:
+            return self.notify(f"This project already matches {name}.")
+        lines = [f"{r['key']}: {r['current']!r} -> {r['profile']!r}" for r in pv["rows"] if r["differs"]]
+        lines += [f"turns ON: {k}" for k in pv["turns_on"]]
+
+        def go() -> None:
+            run = lambda **kw: self._do("profile_apply", profile=name, **kw)
+            return self._with_pin(lambda pin: run(pin=pin)) if pv["needs_pin"] else run()
+        self.push_screen(Confirm(f"Apply {name} to this project?\n\n" + "\n".join("- " + x for x in lines[:14]) + (f"\n... and {len(lines) - 14} more" if len(lines) > 14 else "")
+                                 + ("\n\nThese are policy settings: your PIN is asked once." if pv["needs_pin"] else "")), lambda ok: ok and go())
+
+    def profile_check(self, name: str = "overnight") -> None:
+        r = self.safe("profile_check", profile=name)
+        if not r:
+            return
+        lines = [f"{'FAIL' if c['status'] == 'fail' else 'warn' if c['status'] == 'warn' else 'ok  '}  {c['what']}" + (f"\n      fix: {c['fix']}" if c.get("fix") and c["status"] != "ok" else "") for c in r["checks"]]
+        self.push_screen(Help(r["verdict"] + "\n\n" + "\n".join(lines)))
+
     # ---- human controls for one task (the same menu as `research task intervene`; no model involved)
     def intervene_prompt(self) -> None:
         self.push_screen(Prompt("Task id (T-006)"), lambda v: v and self.intervene(v.strip()))

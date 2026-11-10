@@ -51,7 +51,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research note` | `notes` | your project notes (.research/notes/) |
 | `research plan` | `plans`, `p` | research plans (decomposed into tasks) |
 | `research task` | `tasks`, `t` | tasks within plans (units of work) |
-| `research intervention` |  | supervisor interventions: list \| show \| approve \| reject \| cancel \| plan |
+| `research intervention` |  | supervisor interventions: list \| show \| approve \| reject \| cancel \| plan \| diagnose \| retry \| edit |
 | `research env` |  | the project's Python environment: check \| create (uv) \| install |
 | `research supervisor` |  | the persistent supervisor: start \| status \| stop \| instruct T-12 (steer a task in words) \| debug [PLAN] (diagnose a halt) \| reload (apply settings, agents untouched) \| restart (new process, agents untouched) \| tick \| approve \| accept \| resolve \| continue (hand a task to another agent) \| providers |
 | `research proposal` | `proposals` | proposals: list \| show \| approve \| reject \| revise (ask for changes) \| experiment (agents: propose one) |
@@ -74,6 +74,9 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research sandbox` |  | optional job isolation: list \| show NAME \| doctor \| verify NAME \| preview EXP |
 | `research hpc` |  | remote execution: doctor \| init \| submit \| status \| sync \| collect \| import \| bundle \| datasets \| inspect \| cancel \| clusters \| config |
 | `research git` |  | git hygiene: status \| preflight \| ignore \| commit (reviewed, scoped, never pushes) |
+| `research profile` |  | settings profiles: list \| show NAME \| diff NAME [OTHER] \| apply NAME [--set k=v] \| check [NAME] \| status \| revert \| create NAME \| delete NAME (machine level; applied per project) |
+| `research heal` |  | self-healing: status \| check-source FILE... (the check a promotion repair task must pass) |
+| `research job` |  | delegate work in words: run "…" \| status ID \| logs ID \| cancel ID \| list |
 
 **`research project`** actions: `set` (set name/goal/description)
 
@@ -95,9 +98,9 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 
 **`research note`** actions: `new` (create a note); `list` (list notes); `pin` (pin/unpin a note); `link` (link a note to questions/experiments/findings)
 
-**`research plan`** actions: `create` (create a plan); `list` (list plans); `show` (show plan with all tasks); `update` (update a plan); `yaml` (YAML plans: template | export | validate | diff | apply); `promote` (prepare promotion candidates from verified, committed work (nothing merges)); `autopromote` (unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry); `run` (let the supervisor execute a plan); `pause` (pause scheduling for a plan); `resume` (resume a paused or blocked plan); `stop` (stop a plan run (history is kept)); `status` (supervised status: phases, attempts, budgets)
+**`research plan`** actions: `create` (create a plan); `list` (list plans); `show` (show plan with all tasks); `update` (update a plan); `yaml` (YAML plans: template | export | validate | diff | apply); `promote` (prepare promotion candidates from verified, committed work (nothing merges)); `autopromote` (unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry | coverage | attribute | exclude); `run` (let the supervisor execute a plan); `pause` (pause scheduling for a plan); `resume` (resume a paused or blocked plan); `stop` (stop a plan run (history is kept)); `status` (supervised status: phases, attempts, budgets)
 
-**`research task`** actions: `create` (create a task); `list` (list tasks); `show` (show task detail); `context` (focused context for working on a task: plan, deps, question, experiment, rules); `update` (update a task); `start` (claim a task and mark it running); `release` (give a claimed task back (→ todo) with a hand-off note); `note` (add a progress note: research task note T-003 "loader done, tests next"); `verify` (run the task's checks and record the result); `dispatch` (hand this task to an agent CLI (role from the task)); `done` (mark task as done (completed)); `block` (mark task as blocked); `next` (show next ready task (dependencies satisfied))
+**`research task`** actions: `create` (create a task); `list` (list tasks); `show` (show task detail); `context` (focused context for working on a task: plan, deps, question, experiment, rules); `update` (update a task); `start` (claim a task and mark it running); `release` (give a claimed task back (→ todo) with a hand-off note); `intervene` (human control menu for a supervised task: research task intervene T-006 · … attempts 12 · … takeover · … release (previews first; --yes applies)); `budget` (set the attempt budget of tasks: research task budget T-006 T-007 --max-attempts 12 · or --stuck / --todo [--plan PLAN] (previews; --yes applies)); `note` (add a progress note: research task note T-003 "loader done, tests next"); `verify` (run the task's checks and record the result); `dispatch` (hand this task to an agent CLI (role from the task)); `done` (mark task as done (completed)); `block` (mark task as blocked); `next` (show next ready task (dependencies satisfied))
 
 **`research agent`** actions: `dispatch` (hand work to an agent CLI: research agent dispatch verifier F-003); `executions` (launched agent sessions: list | show | logs | stop | retry (completed ≠ verified)); `providers` (agent providers: list | set-default NAME | mcp NAME [--apply]); `profiles` (agent profiles and roles (config.yaml → agents)); `usage` (model usage: `agent usage [--by strategy|model|task|level]` · `agent usage import FILE`); `instructions` (create/refresh the research block in AGENTS.md); `setup` (set up agent files for a provider: research agent setup PROVIDER --preset scientific [--apply]); `progress` (free-text progress); `milestone` (a named milestone); `artifact` (an output file (workspace-relative)); `metric` (a metric value); `run` (a computational run id); `hpc-job` (an HPC job id); `code` (a commit / changed files); `problem` (a problem with a failure category); `report` (summary of what was done and found); `check` (run the task's declared checks (read-only; the supported way to run them without Bash)); `finish` (request verification); `propose` (propose a plan change (YAML patch))
 
@@ -148,7 +151,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
   and replaces a daemon running older code (best effort, in the background).
 
 <!-- generated:ops -->
-225 operations.
+236 operations.
 
 | Op (RPC method) | Parameters | Mutates | MCP tool | Chat |
 |---|---|---|---|---|
@@ -171,8 +174,10 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `chat_cmd_debug` |  |  |  | decide |
 | `chat_cmd_decisions` |  |  |  | read |
 | `chat_cmd_digest` |  |  |  | read |
+| `chat_cmd_do` | text, via | yes |  | decide |
 | `chat_cmd_finding` | id |  |  | read |
 | `chat_cmd_interventions` |  |  |  | read |
+| `chat_cmd_jobs` |  |  |  | read |
 | `chat_cmd_logs` | task, stream |  |  | read |
 | `chat_cmd_options` |  |  |  | read |
 | `chat_cmd_pause` | plan | yes |  | decide |
@@ -275,6 +280,7 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `init_yaml_export` |  |  |  |  |
 | `init_yaml_template` |  |  |  |  |
 | `intervention_action` | id, action, note, pin | yes |  |  |
+| `intervention_diagnose` | id |  |  |  |
 | `intervention_request` | task, message, interrupt | yes |  |  |
 | `interventions` | task |  |  |  |
 | `link_note` | id, targets, remove |  |  |  |
@@ -295,6 +301,11 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `plan_yaml_export` | plan, experiment, task, partial |  |  |  |
 | `plan_yaml_template` |  |  |  |  |
 | `plan_yaml_validate` | text |  |  |  |
+| `profile_apply` | profile, overrides, pin, reason | yes |  |  |
+| `profile_check` | profile |  |  |  |
+| `profile_preview` | profile, other, overrides |  |  |  |
+| `profile_revert` | pin | yes |  |  |
+| `profiles_list` |  |  |  |  |
 | `promotion_action` | id, action, note, confirm, verdict, command, pin |  |  |  |
 | `promotion_diff` | id |  |  |  |
 | `promotion_hint` | plan |  |  |  |
@@ -358,6 +369,9 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `task_context` | id |  |  |  |
 | `task_create` | plan, title, goal, type, role, depends_on, acceptance_criteria, checks, skills, experiment, question, inputs, expected_outputs | yes | `task_create` |  |
 | `task_done` | id, result, artifacts | yes | `task_done` |  |
+| `task_intervene_menu` | task |  |  |  |
+| `task_intervene_preview` | task, action, value, stop_agent |  |  |  |
+| `task_intervene_run` | task, action, value, note, pin, stop_agent | yes |  |  |
 | `task_next` | plan |  | `task_next` |  |
 | `task_note` | id, text | yes | `task_note` |  |
 | `task_pin` | id, level, profile, clear | yes |  |  |

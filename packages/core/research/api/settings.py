@@ -152,3 +152,35 @@ def init_yaml_export(p) -> Dict[str, Any]:
 def init_apply(s, spec: Dict[str, Any]) -> Dict[str, Any]:
     from .. import initproject
     return initproject.apply(s.root, spec, author=s.author)
+
+
+# settings profiles (machine-level bundles, applied per project) ------------------------------------------------
+@op(sync=False)
+def profiles_list(p) -> Dict[str, Any]:
+    from .. import profiles
+    return {"profiles": profiles.list_profiles(), "status": profiles.status(p)}
+
+
+@op(sync=False)
+def profile_preview(p, profile: str, other: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """`other` set: the difference between two profiles; else what applying `name` would change in this project."""
+    from .. import profiles
+    return profiles.diff(p, profile, other) if other else profiles.preview(p, profile, overrides)
+
+
+@op(mutates=True)
+def profile_apply(p, profile: str, overrides: Optional[Dict[str, Any]] = None, pin: Optional[str] = None, reason: Optional[str] = None) -> Dict[str, Any]:
+    from .. import profiles
+    return profiles.apply(p, profile, overrides, confirm=True, pin=pin, reason=reason)
+
+
+@op(mutates=True)
+def profile_revert(p, pin: Optional[str] = None) -> Dict[str, Any]:
+    from .. import profiles
+    return profiles.revert(p, confirm=True, pin=pin)
+
+
+@op(sync=False)
+def profile_check(p, profile: str = "overnight") -> Dict[str, Any]:
+    from .. import profiles
+    return profiles.check(p, profile)

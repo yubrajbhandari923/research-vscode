@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from . import recovery as RC, registry
+from . import recovery as RC, registry, selfheal as SH
 from .util import PolicyBlocked, ResearchError, now_iso
 
 _threads: Dict[str, threading.Thread] = {}
@@ -381,7 +381,8 @@ def step(p) -> None:
             if time.time() - m["since"] < float(c["halt_grace_seconds"]) or m.get("notified"):
                 continue
             key = st["plan_key"] + h["fingerprint"]
-            if c["auto_debug"] and not m.get("debugged"):
+            auto_debug = bool(c["auto_debug"]) or SH.enabled(p)       # self-healing includes the automatic diagnosis
+            if auto_debug and not m.get("debugged"):
                 if key in _threads and _threads[key].is_alive():
                     continue
                 m["debugged"] = True
@@ -390,7 +391,7 @@ def step(p) -> None:
                 _threads[key] = th
                 th.start()
                 continue
-            if not c["auto_debug"]:
+            if not auto_debug:
                 m["notified"] = True
                 _write(marker, m)
                 if tg:
@@ -426,8 +427,8 @@ def _resume_diagnosis(p, plan_key: str, h: Dict[str, Any], m: Dict[str, Any]) ->
 
 
 def _auto_investigator(p) -> bool:
-    from . import investigator
-    return bool(investigator.cfg(p)["auto"])
+    from . import investigator, selfheal
+    return bool(investigator.cfg(p)["auto"]) or selfheal.enabled(p)         # self-healing turns the automatic diagnosis on
 
 
 def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:

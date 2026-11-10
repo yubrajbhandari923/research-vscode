@@ -605,3 +605,22 @@ Applied actions are flagged and never repeated or edited; an `add_task` for a ta
 
 A halt diagnosis or automatic investigation refused by a provider's usage limit waits for the reset (the account's limit is remembered) and runs again by itself.
 
+## 29. Standing authorization, profiles, self-healing and jobs
+
+```bash
+research config set auto_promotion.auto_approve_verified_code true     # standing authorization (PIN once); every gate still applies
+research config set supervisor_assistant.self_heal true                # diagnose and repair recoverable failures
+research profile check overnight                                       # is this project safe to leave running?
+research profile apply overnight --yes                                 # sets the overnight bundle for THIS project (previews without --yes)
+research profile diff overnight                                        # what differs from this project now
+research heal status                                                   # self-healing cases
+research job run "unblock the paused promotion AP-002 and get it merged"
+research job status JOB-001
+```
+
+**Promotion approval, precisely.** `state: approved` means an approval record exists for the current head. Integration needs more: every gate passing *and* an approval made by the supervisor under an authorization. A failure names which: a gate (with its detail), or an approval by a person (integrate it yourself with `research promote integrate PROMO-002 --confirm`, or retry the automatic promotion so the gates run again).
+
+**Self-healing recipes.** scientific-content gate (executable cell, identifier in prose): repair the report source, check with `research heal check-source FILE`. Failing promotion tests, or a reviewer's requested change: repair the code, check with the promotion test command (never edited). Everything else asks you. The repair is an ordinary supervised task, so it is verified, attributed and budgeted like any other; the failed candidate is abandoned and kept, never edited.
+
+**Profiles** live on the machine (`profiles.yaml` next to the machine config) and are applied per project. **Jobs**: see the changelog entry for 3.6.0; `research job logs JOB-001` shows every checkpoint and each step's attempts and output.
+

@@ -51,13 +51,15 @@ GOVERNANCE: Dict[str, Any] = {
 AUTO_PROMOTION: Dict[str, Any] = {
     "test_command": None, "numerical_command": None, "reviewer_profile": None, "require_distinct_reviewer": True,
     "review_timeout_minutes": 120, "max_file_mb": 5,
+    "auto_approve_verified_code": False,              # standing authorization: see autopromote.py (never bypasses tests, independent review, provenance or any other gate)
+    "auto_retry_attempts": 3, "auto_retry_minutes": [1, 5, 15],
     "protected_test_globs": ["tests/*", "*/tests/*", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
 }
 NOTIFICATIONS: Dict[str, Any] = {
     "halt_grace_seconds": 120, "auto_debug": False, "level": "medium", "summary": "facts", "telegram": {"enabled": False},
     "discord": {"enabled": False, "thread_per_task": True, "mention": True},
     "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit",
-                      "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "recovery"],
+                      "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "recovery", "promotion_done", "job"],
                "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
     "digest": {"at": None, "silent_if_unchanged": True},
 }
@@ -158,7 +160,7 @@ _CONFIG: Dict[str, Any] = {
     "promotion": {"main_branch": "main", "test_command": None, "test_timeout_seconds": 1800, "require_supported_finding": True},
     # Opt-in unattended promotion (autopromote.py), supervisor interventions (intervene.py) and halt notifications (notify.py). Secrets (Telegram) are NOT here.
     "auto_promotion": AUTO_PROMOTION,
-    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900},
+    "supervisor_assistant": {"profile": None, "model": None, "timeout_seconds": 900, "self_heal": False, "max_repairs": 2, "max_repairs_per_plan": 6, "repair_instructions": None},
     "intervention": {"require_approval": False},
     "notifications": NOTIFICATIONS,
     "sandbox": {
@@ -416,6 +418,18 @@ OPTIONS: List[Option] = [
        nullable=True, why="A separate reviewer prevents self-approval of code.", effect="Changing it suspends an existing authorization until a human re-authorizes.", risk="policy"),
     _o("auto_promotion.require_distinct_reviewer", "bool", "git", "Require a different reviewer profile", "Refuse a reviewer profile that also implemented the work being promoted.",
        why="Keeps review independent.", effect="Turning it off allows the same provider to review its own work.", risk="policy"),
+    _o("auto_promotion.auto_approve_verified_code", "bool", "git", "Standing authorization for verified code", "On: the supervisor authorizes, approves and integrates eligible code promotions on its own, across plans and restarts, with no PIN prompt each time. Every gate still applies: the promotion tests, the independent reviewer, scientific-content provenance, frozen tests and fast-forward-only merging. It never approves a scientific claim.",
+       why="Overnight runs should not stop at a promotion that you would approve anyway; the checks, not a person, decide whether code is good.", effect="Enabling is one human act (this setting needs your PIN). It then applies to every plan of this project. Changing the verification policy (test command, reviewer) through Settings keeps it; an edit that bypasses Settings suspends it until you re-save this setting.", risk="policy", scopes=("project",)),
+    _o("auto_promotion.auto_retry_attempts", "int", "git", "Automatic promotion retries", "How many times a transient promotion failure (main moved, a git lock, a briefly dirty main worktree) is retried by itself before it asks you. Only with the standing authorization on.",
+       why="A failure that clears by itself should not wake you.", effect="After this many, the promotion pauses and you are interrupted. Failed tests, a changes-requested review and failed provenance are never retried.", min_=0, max_=10, risk="policy"),
+    _o("auto_promotion.auto_retry_minutes", "list", "git", "Delays between promotion retries", "Minutes to wait before each automatic retry; the last value repeats.",
+       why="Gives a git lock or a human edit time to clear.", effect="Applies to the next retry.", unit="minutes"),
+    _o("supervisor_assistant.self_heal", "bool", "supervisor", "Automatically diagnose and repair recoverable failures", "On: when a promotion gate or a task fails for a recoverable engineering reason (failing tests, a reviewer's requested change, an executable cell in a report), the debug agent's diagnosis acts. Deterministic diagnosis first; then a bounded repair task runs in the experiment's own worktree, is verified by the supervisor, the promotion candidate is rebuilt, re-tested and independently re-reviewed, and integration is retried. Repairs never edit or weaken tests, acceptance criteria, hypotheses, evidence or governance; those stop and ask you.",
+       why="Overnight, a fixable formatting or code problem should not wait for you.", effect="Capped per failure and per plan; the same failure twice stops it. You are told about each recovery and interrupted only for decisions, permissions, exhausted budgets, unsafe changes or failures it cannot fix.", risk="policy", scopes=("project",)),
+    _o("supervisor_assistant.max_repairs", "int", "supervisor", "Repairs per failure", "Most repair attempts for ONE failure before it asks you.", why="A repair that keeps failing is a decision for a person.", effect="Applies to the next failure.", min_=1, max_=5, risk="policy"),
+    _o("supervisor_assistant.max_repairs_per_plan", "int", "supervisor", "Repairs per plan", "Most repair tasks self-healing may add to one plan run.", why="Bounds the total autonomous work and cost.", effect="After it, failures ask you.", min_=1, max_=50, risk="policy"),
+    _o("supervisor_assistant.repair_instructions", "str", "supervisor", "Extra repair instructions", "Project conventions appended to every repair task (for example how reports are built). They cannot relax the hard rules.",
+       nullable=True, why="Lets a project teach the repair agent its house rules.", effect="Applies to the next repair task.", risk="policy"),
     _o("supervisor_assistant.profile", "str", "supervisor", "Assistant agent profile", "The agent profile used for the read-only planning agent (interventions) and the debug agent (halts). Empty uses `claude`.",
        nullable=True, why="These agents read logs and plans and propose; a capable model avoids bad advice.", effect="Applies to the next intervention or diagnosis.", risk="policy"),
     _o("supervisor_assistant.model", "str", "supervisor", "Assistant model", "Model for the planning and debug agents. Empty uses the strongest Claude (claude-opus-5-5) when the profile is Claude, otherwise the profile's own model.",
@@ -603,7 +617,7 @@ def validate(key: str, value: Any) -> Tuple[bool, Any, Optional[str]]:
             return False, None, f"Unsupported option type {t}."
     except (ValueError, TypeError):
         return False, None, "Expected a " + ("whole number." if t == "int" else "number." if t == "float" else "valid value.")
-    if o.key.startswith("supervisor.usage_limit.") and o.type == "list":
+    if (o.key.startswith("supervisor.usage_limit.") or o.key == "auto_promotion.auto_retry_minutes") and o.type == "list":
         try:
             nums = [float(x) for x in v]
         except ValueError:
@@ -821,6 +835,8 @@ def apply(p, changes: Dict[str, Any], scope: str = "project", reason: Optional[s
                     + ("inherited default" if remove else repr(v)) + f" ({scope})" + (f" — {reason}" if reason else ""))
     p.config = p.load_config()
     write_policy(p)
+    from . import autopromote as _AP
+    _AP.on_settings_changed(p, set(plan["values"]))      # the standing authorization follows a human's change made here, never an edit made around it
     return {"changed": True, "values": plan["values"], "scope": scope, "diff": plan["diff"], "path": plan["path"],
             "policy": ".research/context/policy.md", "fingerprint": fingerprint(p), "digests": file_digests(p)}
 
