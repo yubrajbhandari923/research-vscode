@@ -51,6 +51,7 @@ replacement; a chatbot; a data-versioning system; a container platform.
 | [10. Configuration](spec/10-configuration.md) | layers, settings registry, generated settings reference, environment variables |
 | [11. Testing and release](spec/11-testing-release.md) | test suites, build, versioning, release checklist, repository layout |
 | [12. Rationale and limitations](spec/12-rationale-limitations.md) | design decisions and what the system deliberately does not do |
+| [13. Operations](spec/13-operations.md) | late HPC evidence and automatic re-verification, plan completion and promotion settlement, headless permissions, git hygiene, several projects |
 
 User guides: [QUICKSTART](QUICKSTART.md), [SETUP](SETUP.md), [CONFIGURATION](CONFIGURATION.md), [GOVERNANCE](GOVERNANCE.md), [SUPERVISOR](SUPERVISOR.md), [PROVIDERS](PROVIDERS.md),
 [AGENT_TOOLS](AGENT_TOOLS.md), [GUIDE](GUIDE.md).

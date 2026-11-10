@@ -55,20 +55,41 @@ def command_list() -> List[Tuple[str, str]]:
 
 
 # ----------------------------------------------------------------------------------------------- projects
+GENERIC_DIRS = ("main", "master", "code", "src", "repo", "project", "checkout")      # `research init` makes <project>/main: the folder name says nothing
+
+
+def project_label(root: str) -> str:
+    """The name chat uses for a project: its folder, or for a generic folder (`main`) the folder around it, so two projects never share a label."""
+    r = root.rstrip("/")
+    b = os.path.basename(r) or r
+    return (os.path.basename(os.path.dirname(r)) or b) if b.lower() in GENERIC_DIRS else b
+
+
+def canonical_label(key: str, platform: str = "discord") -> str:
+    """A label stored by an older version (the bare folder name, `main`) maps to the one project that has it; ambiguous keys stay as they are."""
+    projs = enabled_projects(platform)
+    if key in projs:
+        return key
+    hit = [lb for lb, r in projs.items() if os.path.basename(r.rstrip("/")) == key]
+    return hit[0] if len(hit) == 1 else key
+
+
 def enabled_projects(platform: str) -> Dict[str, str]:
-    """label -> root of the known projects whose config enables `platform` (label: the folder name, `-2` for a clash)."""
+    """label -> root of the known projects whose config enables `platform` (label: `project_label`, `-2` for a clash). Order is by path, never by last use,
+    so a label cannot swap between two projects as they take turns being active."""
     from ..store import Project
     out: Dict[str, str] = {}
-    for root in machine.known_projects():
+    for root in sorted(machine.known_projects()):
         try:
             with Project(root, sync=False) as p:
                 if not registry.section(p, "notifications")[platform].get("enabled"):
                     continue
         except Exception:       # noqa: BLE001 - a broken project must not stop the others
             continue
-        label, n = os.path.basename(root.rstrip("/")) or root, 2
+        base = project_label(root)
+        label, n = base, 2
         while label in out:
-            label, n = f"{os.path.basename(root.rstrip('/'))}-{n}", n + 1
+            label, n = f"{base}-{n}", n + 1
         out[label] = root
     return out
 

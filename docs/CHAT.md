@@ -207,3 +207,15 @@ Machine files, all mode 0600 and never in a project: `telegram.json` (token, hom
 * "Several projects use this bot": `/project use NAME`.
 * A person gets "not authorized": pair them (`research chat pair CODE`) or check their role with `/whoami`.
 * The gateway runs on the machine where the project lives. Projects on another machine need their own gateway and their own bot.
+
+## Several projects on one machine
+
+One gateway process serves every project on the machine; each project has its own outbox, supervisor and (optionally) its own Discord channel.
+
+* **Labels.** A project is named in chat by its folder, or by the folder around it when the folder is generic (`main`, the checkout `research init` creates), so `PRAVAH/main` and `sparse-ct/main` are `PRAVAH` and `sparse-ct`.
+  Order is by path, never by last use, so a label cannot swap between two projects. Channels saved by an older version under the bare name `main` still reach the one project that had it; if two projects share such a key it is never guessed:
+  run `research chat setup discord --channel ID` once in each.
+* **Discord setup is once per machine, then one channel per project.** The first project runs `research chat setup discord` (bot token, server, pairing). Every other project runs `research chat setup discord --channel CHANNEL_ID`: it reuses the saved bot (no token prompt, no second pairing) and maps that project to its own channel in the same server. `research chat doctor` shows what each project has.
+* **One cluster, many projects.** Each project works in its own remote directory (`hpc.clusters.<name>.project.slug`, default: the project name). A directory that another project created is refused (`belongs to another project`), because RUN-0001 exists in both; give the second project its own slug.
+  Two collectors of one run (the supervisor's poll and a manual `research hpc sync`) take turns; `research hpc collect RUN` collects again on request.
+* **Shared by design:** the gateway and bot token, the approval PIN and authenticator, and the cluster's own Slurm queue. Everything else is per project.

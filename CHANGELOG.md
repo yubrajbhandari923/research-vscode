@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.2
+
+- **Several projects on one machine and one cluster.** Chat labels no longer collide for projects created by `research init` (every checkout is called `main`): the label is the project folder, ordered by path so it cannot swap between projects, and channels saved under the old bare name still work when unambiguous. A remote HPC directory created by another project is refused instead of shared (RUN-0001 exists in both). Two collectors of one run no longer race over the same staging folder. `research chat setup discord` in a second project reuses the bot already saved on the machine and only needs `--channel`. A stress test runs two projects at once (shared fake cluster, concurrent syncs, concurrent alerts through the gateway, two supervisors).
+- **Documentation reorganised.** The README is now short (install, start, HPC, Discord, several projects, git, debugging) and the long form is `docs/REFERENCE.md`; Getting started gained HPC, Discord (per machine versus per project), git and permissions, and migration sections; a new specification chapter (`docs/spec/13-operations.md`) specifies recovery, promotion settlement, permissions, git hygiene and several projects. The extension screenshots were removed: the CLI and terminal UI are the main interface.
+
 ## 3.5.1
 
 - **A headless agent refused a command is a permission failure, not missing metrics.** The provider's `permission_denials` are read from the agent's result; the attempt is `permission_denied` and the task is blocked with the denied commands and the fix (the failed attempt is kept, nothing is resubmitted, budgets and checks are unchanged).

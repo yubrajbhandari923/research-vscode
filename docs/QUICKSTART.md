@@ -1,19 +1,21 @@
 # Getting started
 
-This guide takes you from nothing to a plan running under the supervisor, with an agent doing the work and you steering.
-It uses the terminal. VS Code and the terminal UI show the same project, so you can switch at any point.
+This guide takes you from nothing to a plan running under the supervisor, with an agent doing the work, an HPC cluster behind it if you have one, and Discord telling you what
+happened. It uses the terminal; the terminal UI (and the optional VS Code extension) show the same project, so you can switch at any point.
 
 1. [Install](#1-install)
 2. [Your first project](#2-your-first-project)
 3. [Set up your agents](#3-set-up-your-agents)
 4. [Your first experiments](#4-your-first-experiments)
-5. [Watching and steering](#5-watching-and-steering)
-6. [From your phone](#6-from-your-phone)
-7. [Approvals and the PIN](#7-approvals-and-the-pin)
-8. [Usage limits](#8-usage-limits)
-9. [Presenting results](#9-presenting-results)
-10. [Updating](#10-updating)
-11. [Troubleshooting](#11-troubleshooting)
+5. [Running on a cluster (HPC)](#5-running-on-a-cluster-hpc)
+6. [Watching and steering](#6-watching-and-steering)
+7. [From your phone: Discord and Telegram](#7-from-your-phone-discord-and-telegram)
+8. [Approvals and the PIN](#8-approvals-and-the-pin)
+9. [Usage limits](#9-usage-limits)
+10. [Presenting results](#10-presenting-results)
+11. [Git and agent permissions](#11-git-and-agent-permissions)
+12. [Updating and migrating](#12-updating-and-migrating)
+13. [Troubleshooting](#13-troubleshooting)
 
 ## 1. Install
 
@@ -81,7 +83,7 @@ and pipx's bin directory. If `research` is somewhere else, set **Settings → Re
 "CLI is too old" means run `research self-update`; "extension is older than your CLI" means install the newer VSIX from the release. Reload the window afterwards.
 `research version --json` shows exactly which CLI you have.
 
-Updating later is covered in [section 10](#10-updating).
+Updating later is covered in [section 12](#12-updating-and-migrating).
 
 ## 2. Your first project
 
@@ -119,7 +121,6 @@ research status
 A fresh project normally shows no errors and a few optional items. Run it any time something seems wrong; `--all` also lists the checks that pass.
 Agents should run the project's own launcher; refresh it with `research bin install` after you move the project or upgrade.
 
-In VS Code: open an empty folder and run **Research: Initialize Project**. The wizard asks the same questions and shows what it will do before it writes anything.
 Python and cluster environments are described in [SETUP.md](SETUP.md).
 
 ## 3. Set up your agents
@@ -256,12 +257,46 @@ research report
 If the supervisor is not running (after a reboot, say), `research supervisor start` brings it back; after an upgrade use `research supervisor restart`.
 
 Results are not conclusions. Look at the numbers yourself, then record what you believe with `research experiment synthesize`, `research finding create` and
-`research decision create` (see the README's [synthesize and decide](../README.md#synthesize-decide-and-resume) section). An agent's finding stays preliminary until an independent review.
+`research decision create` (see the reference manual's [synthesize and decide](REFERENCE.md#synthesize-decide-and-resume) section). An agent's finding stays preliminary until an independent review.
 
 Steer a task in plain words at any time: `research supervisor instruct T-002 --message "use 60 views instead of 30"` (an assistant agent turns the sentence into actions). Requests that touch science or resources become a proposal
-that waits for your PIN (section 7).
+that waits for your PIN (section 8).
 
-## 5. Watching and steering
+## 5. Running on a cluster (HPC)
+
+Skip this if you only run locally. Research OS submits to Slurm over SSH using your own OpenSSH setup (keys, `ControlMaster`, jump hosts live in `~/.ssh/config`; Research OS stores no credentials).
+
+**Once per cluster.** Describe it in the project config, then check it:
+
+```bash
+research hpc config --example      # prints a commented hpc.clusters block: ssh alias, approved storage roots, partition/account, python, job setup lines
+research hpc doctor                # SSH reachable? directories? sbatch/squeue/sacct? Python on the login node?
+research hpc doctor --compute      # also proves the job environment on a compute node (a one-minute, one-CPU srun)
+research hpc init                  # creates this project's remote directory under your approved root (never deletes or overwrites)
+```
+
+Only the storage roots you name are used (`$HOME` is never assumed). Put what a compute node needs (modules, a venv) in `hpc.clusters.<name>.slurm.setup`. If several projects use one
+cluster, each needs its own `hpc.clusters.<name>.project.slug`; a remote directory another project created is refused.
+
+**Per run.** Agents submit through Research OS, never with raw `sbatch`, so every job has a run record before anything is uploaded:
+
+```bash
+research hpc submit EXP-001 --dry-run -- python train.py     # what would be uploaded and requested; submits nothing
+research hpc submit EXP-001 --yes -- python train.py         # submit (limits from your config are enforced)
+research hpc status RUN-0001
+research hpc sync                                            # update status and bring finished results home (safe to repeat, also after days offline)
+```
+
+A job writes its outputs under `$RESEARCH_RUN_DIR/outputs/`, metrics to `$RESEARCH_RUN_DIR/metrics.jsonl` and lists files in `artifacts.jsonl`. Small files come home; large files stay on the
+cluster as references. A dropped connection never resubmits a job: the submission receipt is read back instead. No SSH at all? `research hpc bundle EXP-001` makes a portable archive and
+`research hpc import ARCHIVE` brings its results back.
+
+**Under a plan.** A task with `resources: {backend: slurm}` waits while its job runs (the supervisor syncs every `supervisor.hpc_poll_seconds`) and is verified when the run is terminal.
+A job that finishes before its results are collected is **not** a failure: verification waits (up to `supervisor.recovery.collection_wait_minutes`), and a task blocked on missing
+evidence is re-verified automatically, under the unchanged checks, when the results arrive. Nothing is resubmitted, and no threshold, budget or check is ever changed for you. The
+supervisor never submits more than the plan allows (`max_hpc_resubmissions`). Runs imported by an older version: `research hpc reconcile`.
+
+## 6. Watching and steering
 
 **The terminal UI.** Install the `[tui]` extra (section 1), then:
 
@@ -303,8 +338,7 @@ here. Nothing is rewritten; *Re-check* and *Sync HPC runs* are offered. The Reco
 | `?` | the guide (← → move between its sections) |
 | `q` | quit |
 
-**The VS Code Control Center.** Run **Research: Open Control Center** (or `Ctrl/Cmd+Alt+R` for Home). Home lists what needs you; **Plans** shows phases, attempts,
-approvals and proposals; **Research** has experiments, findings and decisions; **Settings** shows every configurable value and where it comes from.
+The optional VS Code extension (`.vsix` on each release) shows the same project in panels; everything in this guide works without it.
 
 **Decisions.** When the system cannot go on without you (a halted task, a diagnosis with alternatives, a question an agent cannot settle) it asks one question, a
 *decision request*, and shows it on every surface at once: the terminal, the TUI Decisions tab, VS Code, and chat. Each option says what it will do.
@@ -320,34 +354,48 @@ Those show the open requests, show one with its options, pick option 2, and answ
 In chat, options are buttons and a reply to the message is a free-text answer. The first answer closes the request everywhere. Options that touch science, resources or promotion are
 protected: they run only at your computer, with your PIN. A request that expires picks nothing.
 
-## 6. From your phone
+## 7. From your phone: Discord and Telegram
 
-Chat is optional and off until you set it up. It sends alerts (halts, failures, decisions, finished plans) to Telegram or Discord and lets you answer and steer. The full setup is in
-[CHAT.md](CHAT.md); in short:
-
-**Telegram.** Create a bot with @BotFather and copy its token. Run `research chat setup`, paste the token at the hidden prompt, then send your bot any message. That chat becomes
-the first paired user.
-
-**Discord.** Install the `[discord]` extra, create an application in the Discord developer portal, copy the bot token, then run `research chat setup discord`. It prints an invite URL;
-open it and add the bot to your server. Send the bot a direct message to get a pairing code and type it at the prompt.
+Chat is optional. It sends alerts (plan started and finished, each experiment's results, failures, halts, approvals and questions) and lets you answer and steer with short commands (`/status`,
+`/tasks`, `/say`, `/ask`). How much is pushed is `notifications.level`: `low` (plan start/end and failures), `medium` (default: plus each experiment's results and anything waiting for you) or
+`high` (plus every run and task).
 
 ```bash
-research chat status
-research chat test
-research chat pair CODE
+research config set notifications.level medium      # or /notify in chat
+research chat doctor                                # what is set up, what is missing, the exact fix for each (add --live to ask Discord/Telegram)
 ```
 
-`chat status` shows the token, the paired people and whether the gateway is running; `chat test` sends a message; `chat pair CODE` approves someone else who messaged the bot
-(you do this at your computer, with a role of `viewer`, `operator` or `approver`).
+### Discord: once per machine, then one channel per project
 
-**What chat can do.** Read status, logs and reports; answer decision requests; give the supervisor instructions; pause, resume, stop one attempt, hand a task to another agent.
-**What it cannot:** approve a protected change, create experiments, change policy, approve promotion, accept unverified work. Those are only ever done at your computer. Only paired people are obeyed.
+**On the machine, once** (the bot, the server and who may talk to it):
 
-**Approving from chat (optional).** If you want to approve proposals from your phone, enrol an authenticator app on the computer
-(`research approval chat-enroll`, which needs your PIN) and enable `governance.approval.chat.enabled`. Approving then needs the 6-digit code from the app. **The PIN itself is never
-requested through chat, in any form.** Details are in [GOVERNANCE.md](GOVERNANCE.md).
+1. Install the extra: `uv tool install "research-panel[tui,discord]"` (Python 3.10+).
+2. In the [Discord developer portal](https://discord.com/developers/applications) create an application, add a bot, copy its token. No privileged intents are needed.
+3. In your first project run `research chat setup discord`. Paste the token at the hidden prompt; it prints an invite URL (scopes `bot` and `applications.commands`, minimal permissions): open it and
+   add the bot to your server.
+4. Send the bot a direct message; it replies with a pairing code. Type it at the prompt (or `research chat pair CODE` later). Pair people as `viewer`, `operator` or `approver`.
 
-## 7. Approvals and the PIN
+The token is stored only on this machine (mode 0600). The gateway, one background process for all your projects, starts by itself.
+
+**Per project** (its own channel in the same server): create a channel, copy its id (Discord → Settings → Advanced → Developer Mode, then right-click the channel → Copy Channel ID), and in that project:
+
+```bash
+cd ../other-project/main
+research chat setup discord --channel 123456789012345678
+```
+
+The second and later projects reuse the saved bot (no token prompt) and map themselves to their channel. Alerts and commands in that channel belong to that project; the same bot, pairing and PIN
+serve all of them. You can also type `/sethome` in a channel to make it the default for alerts that belong to no particular project. With `notifications.discord.thread_per_task` (default on) each task gets
+its own thread inside the project channel. Chat names a project by its folder, or by the folder around `main` (`PRAVAH/main` is `PRAVAH`).
+
+**Telegram** works the same way: create a bot with @BotFather, run `research chat setup telegram`, paste the token, then send the bot any message; that chat is the first paired user.
+
+**What chat can do:** read status, logs and reports; answer decision requests; give the supervisor instructions; pause, resume or hand a task to another agent; ask a read-only agent (`/ask`).
+**What it cannot:** approve a protected change, create experiments, change policy, approve promotion or accept unverified work; those happen only at your computer. Only paired people are obeyed.
+To approve proposals from your phone, enrol an authenticator (`research approval chat-enroll`, needs your PIN) and enable `governance.approval.chat.enabled`; the PIN itself is never requested through chat.
+Commands, levels and troubleshooting: [CHAT.md](CHAT.md).
+
+## 8. Approvals and the PIN
 
 Some actions are protected because they change what counts as scientific truth or what reaches `main`: approving an agent's proposal, changing policy settings, approving or merging a promotion,
 and the settings the config marks "needs a human". They always need a human, never an agent, and they ask for your approval PIN.
@@ -372,7 +420,7 @@ governance:
 Protected actions then still need a human and a written reason. The PIN is a guard against accidents, not authentication: an agent running as your user could read your files, so keep agents inside worktrees
 and review what they do. Forgot the PIN? Delete `approval.json` in `~/.config/research-os/` and set a new one. More in [GOVERNANCE.md](GOVERNANCE.md).
 
-## 8. Usage limits
+## 9. Usage limits
 
 Providers cap usage per 5 hours or per week. By default a limit stops the task and asks for you. To let the supervisor wait and carry on by itself:
 
@@ -380,7 +428,7 @@ Providers cap usage per 5 hours or per week. By default a limit stops the task a
 research config set supervisor.usage_limit.on_limit wait --scope machine --reason "overnight runs"
 ```
 
-This setting needs a human, so it needs your PIN (or `require_pin: false`, section 7); in VS Code use **Settings**. The values:
+This setting needs a human, so it needs your PIN (or `require_pin: false`, section 8); in VS Code use **Settings**. The values:
 
 | Value | Meaning |
 |---|---|
@@ -393,7 +441,7 @@ weekly limit) is never waited out unattended: you get a decision request to wait
 Reset times are read from Claude Code, Codex, OpenCode and Antigravity messages; the formats each one uses are in [PROVIDERS.md](PROVIDERS.md). With chat on, you get one alert when the wait starts and one when it resumes.
 Everything else about it is in [SUPERVISOR.md](SUPERVISOR.md).
 
-## 9. Presenting results
+## 10. Presenting results
 
 `research report` records everything. The **Scientist Guide** is the short story you tell: a [Quarto](https://quarto.org) book in `docs/scientist-guide/` that builds to a website. A new project already has one.
 
@@ -418,7 +466,27 @@ Research OS never commits or pushes: after you commit the guide and `.github` an
 Results an independent review marks supported (or that you star with `research guide star F-001`) are logged into it automatically. An agent writes a short draft only when you ask, within word limits you set
 (`research guide draft check` reports any overrun). Add references with `research guide cite add --bibtex "..."` and cite them as `[@key]`. Quarto is needed only to build. See [GUIDE.md](GUIDE.md).
 
-## 10. Updating
+## 11. Git and agent permissions
+
+**What is uncommitted, and why it matters.** Experiment worktrees start from the last commit, so a plan, script or setting you have not committed is invisible to agents and not reproducible.
+
+```bash
+research git status                # main repo, experiment worktrees, promotions and the ledger, each file with the reason it matters
+research git preflight             # the check `plan run`, `plan resume` and promotion run for you (git.preflight: warn by default, block, or off)
+research git commit --scaffold     # shows the staged diff of the files Research OS generated (AGENTS.md, CLAUDE.md, .gitignore ...)
+research git commit --scaffold --yes
+research git ignore                # previews a managed .gitignore block for caches and internal files; --apply writes it
+```
+
+A commit needs `--yes` after you have seen the diff, commits exactly the files named and nothing else, refuses secrets and caches, can only be run by a person and never pushes. Verified agent work is
+committed on the experiment's own branch automatically (small figures and reports in, bulky outputs and secrets out); moving it to `main` is promotion, a separate human-gated step.
+
+**What a headless agent may run.** The default is edits and the `research` CLI only, never arbitrary Bash. Instead of giving an agent Bash, let it run a task's declared checks through Research OS:
+`research agent check T-001` (read-only). To allow one more command on purpose, add it to the profile: `agents.profiles.<name>.allow_commands: ["python scripts/smoke.py *"]`. If an agent is refused a command
+the task is blocked as `permission_denied` with the commands and the fix; nothing is resubmitted, and after you change the setting `research supervisor resolve T-001 --unblock` continues with a new attempt
+(the failed one stays on record).
+
+## 12. Updating and migrating
 
 ```bash
 research self-update --check
@@ -429,10 +497,19 @@ research self-update
 installed it (uv, pipx or pip). If anything fails, including a checksum mismatch, your existing install is left untouched. A new **major** version can break things, so it is refused unless you add `--major`.
 `--version X.Y.Z` installs a specific release, and `--from-file WHEEL` installs a wheel you downloaded (offline), checking a `SHA256SUMS` file beside it. It also restarts supervisors it knows about.
 
-Then update the VS Code extension: download `research-panel-X.Y.Z.vsix` from the same release, reinstall it (`code --install-extension research-panel-X.Y.Z.vsix`) and reload the window. Run `research bin install --force`
-if agents use the project's launcher, and `research supervisor restart` for a running supervisor.
+**Existing projects need no migration.** New settings take their defaults and stored plans and runs are read as they are. After an upgrade, in each project:
 
-## 11. Troubleshooting
+```bash
+research supervisor restart            # a running supervisor keeps the old code until restarted
+research agent instructions --diff     # preview the refreshed AGENTS.md block (only the text between the research markers changes)
+research agent instructions            # apply it (or: research doctor --fix agents_md.stale)
+research bin install --force           # only if agents use the project's launcher and you reinstalled elsewhere
+research git status                    # optional: see what is uncommitted; research git ignore --apply adds the managed .gitignore block
+```
+
+Chat gateway code is refreshed automatically (`research chat gateway restart` forces it). If you use the VS Code extension, install the `.vsix` from the same release and reload the window.
+
+## 13. Troubleshooting
 
 | Symptom | What to do |
 |---|---|
@@ -442,5 +519,11 @@ if agents use the project's launcher, and `research supervisor restart` for a ru
 | No Telegram or Discord messages | `research chat status`, then `research chat gateway restart` |
 | Plan does not move | `research supervisor status`, then `research supervisor start`; `research plan status PLAN-001` says why it halted |
 | Not sure the install is healthy | `research doctor` |
+| A task says results are not collected yet | Slurm finished but the results are not home: `research hpc sync` (or `research hpc collect RUN`). It is re-verified automatically; nothing is resubmitted |
+| Task blocked `permission_denied` | The headless agent was refused a command: `research agent check T-001`, or `agents.profiles.<name>.allow_commands`; then `research supervisor resolve T-001 --unblock` |
+| Plan shows 3/3 verified but not completed | An authorized promotion is paused or suspended: `research plan autopromote PLAN-001 status` shows the reviewer's objection; fix it, then `... retry --item AP-001` |
+| Second project's alerts land in the wrong Discord channel | `research chat setup discord --channel ID` inside that project; `research chat doctor` |
+| `belongs to another project` on HPC | Two projects share a remote directory name: set `hpc.clusters.<name>.project.slug` to something unique in one of them |
+| Uncommitted files warning before a plan | `research git status`; commit what matters with `research git commit --paths notes.md --yes` or `--scaffold` |
 
 More causes and fixes are in [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Providers and configuration: [PROVIDERS.md](PROVIDERS.md), [CONFIGURATION.md](CONFIGURATION.md).

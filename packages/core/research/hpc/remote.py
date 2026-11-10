@@ -167,6 +167,28 @@ def doctor(p: Project, cluster_name: Optional[str] = None, compute: bool = False
     return out
 
 
+def project_id(p: Project) -> str:
+    """Stable identity of this project (name + creation time): what tells two projects with the same name apart on a shared cluster."""
+    import hashlib
+    return hashlib.sha1(f"{p.name}|{(p.config.get('project') or {}).get('created_at')}".encode()).hexdigest()[:16]
+
+
+def check_owner(p: Project, ssh: Ssh, cluster: Dict[str, Any], paths: Dict[str, str]) -> None:
+    """Two projects on one cluster must not share a remote directory (RUN-0001 exists in both). A directory another project created is refused, never reused."""
+    text = ssh.read_file(posixpath.join(paths["metadata"], "project.json"))
+    try:
+        meta = json.loads(text) if text else None
+    except ValueError:
+        meta = None
+    if not meta:
+        return
+    other = meta.get("project_id") and meta["project_id"] != project_id(p)
+    legacy_other = not meta.get("project_id") and meta.get("project") not in (None, p.name)
+    if other or legacy_other:
+        raise ResearchError(f"{paths['project']} on {cluster['name']} belongs to another project ('{meta.get('project')}'), so runs of this project would overwrite its RUN-/EXP- directories",
+                            hint=f"Give this project its own directory: research config set hpc.clusters.{cluster['name']}.project.slug <unique-name>. Nothing was submitted or changed.")
+
+
 def init_workspace(p: Project, cluster_name: Optional[str] = None, *, dry_run: bool = False) -> Dict[str, Any]:
     """Create the project's remote directories. Creates only; never deletes or overwrites."""
     cluster = C.get(p, cluster_name)
@@ -180,8 +202,9 @@ def init_workspace(p: Project, cluster_name: Optional[str] = None, *, dry_run: b
     if dry_run:
         return {"cluster": cluster["name"], "paths": paths, "would_create": [w for w, e in existing.items() if not e],
                 "existing": [w for w, e in existing.items() if e], "dry_run": True}
+    check_owner(p, ssh, cluster, paths)
     ssh.mkdir(*want)
-    meta = {"project": p.name, "slug": C.slug(p, cluster), "created_at": now_iso(),
+    meta = {"project": p.name, "project_id": project_id(p), "slug": C.slug(p, cluster), "created_at": now_iso(),
             "research_version": __version__,
             "note": "Execution state only. The authoritative research history lives on the laptop."}
     ssh.write_file(posixpath.join(paths["metadata"], "project.json"),
@@ -284,6 +307,7 @@ def submit(p: Project, experiment: str, *, cluster_name: Optional[str] = None, c
     paths = C.paths(p, cluster)
     merged = C.check_resources(cluster, resources or {})
     ssh = connect(cluster)
+    check_owner(p, ssh, cluster, paths)
 
     # 1. datasets must be resolved before an expensive submission
     wanted = B._dataset_refs(exp)
@@ -538,11 +562,23 @@ def _adopt_uncertain(p: Project, ssh: Ssh, run: Dict[str, Any], hpc: Dict[str, A
 
 
 def collect(p: Project, run_id: str, *, cluster_name: Optional[str] = None,
-            max_bytes: Optional[int] = None) -> Dict[str, Any]:
+            max_bytes: Optional[int] = None, force: bool = False) -> Dict[str, Any]:
     """Pack the run's results on the cluster, bring the archive home and import it.
 
     Large artifacts stay on the cluster and are recorded as references. Nothing remote is deleted.
+    Two collectors of one run (the supervisor's poll and a manual `hpc sync`) take turns: the second finds the run already collected and imports nothing.
     """
+    from .. import durability
+    os.makedirs(p.path("hpc"), exist_ok=True)
+    with durability.lock(p.path("hpc", f"collect-{run_id}.lock")):
+        from ..runs import get_run
+        if not force and _hpc_state(get_run(p, run_id)).get("state") == "collected":
+            return {"already_collected": True, "metrics_added": 0, "artifacts": [], "cluster": cluster_name}
+        return _collect(p, run_id, cluster_name=cluster_name, max_bytes=max_bytes)
+
+
+def _collect(p: Project, run_id: str, *, cluster_name: Optional[str] = None,
+             max_bytes: Optional[int] = None) -> Dict[str, Any]:
     from ..runs import get_run
     from . import results as RES
     run = get_run(p, run_id)

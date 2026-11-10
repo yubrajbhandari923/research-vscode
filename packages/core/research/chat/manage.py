@@ -71,8 +71,8 @@ def setup_discord(p, token: str, guild_id: Optional[str] = None, home_channel_id
     if home_channel_id or channel_id:
         kw["home_channel_id"] = str(home_channel_id or channel_id)
     if channel_id:
-        import os
-        kw["project_channels"] = {**(discord_bot.credentials().get("project_channels") or {}), os.path.basename(p.root.rstrip("/")): str(channel_id)}
+        from . import commands
+        kw["project_channels"] = {**(discord_bot.credentials().get("project_channels") or {}), commands.project_label(p.root): str(channel_id)}
     discord_bot.save(**kw)
     p.save_config({"notifications.discord.enabled": True})
     p.config = p.load_config()

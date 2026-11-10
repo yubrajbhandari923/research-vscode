@@ -13,7 +13,7 @@ Start with `research doctor`. It is read-only, checks the project, agents, git w
 | `research self-update` fails | The existing install is untouched on any failure. A checksum mismatch means the download was corrupted or incomplete: try again, or download the wheel and `SHA256SUMS` yourself and run `research self-update --from-file WHEEL`. A new major version needs `--major` |
 | `research tui` says it needs the extra | Reinstall with `[tui]`: `uv tool install --force "research-panel[tui]"` |
 | Discord says `discord.py` is missing | Install the `[discord]` extra the same way (Python 3.10 or newer). `research chat status` prints the exact line for how you installed |
-| "… is a Research OS v1 project" | The folder holds an older project. Nothing was changed. See [Recovery](../README.md#recovery) in the README for starting fresh beside it |
+| "… is a Research OS v1 project" | The folder holds an older project. Nothing was changed. See [Recovery](REFERENCE.md#recovery) in the README for starting fresh beside it |
 
 ## Agents
 
@@ -64,7 +64,7 @@ More in [CHAT.md](CHAT.md).
 
 | Symptom | Cause and fix |
 |---|---|
-| A limit stopped the task and waits for me | That is the default (`halt`). To wait automatically, set `supervisor.usage_limit.on_limit` to `wait` (see the [guide](QUICKSTART.md#8-usage-limits)) |
+| A limit stopped the task and waits for me | That is the default (`halt`). To wait automatically, set `supervisor.usage_limit.on_limit` to `wait` (see the [guide](QUICKSTART.md#9-usage-limits)) |
 | A weekly limit asks me a question | A reset further than `max_wait_hours` (8) is never waited out unattended. Answer the decision request: wait, switch provider, or stop |
 
 ## Records and recovery

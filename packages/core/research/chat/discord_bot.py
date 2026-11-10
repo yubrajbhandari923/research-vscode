@@ -408,11 +408,21 @@ class DiscordChannel(Channel):
                 await asyncio.sleep(min(ex.retry_after, 30))
         raise ResearchError("Discord rate limit")                  # unreachable
 
+    def _legacy_key(self, label: str) -> Optional[str]:
+        """Older versions keyed channels by the bare folder name (`main`): use that key only when exactly one project has that folder name."""
+        root = commands.enabled_projects("discord").get(label)
+        b = os.path.basename((root or "").rstrip("/"))
+        if b and b != label and sum(1 for r in commands.enabled_projects("discord").values() if os.path.basename(r.rstrip("/")) == b) == 1:
+            return b
+        return None
+
     def _cfg_threads(self, label: str, task: str) -> Optional[str]:
-        return ((credentials().get("threads") or {}).get(label) or {}).get(task)
+        th = credentials().get("threads") or {}
+        return ((th.get(label) or (th.get(self._legacy_key(label) or "") or {})) or {}).get(task)
 
     def _label_channel(self, label: str) -> Optional[str]:
-        return (credentials().get("project_channels") or {}).get(label)
+        pc = credentials().get("project_channels") or {}
+        return pc.get(label) or pc.get(self._legacy_key(label) or "")
 
     def _thread_per_task(self, label: str) -> bool:
         root = commands.enabled_projects("discord").get(label)
@@ -496,10 +506,10 @@ class DiscordChannel(Channel):
         for label, per in (c.get("threads") or {}).items():
             for task, tid in per.items():
                 if str(tid) == ix.channel_id:
-                    return label, task
+                    return commands.canonical_label(label), task
         for label, cid in (c.get("project_channels") or {}).items():
             if str(cid) in (ix.channel_id, ix.parent_id):
-                return label, None
+                return commands.canonical_label(label), None
         return None, None
 
     def _allowed(self, ix: Ix) -> bool:
