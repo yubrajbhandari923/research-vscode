@@ -30,7 +30,7 @@ import subprocess
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import promotion as PR, registry, workspace as W
+from . import commitprov as CP, promotion as PR, registry, workspace as W
 from .util import PolicyBlocked, ResearchError, now_iso
 
 TERMINAL = ("integrated", "noop", "cancelled")
@@ -115,8 +115,10 @@ def _integrated(p, rs: Dict[str, Any], sha: str) -> bool:
 
 
 def pending(p, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[tuple, List[Dict[str, Any]]]:
-    """Verified supervisor commits not yet in main, keyed by (experiment, workspace). No commit exists for a no-op task, so none is listed."""
+    """Verified commits not yet in main, keyed by (experiment, workspace): the supervisor's own commit of an attempt, plus commits an agent made that
+    `commitprov` tied to a verified task (recorded in `commit_provenance`, with the evidence). No commit exists for a no-op task, so none is listed."""
     out: Dict[tuple, List[Dict[str, Any]]] = {}
+    seen = set()
     for tid, e in (rs.get("tasks") or {}).items():
         if not p.exists("task", tid):
             continue
@@ -127,8 +129,32 @@ def pending(p, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[tuple, List[Dict[
                 continue
             ws = (a.get("workspace") or {}).get("id") or (W.for_task(p, tid) or {}).get("id")
             if exp and ws:
-                out.setdefault((exp, ws), []).append({"sha": sha, "task": tid, "profile": a.get("profile")})
+                seen.add(sha)
+                out.setdefault((exp, ws), []).append({"sha": sha, "task": tid, "profile": a.get("profile"), "basis": "recorded"})
+    for sha, r in (rs.get("commit_provenance") or {}).get("attributed", {}).items():
+        a = next((x for x in ((rs.get("tasks") or {}).get(r["task"]) or {}).get("attempts", []) if x.get("n") == r["attempt"]), None)
+        if sha in seen or not a or a.get("state") != "verified" or a.get("voided") or _integrated(p, rs, sha):
+            continue
+        out.setdefault((r["experiment"], r["workspace"]), []).append({"sha": sha, "task": r["task"], "profile": a.get("profile"), "basis": r["basis"]})
     return out
+
+
+def coverage(p, st: Dict[str, Any], rs: Dict[str, Any], exp: str, ws: str, write: bool = True) -> Dict[str, Any]:
+    """Every commit of an experiment branch, accounted for (see commitprov). Run before a candidate is prepared and when a task verifies."""
+    return CP.reconcile(p, rs, exp, ws, PR._main_branch(p), lambda sha: _integrated(p, rs, sha), write=write)
+
+
+def _workspaces(p, rs: Dict[str, Any]) -> List[tuple]:
+    """(experiment, workspace) of every experiment that has a verified task: where verified commits can be."""
+    seen = set()
+    for tid, e in (rs.get("tasks") or {}).items():
+        a = CP._verified_attempt(e)
+        if a and p.exists("task", tid):
+            exp = p.get("task", tid).get("related_experiment_id")
+            ws = CP.ws_of(p, tid, a)
+            if exp and ws:
+                seen.add((exp, ws))
+    return sorted(seen)
 
 
 def _complete(p, st: Dict[str, Any], rs: Dict[str, Any], exp: str) -> bool:
@@ -249,10 +275,21 @@ def step(p, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any], out: Dict
     m = mode(p, st, rs)
     if m["mode"] != "active":
         return
+    cov = {}
+    for exp, ws in _workspaces(p, rs):
+        try:
+            cov[(exp, ws)] = coverage(p, st, rs, exp, ws)
+        except ResearchError:
+            pass
     for (exp, ws), _ in sorted(pending(p, st, rs).items()):
         if _complete(p, st, rs, exp):
             _enqueue(rs, exp, ws, "experiment_complete")
+    for (exp, ws), rep in sorted(cov.items()):         # all tasks verified but commits nobody can vouch for: say so now, not by silently omitting them later
+        if rep["blocking"] and _complete(p, st, rs, exp) and not _open(rs, exp):
+            _pause(_enqueue(rs, exp, ws, "experiment_complete"), CP.describe(rep) + coverage_hint(st), out)
     item = next(iter(_open(rs)), None)
+    if item and item["status"] == "paused":
+        _note_omissions(p, st, rs, item, out)
     if not item or item["status"] == "paused":
         return
     try:
@@ -261,6 +298,23 @@ def step(p, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any], out: Dict
         _pause(item, str(ex), out)
     except Exception as ex:   # never crash the supervisor, never continue past the unknown
         _pause(item, f"{type(ex).__name__}: {ex}", out)
+
+
+def coverage_hint(st) -> str:
+    return (f" Decide each with `research plan autopromote {st['plan_key']} attribute --commit SHA --task T-…` (the task must be verified) or `exclude --commit SHA`, "
+            f"then `retry`.")
+
+
+def _note_omissions(p, st, rs, item, out) -> None:
+    """A paused item whose candidate was prepared before some verified commits were known (an older version, or evidence that arrived later) says so once:
+    retrying prepares a new candidate from the current main with all of them. Nothing is retried for the human."""
+    have = {x["sha"] for x in item.get("sources") or []}
+    miss = [x for x in pending(p, st, rs).get((item["experiment"], item["workspace"]), []) if x["sha"] not in have]
+    key = sorted(x["sha"] for x in miss)
+    if miss and item.get("omits") != key:
+        item["omits"] = key
+        out["events"].append(f"automatic promotion {item['id']}'s candidate omits {len(miss)} verified commit(s) ({', '.join(sorted({x['task'] for x in miss}))}); "
+                             f"`research plan autopromote {st['plan_key']} retry --item {item['id']}` prepares a new candidate with them (no task is re-run)")
 
 
 # ----------------------------------------------------------------------------------------------- the state machine
@@ -285,6 +339,9 @@ def _advance(p, st, rs, item, out) -> None:
 
 
 def _prepare(p, st, rs, item, pol, out) -> None:
+    rep = coverage(p, st, rs, item["experiment"], item["workspace"])
+    if rep["blocking"]:
+        raise PolicyBlocked(CP.describe(rep) + coverage_hint(st))
     pend = [x for x in pending(p, st, rs).get((item["experiment"], item["workspace"]), [])]
     if not pend:
         return _set(item, "noop", note="nothing unpromoted remains")
@@ -297,7 +354,7 @@ def _prepare(p, st, rs, item, pol, out) -> None:
         c = prior or PR.prepare(p, item["workspace"], commits=shas, title=f"{st['plan_key']} {item['experiment']} (automatic)", reason=marker,
                                 auto={"plan": st["plan_key"], "item": item["id"], "implementers": sorted({x["profile"] for x in pend if x.get("profile")}),
                                       "sources": shas})
-    item.update(promotion=c["id"], base_main=c["base_main"], candidate_head=c["gates"]["head"], sources=[x for x in pend])
+    item.update(promotion=c["id"], base_main=c["base_main"], candidate_head=c["gates"]["head"], sources=[x for x in pend], omits=None)
     main = PR._main_branch(p)
     if W._git(c["path"], "diff", "--quiet", main, c["gates"]["head"]) is not None:       # identical to main: the work is already there
         with _as_supervisor(p):
@@ -439,9 +496,30 @@ def retry(p, st, rs, item_id: str) -> Dict[str, Any]:
     return summary(p, st, rs)
 
 
+def decide(p, st, rs, action: str, commit: str, task: Optional[str], note: Optional[str]) -> Dict[str, Any]:
+    """A human attributes a commit to a verified task, or excludes it (the caller has required a human). The commit must be one of the experiment branch's own."""
+    by = (p.author or {}).get("author_name") or os.environ.get("RESEARCH_AUTHOR") or "human"
+    ws = None
+    for exp, w in _workspaces(p, rs):
+        s = W.show(p, w)
+        sha = W._git(s["path"], "rev-parse", "--verify", "-q", f"{commit}^{{commit}}") if s.get("present") else None
+        if sha and sha in (W._git(s["path"], "rev-list", f"{s['base_rev']}..HEAD") or "").split():
+            ws, full = (exp, w), sha
+            break
+    if not ws:
+        raise ResearchError(f"{commit} is not a commit of any experiment branch of this plan")
+    if action == "attribute" and task and p.exists("task", task) and p.get("task", task).get("related_experiment_id") != ws[0]:
+        raise ResearchError(f"{task} belongs to a different experiment than the one whose branch holds {commit[:10]}")
+    CP.decide(rs, action, full, task, note, by)
+    coverage(p, st, rs, *ws)
+    rs.setdefault("history", []).append({"ts": now_iso(), "event": f"autopromote_commit_{action}", "commit": full, "task": task, "by": by})
+    return summary(p, st, rs)
+
+
 def summary(p, st, rs) -> Dict[str, Any]:
     a = _state(rs)
     pol = policy(p)
     return {**mode(p, st, rs), "test_command": pol["test_command"], "test_command_source": pol["test_command_source"], "conflicts": pol["conflicts"],
             "authorization": a["authorized"], "items": a["items"],
-            "pending": [{"experiment": e, "workspace": w, "commits": [x["sha"][:10] for x in v]} for (e, w), v in sorted(pending(p, st, rs).items())]}
+            "pending": [{"experiment": e, "workspace": w, "commits": [x["sha"][:10] for x in v]} for (e, w), v in sorted(pending(p, st, rs).items())],
+            "coverage": {w: r for w, r in sorted(CP.state(rs)["reports"].items())}}

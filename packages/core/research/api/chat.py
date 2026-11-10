@@ -261,11 +261,12 @@ def chat_cmd_choose(p, n: str, via: str = "chat") -> Dict[str, Any]:
 @op(sync=False, chat="decide")
 def chat_cmd_debug(p) -> Dict[str, Any]:
     from .. import notify, supervisor as SV
-    plan = next((st["plan_key"] for st, rs in _plans(p) if SV.plan_health(p, st, rs)["blocking"]), None)
-    if not plan:
+    pick = next(((st, SV.plan_health(p, st, rs)) for st, rs in _plans(p) if (lambda h: h["blocking"] or h.get("stuck"))(SV.plan_health(p, st, rs))), None)
+    if not pick:
         return _text("Nothing is blocked.")
-    threading.Thread(target=notify._debug_and_alert, args=(p.root, plan, SV.plan_health(p, *notify._plan_pair(p, plan))), daemon=True).start()
-    return _text("Diagnosing; I will message you when it is done.")
+    st, h = pick
+    threading.Thread(target=notify._debug_and_alert, args=(p.root, st["plan_key"], h), daemon=True).start()
+    return _text(f"Diagnosing {st['plan_key']}; I will message you here when it is done (a failure is reported too).")
 
 
 def _plan_to_change(p, cmd: str, plan: Optional[str]) -> str:

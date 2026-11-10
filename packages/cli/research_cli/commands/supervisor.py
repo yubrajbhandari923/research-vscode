@@ -120,6 +120,8 @@ def _status_lines(s) -> list:
         if it["status"] == "paused":
             out.append(red(f"  promotion {it['id']} ({it['experiment']}) is PAUSED: {it.get('error') or 'no reason recorded'}"))
             out.append(dim(f"      the verified tasks are untouched; fix it, then: research plan autopromote {s['plan']} retry --item {it['id']}"))
+            if it.get("omits"):
+                out.append(yellow(f"      its candidate omits {len(it['omits'])} verified commit(s) that were not recorded on their attempts; retry prepares a new candidate with them"))
     cc = s.get("concurrency")
     if cc:
         out.append(dim(f"  parallel agents: {cc['effective']} ({cc['source']}); {cc['running']} running, {cc['ready_waiting']} ready"))
@@ -157,12 +159,24 @@ def cmd_plan_promote(a, p) -> int:
 def cmd_plan_autopromote(a, p) -> int:
     from research import approval as AP
     pin = AP.read_pin() if a.action == "authorize" and AP.is_set() else None
-    r = SV.autopromote(p, a.id, a.action, note=a.note, pin=pin, item=a.item)
+    r = SV.autopromote(p, a.id, a.action, note=a.note, pin=pin, item=a.item, commit=a.commit, task=a.task)
     def lines(d):
+        if a.action == "coverage":
+            out = []
+            for c in d["coverage"]:
+                out.append(bold(f"{c['experiment']} ({c['workspace']})") + dim(f"  base {str(c['base'])[:10]} head {str(c['head'])[:10]}"))
+                out += [f"  included    {x['sha'][:10]} {x['task']} attempt {x['attempt']} ({x['basis']})" for x in c["included"]]
+                out += [dim(f"  in progress {x['sha'][:10]} {x['task']} (not verified yet; left out)") for x in c["in_progress"]]
+                out += [dim(f"  excluded    {x[:10]} (by a human)") for x in c["excluded"]]
+                out += [yellow(f"  UNATTRIBUTED {x['sha'][:10]} {x['subject'][:60]} (by {x['author']}): no attempt claims it") for x in c["orphans"]]
+                out += [yellow(f"  AMBIGUOUS    {x['sha'][:10]} {x['subject'][:60]} (claimed by {', '.join(x['tasks'])})") for x in c["ambiguous"]]
+            return out or [dim("no experiment of this plan has verified work yet")]
         out = [dim("authorization recorded; it applies when you run the plan: `research plan run " + a.id + "`")] if a.action == "authorize" and not SV.load_run(p, SV._plan_state(p, a.id)["plan_id"]) else []
         out += [bold(f"automatic promotion: {d['mode']}") + (f" (authorized by {d['by']})" if d.get("by") else "") + (f" — {d['why']}" if d.get("why") else "")]
         out += [f"  {i['id']} {i['experiment']:<10} {i['status']:<16} {i.get('main_after') or ''}" + (yellow(f"  {i['error'][:100]}") if i.get("error") else "") for i in d["items"]]
         out += [dim(f"  pending {x['experiment']}: {', '.join(x['commits'])}") for x in d["pending"]]
+        out += [yellow(f"  {w}: {len(c['orphans'])} unattributed, {len(c['ambiguous'])} ambiguous commit(s) hold promotion: research plan autopromote {a.id} coverage")
+                for w, c in (d.get("coverage") or {}).items() if c.get("blocking")]
         return out
     return _emit(a, r, lines)
 
@@ -530,9 +544,10 @@ def attach_plan(g, add) -> None:
     x.add_argument("--dry-run", action="store_true", help="apply: preview only")
     x = add(g, "promote", cmd_plan_promote, "prepare promotion candidates from verified, committed work (nothing merges)")
     x.add_argument("id"); x.add_argument("--experiment"); x.add_argument("--title")
-    x = add(g, "autopromote", cmd_plan_autopromote, "unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry")
-    x.add_argument("id"); x.add_argument("action", choices=["status", "authorize", "revoke", "retry"])
-    x.add_argument("--note", help="authorize: why"); x.add_argument("--item", help="retry: the paused item (AP-001)")
+    x = add(g, "autopromote", cmd_plan_autopromote, "unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry | coverage | attribute | exclude")
+    x.add_argument("id"); x.add_argument("action", choices=["status", "authorize", "revoke", "retry", "coverage", "attribute", "exclude"])
+    x.add_argument("--note", help="authorize / attribute / exclude: why"); x.add_argument("--item", help="retry: the paused item (AP-001)")
+    x.add_argument("--commit", help="attribute / exclude: a commit of the experiment branch"); x.add_argument("--task", help="attribute: the verified task it belongs to (T-003)")
     for name, fn, h in (("run", cmd_plan_run, "let the supervisor execute a plan"), ("pause", cmd_plan_pause, "pause scheduling for a plan"),
                         ("resume", cmd_plan_resume, "resume a paused or blocked plan"), ("stop", cmd_plan_stop, "stop a plan run (history is kept)"),
                         ("status", cmd_plan_status, "supervised status: phases, attempts, budgets")):

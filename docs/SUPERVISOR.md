@@ -559,3 +559,17 @@ A headless Claude agent (nobody can answer a prompt) may edit files and run the 
   `max_hpc_resubmissions` are untouched, so an HPC job already submitted is never duplicated.
 * **Before launch** the supervisor compares commands the task text tells the agent to run (in backticks or after `$ `) with the profile's allow-list (Claude only, where it is known). A conflict is an event
   (`supervisor_permission_conflict`), a `permission_notes` field in `plan status --json`, and a "Permissions (read first)" section in the agent's brief.
+
+## 26. Promotion coverage: which commits belong to which verified task
+
+The supervisor commits verified work itself and records that commit on the attempt. An agent often commits first; then the tree is clean, no supervisor commit exists and the attempt records none. So that automatic promotion neither loses that work nor takes unverified work, every commit of the experiment branch gets one verdict (`research plan autopromote PLAN coverage`):
+
+| Verdict | Meaning | Effect |
+|---|---|---|
+| included | the supervisor's recorded commit; a supervisor trailer naming a recorded execution; an agent commit inside the attempt's `head_before..head_after` (older ledgers: its started..ended window) and claimed by no other task | promoted with the task's other commits, in branch order |
+| in progress | claimed by a task that has not verified | left out; not an error |
+| excluded | a human ran `exclude --commit SHA` | never promoted |
+| orphan | no attempt claims it (a person's commit, or older than the attempt records) | stops the candidate until decided |
+| ambiguous | two tasks claim it (parallel agents in one worktree) | stops the candidate until decided |
+
+Decide a stopped commit with `research plan autopromote PLAN attribute --commit SHA --task T-003 --note "why"` (the task must be verified) or `exclude --commit SHA`, then `retry --item AP-001`. Attributions are written once to the run state (`commit_provenance`) with their basis; attempts are never edited and history is never rewritten. Dates and trailers are what the committer wrote: this is attribution evidence, and the reviewer, frozen-test and test gates still apply to everything promoted. A paused item whose candidate predates some attributed commits says so in `plan status`; `retry` prepares a new candidate from the same verified work.

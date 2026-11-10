@@ -73,6 +73,7 @@ More in [CHAT.md](CHAT.md).
 |---|---|
 | You edited a record file by hand | `research sync` imports hand-edited files |
 | The index looks wrong or is locked | Stop other clients and retry. `research rebuild` rebuilds the index from the canonical records. Back up `.research/` first |
+| The promotion's tests found no tests, or a verified task's file is missing from the candidate | An agent committed its own work, so no commit was recorded. Update to 3.5.3, `research supervisor restart`, `research plan autopromote PLAN coverage`, then `research plan autopromote PLAN retry --item AP-001` (no task re-runs) |
 | "Newer schema refused" | Install a newer release. Do not lower the stored schema version |
 
 If none of this helps, run `research doctor --all` and `research version --json` and include both when you report the problem.

@@ -103,7 +103,7 @@ The allow-list is by **platform user id** (never display name), checked on every
 | Class | Examples | In chat |
 |---|---|---|
 | Read | status, blocked, task, logs, report, finding, usage, proposals, digest | viewer and up |
-| Steer (reversible) | `/say`, `/choose N`, `/debug`, `/pause`, `/resume [plan]`, `/stop T-12` (current attempt), `/continue T-12 PROFILE`, `/approve-start T-12` | operator |
+| Steer (reversible) | `/say`, `/choose N`, `/debug` (also the Diagnose button; the answer always arrives, even a paused promotion's reason and exact next command), `/pause`, `/resume [plan]`, `/stop T-12` (current attempt), `/continue T-12 PROFILE`, `/approve-start T-12` | operator |
 | Refuse (safe direction) | Reject on a proposal or intervention card | operator |
 | PIN-protected | approve a proposal or protected intervention, create experiments, change policy, approve promotions, authorize auto-promotion | **never** from chat; the card's *Approve on my computer* button tells you the exact command |
 | Bypasses verification or history | `supervisor accept`, void attempts, stop a plan with agents, restart | **never** from chat |
