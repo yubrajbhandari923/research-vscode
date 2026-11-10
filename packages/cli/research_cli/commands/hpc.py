@@ -349,7 +349,7 @@ def _hpc_sync(a, p, cl) -> int:
 
 def _hpc_collect(a, p, cl) -> int:
     from research.hpc import remote as HR
-    r = HR.collect(p, a.id, cluster_name=cl, max_bytes=a.max_bytes)
+    r = HR.collect(p, a.id, cluster_name=cl, max_bytes=a.max_bytes, force=True)    # asked for by name: collect again (the import is idempotent)
     _done(a, r, msg=f"{r['run']}: {r['metrics_added']} new metric entries, "
                     f"{len(r.get('artifacts') or [])} artifact(s), status {r['status']}")
     if not a.json:

@@ -108,3 +108,20 @@ def test_status_and_doctor_say_what_to_do_next(env):
     env("chat", "gateway", "start")
     code, out = env("chat", "doctor")
     assert code == 0 and "gateway is running" in out
+
+
+def test_a_second_project_reuses_the_saved_discord_bot_and_only_adds_its_channel(tmp_path, monkeypatch):
+    from research.chat import discord_bot, manage
+    from research_cli.commands import chat as CC
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    calls = {}
+    monkeypatch.setattr(discord_bot, "need_discord", lambda: None)
+    monkeypatch.setattr(discord_bot, "credentials", lambda: {"token": "SAVED-TOKEN"})
+    monkeypatch.setattr(manage, "inspect_discord", lambda t: {"name": "bot", "application_id": "1", "guilds": [{"id": "9", "name": "Lab"}], "invite_url": "u"})
+    monkeypatch.setattr(manage, "setup_discord", lambda p, token, guild, channel_id=None, info=None: calls.update(token=token, channel=channel_id) or {"guild": "Lab", "supervisor": {}, "gateway": {}})
+    monkeypatch.setattr(CC.AP, "read_pin", lambda *_: (_ for _ in ()).throw(AssertionError("a saved token must not be asked for again")))
+
+    class A:
+        token, guild, channel, json, role = None, None, "555", False, None
+    CC._setup_discord(A(), object())
+    assert calls == {"token": "SAVED-TOKEN", "channel": "555"}

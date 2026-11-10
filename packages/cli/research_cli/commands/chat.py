@@ -1,6 +1,8 @@
 """`research chat ...`: chat gateway setup and pairing (Telegram and Discord). `research telegram ...` stays as a hidden alias."""
 from __future__ import annotations
 
+import os
+
 from typing import Any
 
 from research import approval as AP
@@ -59,6 +61,15 @@ def _setup_discord(a, p) -> int:
     import sys
     from research.chat import discord_bot, manage, pairing
     discord_bot.need_discord()                                  # a clear install line before anything is asked
+    saved = discord_bot.credentials().get("token")
+    if saved and not a.token and not os.environ.get("RESEARCH_NEW_DISCORD_TOKEN"):
+        # the bot, server and pairing belong to the machine: a second project only needs its own channel (and the enable flag)
+        info = manage.inspect_discord(saved)
+        r = manage.setup_discord(p, saved, a.guild, channel_id=a.channel, info=info)
+        print(green("✓ ") + f"this project now uses Discord ({r['guild']}) with the bot already saved on this machine" + (f", channel {a.channel}" if a.channel else ""))
+        if not a.channel:
+            print("Give this project its own channel: `research chat setup discord --channel CHANNEL_ID`, or type /sethome in that channel.")
+        return _emit(a, {k: v for k, v in r.items() if k not in ("supervisor", "gateway")}, None)
     print(discord_bot.PORTAL_STEPS)
     token = a.token or AP.read_pin("Bot token (not shown): ")
     if not token:
