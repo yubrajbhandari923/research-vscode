@@ -26,6 +26,7 @@ from . import durability, registry
 from .util import ResearchError, now_iso
 
 RESUME = ("unblock", "retry", "reverify")
+SAFE_AUTO = ("reverify", "note", "guide")      # what an automatic diagnosis may do by itself; anything else (retry, new tasks, edits) waits for a person
 
 PROMPT = """You are the investigator for a research-automation supervisor. A researcher needs help with ONE task the deterministic rules cannot settle.
 Read the task context below (and, if you need more, project files and logs: read only; do not edit anything, do not run experiments, do not approve anything).
@@ -109,7 +110,7 @@ def _plain(task: str, why: str) -> Dict[str, Any]:
 
 
 def investigate(p, task: Optional[str] = None, plan: Optional[str] = None, question: Optional[str] = None, text: Optional[str] = None,
-                decision: Optional[str] = None, source: str = "investigator", fingerprint: Optional[str] = None) -> Dict[str, Any]:
+                decision: Optional[str] = None, source: str = "investigator", fingerprint: Optional[str] = None, safe_only: bool = False) -> Dict[str, Any]:
     """Run the investigator once for `task` (or the first blocked task of `plan`). `question` = what to find out; `text` = the researcher's instruction
     (a free-text decision answer). Human-initiated only. Returns {status: done|clarify|fallback|failed, summary, interventions, decision, cost_usd}."""
     from . import decisions as D, intervene as I, supervisor as SV, taskprompt
@@ -131,7 +132,7 @@ def investigate(p, task: Optional[str] = None, plan: Optional[str] = None, quest
     u = r.get("usage")
     entry["cost_usd"] = u.get("cost_usd") if isinstance(u, dict) else None
     try:
-        out = _apply(p, tid, ctx, I._json_from(r["result"]), text or question or "investigate", decision, source, entry)
+        out = _apply(p, tid, ctx, I._json_from(r["result"]), text or question or "investigate", decision, source, entry, safe_only)
     except (ResearchError, ValueError) as ex:
         out = {"status": "failed", "task": tid, "interventions": [], "decision": None, "summary": f"The investigator's answer could not be used ({str(ex)[:200]}). Nothing was changed."}
         entry["error"] = str(ex)[:300]
@@ -142,7 +143,7 @@ def investigate(p, task: Optional[str] = None, plan: Optional[str] = None, quest
     return out
 
 
-def _apply(p, tid: str, ctx: Dict[str, Any], raw: Any, instruction: str, decision: Optional[str], source: str, entry: Dict[str, Any]) -> Dict[str, Any]:
+def _apply(p, tid: str, ctx: Dict[str, Any], raw: Any, instruction: str, decision: Optional[str], source: str, entry: Dict[str, Any], safe_only: bool = False) -> Dict[str, Any]:
     from . import decisions as D, intervene as I
     if not isinstance(raw, dict):
         raise ResearchError("not a JSON object")
@@ -159,7 +160,7 @@ def _apply(p, tid: str, ctx: Dict[str, Any], raw: Any, instruction: str, decisio
     acts = prop["actions"]
     entry["plan"] = acts
     entry["classes"] = sorted({I.classify_action(a) for a in acts})
-    prot = [a for a in acts if I.classify_action(a) in ("scientific", "resource", "frozen_test")]
+    prot = [a for a in acts if I.classify_action(a) in ("scientific", "resource", "frozen_test") or (safe_only and a["type"] not in SAFE_AUTO)]
     go = [a for a in acts if a not in prot]
     if prot:                       # resume-type actions wait with the protected part so they run after an approved amendment
         held = [a for a in go if a["type"] in RESUME]
@@ -169,7 +170,7 @@ def _apply(p, tid: str, ctx: Dict[str, Any], raw: Any, instruction: str, decisio
     if go:
         made.append(I.create_planned(p, tid, instruction, go, prop["summary"], prop["rationale"], source=src))
     if prot:
-        made.append(I.create_planned(p, tid, instruction, prot, prop["summary"], prop["rationale"], source=src, allow_open=bool(go)))
+        made.append(I.create_planned(p, tid, instruction, prot, prop["summary"], prop["rationale"], source=src, allow_open=bool(go), hold=safe_only))
     entry["interventions"] = [i["id"] for i in made]
     created = [f"{a['task']['key']}" for a in go if a["type"] == "add_task"]
     parts = [f"Understood: {understood or prop['summary']}."]
@@ -200,4 +201,7 @@ def maybe_auto(p, task: str, fingerprint: str) -> Optional[Dict[str, Any]]:
     p.event("task", task, "investigator_auto", "supervisor.investigator.auto: investigating a failure the rules could not settle")
     # `auto: true` is the researcher's standing opt-in for this one read-mostly run; protected parts of the outcome still wait for the PIN and nothing here approves.
     with SV.human_grant("supervisor.investigator.auto"):
-        return investigate(p, task=task, question="This task failed in a way the rules could not classify. Diagnose it and propose the fewest actions.", fingerprint=fingerprint)
+        return investigate(p, task=task, fingerprint=fingerprint, safe_only=True,
+                           question="This task failed and the rules could not settle why. Use `evidence` (run records, numerical metrics, logs, artifact paths), the checks in `attempts` "
+                                    "and `recovery`. If the cause is results that were late, answer with a single reverify. Never propose relaxing a threshold, changing a scientific "
+                                    "assumption, raising a budget or submitting a job. Diagnose it and propose the fewest actions.")

@@ -26,16 +26,16 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import autopromote as AP, durability, fork as FK, planspec as PS, registry, taskprompt
+from . import autopromote as AP, durability, fork as FK, githygiene as GH, planspec as PS, recovery as RC, registry, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
 PHASES = ("waiting", "ready", "awaiting_approval", "waiting_provider", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
 REPAIRABLE = {"incomplete_deliverable", "incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
-NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state"}
+NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state", RC.EVIDENCE_PENDING}
 CATEGORIES = ("missing_prerequisite", "role_contradiction", "incomplete_deliverable", "incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle", "environment", "scientific_assumption",
-              "resource_limit", "agent_process_failure", "unknown_execution_state")
+              "resource_limit", "agent_process_failure", "unknown_execution_state", RC.EVIDENCE_PENDING)
 
 
 # ----------------------------------------------------------------------------------------------- config & paths
@@ -161,6 +161,9 @@ def _plan_state(p: Project, ref: str) -> Dict[str, Any]:
 def plan_run(p: Project, ref: str, start_daemon: bool = True) -> Dict[str, Any]:
     require_human(p, "Starting a plan run")
     st = _plan_state(p, ref)
+    pf = None
+    if (load_run(p, st["plan_id"]) or {}).get("state") != "running":
+        pf = GH.require_preflight(p, "plan")       # reports what is uncommitted and why it matters; refuses only when git.preflight=block
     with _lock(p):
         rs = load_run(p, st["plan_id"])
         if rs and rs["state"] in ("running",):
@@ -178,6 +181,8 @@ def plan_run(p: Project, ref: str, start_daemon: bool = True) -> Dict[str, Any]:
             os.remove(_pre_path(p, st["plan_id"]))
     p.event("plan", st["plan_id"], "supervisor_run", f"plan {st['plan_key']} run requested")
     out = status(p, ref)
+    if pf and pf.get("issues"):
+        out["git_preflight"] = pf
     if start_daemon:
         out["daemon"] = daemon_start(p, detach=True)
     return out
@@ -198,6 +203,7 @@ def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, p
         return AP.summary(p, st, rs)
     if action == "authorize":
         AP.check_ready(p, st)
+        GH.require_preflight(p, "promotion")      # reports (or, with git.preflight=block, refuses) uncommitted work before an unattended merge is authorized
         from . import approval            # prompts for the PIN BEFORE the state lock is taken
         approval.confirm(p, f"Authorize unattended code promotion for plan {st['plan_key']}", note, pin)
     with _lock(p):
@@ -239,7 +245,11 @@ def plan_pause(p: Project, ref: str) -> Dict[str, Any]:
 
 
 def plan_resume(p: Project, ref: str) -> Dict[str, Any]:
+    require_human(p, "Resuming a plan run")
+    pf = GH.require_preflight(p, "plan")
     out = _set_state(p, ref, "running", ("paused", "blocked", "attention"))
+    if pf.get("issues"):
+        out["git_preflight"] = pf
     out["daemon"] = daemon_start(p, detach=True)
     return out
 
@@ -293,12 +303,22 @@ def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
             continue
         e = tasks.get(tid) or {}
         ph = e.get("phase") or ("verified" if p.get("task", tid)["status"] == "done" else "waiting")
-        rows.append((k, tid, ph, e.get("reason")))
+        rows.append((k, tid, ph, e.get("reason"), e.get("recovery")))
     unfinished = [r for r in rows if r[2] != "verified"]
-    if rs.get("state") == "completed" or (rows and not unfinished):
+    open_promos = AP.unresolved(p, st, rs)
+    all_verified = bool(rows) and not unfinished
+    if (all_verified or rs.get("state") == "completed") and not open_promos:
         return {"state": "completed", "label": "completed", "blocking": [], "fingerprint": ""}
+    if all_verified and rs.get("state") == "completed":     # persisted "completed" with an unresolved promotion (older versions): visible, and `tick` reopens it
+        return {"state": "promotion_unresolved", "label": "tasks verified, promotion unresolved", "blocking": [], "fingerprint": "",
+                "promotion": open_promos}
     if rs.get("state") != "running":
-        return {"state": "paused" if rs.get("state") == "paused" else rs.get("state", "stopped"), "label": rs.get("state", "stopped"), "blocking": [], "fingerprint": ""}
+        out = {"state": "paused" if rs.get("state") == "paused" else rs.get("state", "stopped"), "label": rs.get("state", "stopped"), "blocking": [], "fingerprint": ""}
+        if rs.get("state") == "paused":      # a paused plan can hold failures that need diagnosing just as a halted one does
+            stuck = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason, "recovery": rec}
+                     for k, tid, ph, reason, rec in unfinished if ph in HUMAN_PHASES]
+            out.update(stuck=stuck, stuck_fingerprint="|".join(sorted(f"{b['task']}:{b['phase']}:{(b.get('reason') or '')[:60]}" for b in stuck)))
+        return out
     moving = [r for r in unfinished if r[2] in ACTIVE_PHASES]
     ap = (rs.get("autopromote") or {}).get("items") or []
     promo = any(i["status"] not in ("integrated", "noop", "cancelled", "paused") for i in ap)
@@ -308,8 +328,9 @@ def plan_health(p: Project, st: Dict[str, Any], rs: Dict[str, Any]) -> Dict[str,
         iv = any(i["plan_id"] == st["plan_id"] and i["state"] in ("approved", "implementing", "verifying") for i in IV.list_all(p, open_only=True))
     except (ResearchError, OSError):
         pass
-    blocking = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason} for k, tid, ph, reason in unfinished if ph in HUMAN_PHASES]
-    paused_promos = [{"task": i["id"], "key": i["id"], "title": f"promotion of {i['experiment']}", "phase": "blocked", "reason": i.get("error")} for i in ap if i["status"] == "paused"]
+    blocking = [{"task": tid, "key": k, "title": p.get("task", tid)["title"], "phase": ph, "reason": reason, "recovery": rec} for k, tid, ph, reason, rec in unfinished if ph in HUMAN_PHASES]
+    paused_promos = [{"task": i["id"], "key": i["id"], "title": f"promotion of {i['experiment']}", "phase": "blocked", "reason": i.get("why"), "promotion": True}
+                     for i in open_promos if i["status"] in ("paused", "suspended")]
     wp = waiting_provider(rs)
     wpx = {"waiting_provider": wp} if wp else {}
     if moving or promo or iv:
@@ -367,7 +388,8 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                      "execution": last and {"id": last["execution"], "state": ex and ex["state"], "alive": ex and ex.get("alive"),
                                             "kind": last["kind"], "verification": last.get("verification"), "outcome": last.get("outcome")},
                      "requires_approval": bool((flat[key].get("execution") or {}).get("requires_approval")) and not (rs.get("approvals") or {}).get(tid),
-                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso")})
+                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso"),
+                     "recovery": e.get("recovery")})
     counts: Dict[str, int] = {}
     for r in rows:
         counts[r["phase"]] = counts.get(r["phase"], 0) + 1
@@ -394,6 +416,19 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
     busy = False
     with _lock(p):
         for rs in all_runs(p):
+            if rs.get("state") == "completed":   # persisted completion that hid an authorized promotion that is not settled: reopen it so it can be recovered
+                st = PS.load_state(p, rs["plan_key"])
+                if st and AP.unresolved(p, st, rs):
+                    rs["state"] = "running"
+                    rs["history"].append({"ts": now_iso(), "event": "reopened", "why": "an authorized automatic promotion is not settled"})
+                    save_run(p, rs)
+                    out["events"].append(f"{rs['plan_key']}: reopened, automatic promotion unresolved")
+            if rs.get("state") == "paused":      # a paused plan starts nothing, but evidence that arrives is still re-verified (never launches an agent or a job)
+                st = PS.load_state(p, rs["plan_key"])
+                if st:
+                    RC.step(p, st, rs, cfg(p, st), out)
+                    save_run(p, rs)
+                continue
             if rs.get("state") != "running":
                 continue
             st = PS.load_state(p, rs["plan_key"])
@@ -408,6 +443,7 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             _limits_step(p)
             _reconcile_attempts(p, st, rs, c, out)
             _poll_hpc(p, st, rs, c, out)
+            RC.step(p, st, rs, c, out)
             AP.step(p, st, rs, c, out)
             from . import intervene as IV
             save_run(p, rs)          # interventions edit the run state through the public APIs; persist what this pass already did first
@@ -1219,6 +1255,13 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
         e["reason"] = "waiting for computational run(s) " + ", ".join(r["id"] for r in pending)
         a["hpc_wait_since"] = a.get("hpc_wait_since") or now_iso()
         return
+    late = RC.uncollected(p, runs)
+    if late and RC.waiting(a, late, c):      # Slurm is done but the results are not home yet: that is not a verdict on the work
+        e["phase"] = "waiting_hpc"
+        e["reason"] = RC.wait_text(late)
+        e["recovery"] = {"ts": now_iso(), "attempt": a["n"], "cause": "collection_pending", "root_cause": e["reason"], "needs_human": [],
+                         "decision": "waiting for collection and ingestion; nothing is verified or resubmitted until the results are here", "reverifications": a.get("reverifications", 0)}
+        return
     diagnostics: List[str] = []
     extra: List[str] = []
     if hpc and not runs:
@@ -1252,8 +1295,13 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
         cat, why = _refine_missing(p, st, tid, spec, diagnostics)
         if why:
             a["blocker"] = why
+        elif a.get("collection_overdue"):      # the results never came home: no repair can create them
+            cat = RC.EVIDENCE_PENDING
+            a["blocker"] = RC.diagnose(p, tid, a, diagnostics)["text"]
     a["category"] = cat
+    RC.record(p, e, a, tid, diagnostics)
     _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out)
+    RC.decide(e)
 
 
 # a required output is absent or empty (file check: "missing" / "exists but is empty") or a required metric was never recorded
@@ -1343,7 +1391,9 @@ def _verified(p, st, rs, tid, e, a, out) -> None:
 
 def _commit_verified(p: Project, tid: str, a: Dict[str, Any], spec_title: str, plan_key: str, c: Dict[str, Any]) -> Optional[str]:
     """Commit the verified work on the experiment's own branch (never on main, never pushed), so it is promotable and traceable.
-    Only experiment worktrees are touched; `supervisor.commit_exclude` keeps bulky results out of code history."""
+    Only experiment worktrees are touched. Source, tests, reports and small figures go in; secrets, caches, compiled files and bulky outputs do not
+    (`supervisor.commit_exclude`, with `commit_keep` for small figures/reports, `commit_max_file_mb`). What was committed and skipped is recorded on the attempt.
+    Git never waits for a person: a hook or signing problem becomes the attempt's commit_note."""
     if not c.get("commit_verified_work"):
         return None
     from . import workspace as W
@@ -1351,21 +1401,21 @@ def _commit_verified(p: Project, tid: str, a: Dict[str, Any], spec_title: str, p
     if not ws:
         return None
     path = ws["path"]
-    excl = [(f":(exclude,glob)**/{x.rstrip('/')}/**" if x.endswith("/") else f":(exclude,glob)**/{x}") for x in (c.get("commit_exclude") or [])]
-    env = {**os.environ, "GIT_AUTHOR_NAME": "Research OS supervisor", "GIT_AUTHOR_EMAIL": "supervisor@research-os.local",
+    sel = GH.select_for_commit(path, list(c.get("commit_exclude") or []), list(c.get("commit_keep") or []), int(c.get("commit_max_file_mb") or 5) * 1024 * 1024)
+    a["commit_report"] = {"committed": len(sel["add"]), "skipped": sel["skipped"][:30]}
+    if not sel["add"]:
+        return None
+    env = {"GIT_AUTHOR_NAME": "Research OS supervisor", "GIT_AUTHOR_EMAIL": "supervisor@research-os.local",
            "GIT_COMMITTER_NAME": "Research OS supervisor", "GIT_COMMITTER_EMAIL": "supervisor@research-os.local"}
-    def git(*args):
-        r = subprocess.run(["git", *args], cwd=path, capture_output=True, text=True, env=env)
-        if r.returncode:
-            raise ResearchError("git " + " ".join(args[:2]) + ": " + (r.stderr or r.stdout).strip()[:200])
-        return r.stdout.strip()
-    git("add", "-A", "--", ".", *excl)
-    if not git("diff", "--cached", "--name-only"):
+    GH.git(path, "reset", "-q", check=False, env=env)       # an agent may have staged something the selection excludes (a secret, a cache): only the selection is committed
+    GH.git(path, "add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul", stdin="\0".join(sel["add"]) + "\0", env=env)
+    if not GH.git(path, "diff", "--cached", "--name-only", env=env).strip():
         return None
     msg = (f"{tid} {spec_title}\n\nVerified by Research OS (plan {plan_key}, attempt {a['n']}).\n\n"
            f"Research-Task: {tid}\nResearch-Plan: {plan_key}\nResearch-Execution: {a.get('execution')}\n")
-    git("commit", "-q", "-m", msg)
-    return git("rev-parse", "HEAD")
+    # the supervisor's own identity commits on the experiment branch: the user's signing key is not used, so no signing prompt can block a headless run
+    GH.git(path, "-c", "commit.gpgsign=false", "commit", "-q", "-m", msg, env=env)
+    return GH.git(path, "rev-parse", "HEAD", env=env).strip()
 
 
 def promote_plan(p: Project, plan_ref: str, experiment: Optional[str] = None, title: Optional[str] = None) -> Dict[str, Any]:
@@ -1404,11 +1454,13 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
     spec = _flat(st, tid)
     max_att = int((spec.get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"])
     n_fail = len([x for x in e["attempts"] if not x.get("voided")])
-    try:   # keep the established attempt ledger and escalation rules in step
-        tier = a.get("tier") or (a.get("profile") or "agent")
-        O.record_attempt(p, tid, tier, "fail", cat if cat in O.CATEGORIES else "incorrect_implementation", note=(diagnostics or [""])[0][:200])
-    except ResearchError:
-        pass
+    if cat != RC.EVIDENCE_PENDING and not a.get("fail_recorded"):   # missing evidence is not an implementation failure; a re-verification is not a second one
+        try:   # keep the established attempt ledger and escalation rules in step
+            tier = a.get("tier") or (a.get("profile") or "agent")
+            O.record_attempt(p, tid, tier, "fail", cat if cat in O.CATEGORIES else "incorrect_implementation", note=(diagnostics or [""])[0][:200])
+            a["fail_recorded"] = True
+        except ResearchError:
+            pass
     if cat == "scientific_assumption":
         e.update(phase="attention", reason="a scientific assumption looks wrong: review the proposal or problem report before anything continues")
         _event(p, tid, "supervisor_attention", e["reason"])
@@ -1417,11 +1469,15 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
     if cat in ("missing_prerequisite", "role_contradiction"):   # more attempts of the same task cannot help: stop with the actionable reason
         _block(p, st, rs, tid, f"{cat}: {a.get('blocker')}", out)
         return
+    if cat == RC.EVIDENCE_PENDING:
+        _block(p, st, rs, tid, f"{cat}: {a.get('blocker')} The same attempt is re-verified automatically, unchanged, when the results arrive.", out)
+        return
     if cat in NEEDS_HUMAN:
         _block(p, st, rs, tid, f"{cat}: {(diagnostics or ['needs a human'])[0][:300]}", out)
         return
     if c["on_failure"] == "pause":
         rs["state"] = "paused"
+        rs["paused_for"] = tid
         e.update(phase="attention", reason="on_failure=pause: " + (diagnostics or [""])[0][:200])
         return
     if c["on_failure"] == "stop":

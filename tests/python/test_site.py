@@ -252,3 +252,21 @@ def test_build_renders_the_site_offline_and_checks_links(proj, repo, exp):
     assert r["ok"] and r["links"] == []
     out = os.path.join(PV.guide_dir(proj), "_output", "scientific")
     assert os.path.exists(os.path.join(out, "index.html")) and "Understand alpha" in open(os.path.join(out, "about.html")).read()
+
+
+def test_refreshing_generated_chapters_keeps_the_draft_page_metadata_consistent(proj, repo, exp):
+    site.init(proj, apply=True)
+    sha = commit_reports(repo)
+    site.add(proj, exp, at=sha)
+    base = os.path.join(PV.guide_dir(proj), "experiments", "diffusion-smoke-test")
+    page = os.path.join(base, "index.qmd")
+    assert sha[:10] in open(page).read()
+    sha2 = commit_reports(repo, {"reports/quarto/chapters/00-smoke.qmd": QMD + "\nUpstream addition.\n"})
+    r = site.add(proj, exp, at=sha2)
+    text = open(page).read()
+    assert "index.qmd" in r["refreshed"] and sha2[:10] in text and sha[:10] not in text            # an untouched page follows the chapters it lists
+    assert site.status(proj)["experiments"][0]["commit"][:10] == sha2[:10] if "commit" in site.status(proj)["experiments"][0] else True
+    open(page, "w").write("# My title\n\nMy words.\n")                                              # once you edit it, it is never rewritten, and you are told
+    sha3 = commit_reports(repo, {"reports/quarto/chapters/00-smoke.qmd": QMD + "\nUpstream addition 2.\n"})
+    r = site.add(proj, exp, at=sha3)
+    assert open(page).read() == "# My title\n\nMy words.\n" and any("may show an older commit" in w for w in r["warnings"])

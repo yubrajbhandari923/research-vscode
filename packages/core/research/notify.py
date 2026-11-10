@@ -18,7 +18,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from . import registry
+from . import recovery as RC, registry
 from .util import PolicyBlocked, ResearchError, now_iso
 
 _threads: Dict[str, threading.Thread] = {}
@@ -159,7 +159,8 @@ def run_debug(p, plan_ref: str, halt: Optional[Dict[str, Any]] = None, tasks: Op
 
 
 def message_for(rec: Dict[str, Any], halt: Dict[str, Any]) -> str:
-    head = f"Plan {halt.get('plan', rec.get('plan'))} is HALTED\n" + "\n".join(f"- {b['task']} {b['title'][:50]}: {(b.get('reason') or b['phase'])[:140]}" for b in halt["blocking"][:5])
+    head = f"Plan {halt.get('plan', rec.get('plan'))} is {'PAUSED with failed tasks' if halt.get('paused') else 'HALTED'}\n" + "\n".join(
+        f"- {b['task']} {b['title'][:50]}: {(b.get('reason') or b['phase'])[:140]}" + "".join("\n    " + x for x in RC.line(b.get("recovery")).splitlines()) for b in halt["blocking"][:5])
     if rec.get("state") == "done" and rec.get("summary"):
         body = "\n\n" + rec["summary"]
         if rec["options"]:
@@ -309,13 +310,15 @@ def step(p) -> None:
         c = cfg(p)
         tg = chat_enabled(p)          # any platform: Telegram, Discord or both
         for rs in SV.all_runs(p):
-            if rs.get("state") != "running":
+            if rs.get("state") not in ("running", "paused"):
                 continue
             from . import planspec as PS
             st = PS.load_state(p, rs["plan_key"])
             if not st:
                 continue
             h = SV.plan_health(p, st, rs)
+            if rs["state"] == "paused" and h.get("stuck"):      # a paused plan with failed tasks is diagnosed and reported like a halted one
+                h = {**h, "state": "halted", "paused": True, "blocking": h["stuck"], "fingerprint": "paused|" + h["stuck_fingerprint"]}
             marker = _dir(p, "halt-" + st["plan_key"] + ".json")
             m = _read(marker)
             if h["state"] != "halted":
@@ -374,7 +377,7 @@ def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:
     try:
         with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
             for b in halt["blocking"]:
-                if b["phase"] == "blocked":
+                if b["phase"] in ("blocked", "attention"):
                     investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
     except Exception:    # noqa: BLE001 - a diagnosis must never break the watcher
         pass
@@ -407,8 +410,12 @@ def _plans(p) -> List[Any]:
 
 def _blocked(p) -> List[Dict[str, Any]]:
     from . import supervisor as SV
-    return [dict(b, plan=st["plan_key"]) for st, rs in _plans(p) if rs.get("state") in ("running", "paused", "blocked", "attention")
-            for b in SV.plan_health(p, st, rs)["blocking"]]
+    out = []
+    for st, rs in _plans(p):
+        if rs.get("state") in ("running", "paused", "blocked", "attention"):
+            h = SV.plan_health(p, st, rs)
+            out += [dict(b, plan=st["plan_key"]) for b in (h["blocking"] or h.get("stuck") or [])]
+    return out
 
 
 def _plan_pair(p, plan_key):

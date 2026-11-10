@@ -34,7 +34,7 @@ from . import views as _views
 from .store import Project, find_root
 from .util import BudgetExceeded, NotFound, NotInitialized, ResearchError
 
-__version__ = "3.4.0"
+__version__ = "3.5.0"
 
 __all__ = [
     "Project", "ResearchError", "BudgetExceeded", "NotFound", "NotInitialized", "init", "open_project",

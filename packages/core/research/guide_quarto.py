@@ -628,8 +628,54 @@ def _chapter_files(p: Project) -> List[Tuple[str, str]]:
     return out
 
 
+_REF = re.compile(r"\b(?:EXP|RUN|[FADQ])-\d+(?:#[\w.@-]+|/[A-Z]\d+)?")
+
+
+def attribution_issues(p: Project, rel: str, text: str) -> List[Dict[str, Any]]:
+    """Every record a chapter cites, anywhere (researcher-only blocks included), must exist in THIS project. A report generator that types RUN-0003 or
+    EXP-004 into its output attributes results to records it never read: on other data the identifier is stale or invented."""
+    body = _FM.sub("", text, count=1)
+    missing = sorted({m.group(0) for m in _REF.finditer(body) if PV.ref_state(p, m.group(0)).get("missing")})
+    if not missing:
+        return []
+    return [PV._issue("error", "stale_attribution",
+                      f"{rel} cites {', '.join(missing[:6])}{' …' if len(missing) > 6 else ''}, which {'is' if len(missing) == 1 else 'are'} not a record of this project: "
+                      "attribution must be read from the data the report is generated from (the run, experiment and artifact it actually used), never typed in")]
+
+
+def text_issues(p: Project, rel: str, text: str, figs: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The read-only checks for ONE chapter's text (shared by `source_issues` and the promotion gate): identifier leaks into the scientific reading,
+    stale or invented attribution, executable cells, figure captions."""
+    issues: List[Dict[str, Any]] = []
+    figs = PV.load_figures(p) if figs is None else figs
+    if _CELL.search(text):
+        issues.append(PV._issue("error", "executable_cell", f"{rel} contains an executable code cell; rendering never runs code "
+                                                            "(prepare figures with `research guide figure add` instead)"))
+    vis = visible_in_scientific(text)
+    seen = sorted({m.group(0) for m in _ID.finditer(re.sub(r"\{[^{}\n]*#clm-\d+[^{}\n]*\}", "", vis))})
+    if seen:
+        issues.append(PV._issue("error", "identifier_in_scientific_text",
+                                f"{rel} shows Research OS identifiers to scientific readers: {', '.join(seen[:6])}"
+                                + (" …" if len(seen) > 6 else "") + " (move them to provenance, or into a researcher-only block)"))
+    issues += attribution_issues(p, rel, text)
+    for m in _IMG.finditer(vis):
+        label = re.search(r"#(fig-[\w-]+)", m.group("attrs"))
+        if not label:
+            continue
+        cap = m.group("cap").strip()
+        if len(cap) < 20:
+            issues.append(PV._issue("error", "figure_caption_missing", f"{rel}: {label.group(1)} has no explanatory caption"))
+        reg = next((f for f in figs.values() if f["label"] == label.group(1)), None)
+        if reg and reg["kind"] == "conceptual" and not re.search(r"illustrat|schemat|conceptual|cartoon|toy", cap, re.I):
+            issues.append(PV._issue("warning", "conceptual_not_disclosed", f"{rel}: {label.group(1)} is conceptual but its caption "
+                                                                          "does not say it is illustrative"))
+        if "fig-alt" not in m.group("attrs"):
+            issues.append(PV._issue("warning", "figure_alt_missing", f"{rel}: {label.group(1)} has no fig-alt text"))
+    return issues
+
+
 def source_issues(p: Project) -> List[Dict[str, Any]]:
-    """Read-only checks on the .qmd sources: identifier leaks into the scientific reading, executable cells, figure captions,
+    """Read-only checks on the .qmd sources: identifier leaks into the scientific reading, stale attribution, executable cells, figure captions,
     chapters missing from the book. Cheap and independent of Quarto."""
     issues: List[Dict[str, Any]] = []
     figs = PV.load_figures(p)
@@ -640,29 +686,7 @@ def source_issues(p: Project) -> List[Dict[str, Any]]:
                 text = f.read()
         except OSError:
             continue
-        for m in _CELL.finditer(text):
-            issues.append(PV._issue("error", "executable_cell", f"{rel} contains an executable code cell; rendering never runs code "
-                                                                "(prepare figures with `research guide figure add` instead)"))
-            break
-        vis = visible_in_scientific(text)
-        seen = sorted({m.group(0) for m in _ID.finditer(re.sub(r"\{[^{}\n]*#clm-\d+[^{}\n]*\}", "", vis))})
-        if seen:
-            issues.append(PV._issue("error", "identifier_in_scientific_text",
-                                    f"{rel} shows Research OS identifiers to scientific readers: {', '.join(seen[:6])}"
-                                    + (" …" if len(seen) > 6 else "") + " (move them to provenance, or into a researcher-only block)"))
-        for m in _IMG.finditer(vis):
-            label = re.search(r"#(fig-[\w-]+)", m.group("attrs"))
-            if not label:
-                continue
-            cap = m.group("cap").strip()
-            if len(cap) < 20:
-                issues.append(PV._issue("error", "figure_caption_missing", f"{rel}: {label.group(1)} has no explanatory caption"))
-            reg = next((f for f in figs.values() if f["label"] == label.group(1)), None)
-            if reg and reg["kind"] == "conceptual" and not re.search(r"illustrat|schemat|conceptual|cartoon|toy", cap, re.I):
-                issues.append(PV._issue("warning", "conceptual_not_disclosed", f"{rel}: {label.group(1)} is conceptual but its caption "
-                                                                              "does not say it is illustrative"))
-            if "fig-alt" not in m.group("attrs"):
-                issues.append(PV._issue("warning", "figure_alt_missing", f"{rel}: {label.group(1)} has no fig-alt text"))
+        issues += text_issues(p, rel, text, figs)
         if listed and rel not in listed and rel != "_quarto.yml":
             issues.append(PV._issue("warning", "chapter_not_in_book", f"{rel} is not listed in _quarto.yml (`research guide chapter add {rel}`)"))
     from . import guide as G

@@ -224,10 +224,24 @@ def _sync_workspace(p, rs: Dict[str, Any], exp: Optional[str], tid: str) -> Opti
     return None
 
 
+def unresolved(p, st: Dict[str, Any], rs: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """What still stands between "every task verified" and "the plan is done": an authorized promotion that is queued, running, paused (with the reviewer's or
+    the gate's actual objection) or suspended, and verified commits an authorized promotion has not integrated. Manual mode has none: nothing was promised."""
+    m = mode(p, st, rs)
+    if m["mode"] == "manual":
+        return []
+    rows = [{"id": i["id"], "experiment": i["experiment"], "status": i["status"], "why": i.get("error"), "promotion": i.get("promotion")} for i in _open(rs)]
+    covered = {i["experiment"] for i in rows}
+    rows += [{"id": f"pending:{e}", "experiment": e, "status": "suspended" if m["mode"] == "suspended" else "pending", "why": m.get("why"), "promotion": None}
+             for (e, _w) in sorted(pending(p, st, rs)) if e not in covered]
+    return rows
+
+
 def settled(p, st: Dict[str, Any], rs: Dict[str, Any]) -> bool:
-    if mode(p, st, rs)["mode"] != "active":
+    m = mode(p, st, rs)["mode"]
+    if m == "manual":
         return True
-    return not _open(rs) and not pending(p, st, rs)
+    return not unresolved(p, st, rs)
 
 
 def step(p, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any], out: Dict[str, Any]) -> None:
@@ -418,6 +432,7 @@ def retry(p, st, rs, item_id: str) -> Dict[str, Any]:
     if item.get("promotion") and PR.show(p, item["promotion"])["state"] not in ("promoted", "abandoned"):
         with _as_supervisor(p):
             PR.abandon(p, item["promotion"], f"retry of {item_id} by a human")
+    item.setdefault("objections", []).append({"attempt": item.get("attempt", 1), "why": item.get("error"), "at": now_iso()})    # the objection stays on record
     item.update(promotion=None, review_requested=None, tests=None, numerical=None, review=None, candidate_head=None)
     item["attempt"] = item.get("attempt", 1) + 1
     _set(item, "queued", error=None)

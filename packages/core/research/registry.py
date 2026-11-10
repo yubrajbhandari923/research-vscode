@@ -32,11 +32,13 @@ SUPERVISOR: Dict[str, Any] = {
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
     "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "recovery": {"enabled": True, "collection_wait_minutes": 120, "max_reverifications": 5, "max_syncs": 100},   # late-evidence recovery (recovery.py); never relaxes a check or submits a job
     "investigator": {"auto": False, "max_per_plan": 3, "budget_usd": 2.0},   # on-demand investigator agent (investigator.py); auto = also on unclassified failures
     "usage_limit": {"on_limit": "halt", "wait_buffer_seconds": 120, "max_wait_hours": 8,      # H.10: what a provider usage/rate limit does (supervisor.py)
                     "unknown_reset_backoff_minutes": [15, 30, 60], "short_backoff_minutes": [1, 2, 5]},
     "escalation": {},     # {on: [incomplete_deliverable], model, effort, profile, max_escalated_attempts: 1}; empty = never escalate
     "commit_verified_work": True, "commit_exclude": ["outputs/", "results/", "patch*.yaml", "*.pyc", "__pycache__/", ".venv/"],
+    "commit_keep": ["*.png", "*.svg", "*.pdf", "*.md", "*.qmd", "*.csv"], "commit_max_file_mb": 5,      # small figures/reports inside the excluded folders still go on the branch
 }
 GOVERNANCE: Dict[str, Any] = {
     "experiments": {"agent_creation": "propose_only"},
@@ -55,7 +57,7 @@ NOTIFICATIONS: Dict[str, Any] = {
     "halt_grace_seconds": 120, "auto_debug": False, "level": "medium", "summary": "facts", "telegram": {"enabled": False},
     "discord": {"enabled": False, "thread_per_task": True, "mention": True},
     "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit",
-                      "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified"],
+                      "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "recovery"],
                "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
     "digest": {"at": None, "silent_if_unchanged": True},
 }
@@ -145,7 +147,8 @@ _CONFIG: Dict[str, Any] = {
     # Project-owned references carried into agent briefs (see harness.py); independent of the strategy.
     "harness": {"name": None, "skills": [], "context": [], "instructions": None, "checks": [],
                 "hooks": {}, "hooks_approved": {}, "hooks_timeout_seconds": 300, "require_seed": False},   # hooks: see hooks.py (human approval required)
-    "git": {"commit_checkpoints": False},        # true → every checkpoint commits .research/ (never pushes)
+    "git": {"commit_checkpoints": False,         # true → every checkpoint commits .research/ (never pushes)
+            "preflight": "warn"},                # githygiene.py: warn (report what is uncommitted and why it matters) | block | off
     # Optional job isolation (see sandbox.py / isolation.py). Native execution stays the default; nothing is restricted unless a
     # profile other than `native` applies, and a restrictive profile never silently falls back to native.
     # Selective promotion of experiment code into main (promotion.py). Nothing merges without a human.
@@ -386,8 +389,20 @@ OPTIONS: List[Option] = [
        why="Promotion works on commits; agents often leave their work uncommitted.", effect="Off: you commit yourself before preparing a promotion.", risk="policy"),
     _o("supervisor.commit_exclude", "list", "supervisor", "Paths kept out of those commits", "Folders (relative to the worktree) the supervisor never commits, such as bulky results.",
        why="Code history should not carry data and figures.", effect="Applies to later verifications.", advanced=True),
+    _o("supervisor.commit_keep", "list", "supervisor", "Small figures and reports kept despite those folders", "File patterns that are still committed with verified work when they sit in an excluded folder (outputs/, results/) and are small, so figures and reports stay with the code that made them.",
+       why="A finding's figure and report should be versioned with its code; bulky data should not.", effect="Applies to later verifications. Secrets, caches and compiled files are never committed whatever this says.", advanced=True),
+    _o("supervisor.commit_max_file_mb", "int", "supervisor", "Largest file committed with verified work", "Files bigger than this are left out of the experiment-branch commit and listed in the attempt record.",
+       why="Git history should not carry large data.", effect="Applies to later verifications.", min_=1, max_=500, unit="MB", advanced=True),
+    _o("git.preflight", "enum", "git", "Git preflight before plans and promotion", "Before a plan starts or resumes, or promotion is authorized: warn = report uncommitted files and why they matter, then continue; block = refuse until you have reviewed and committed what matters; off = do not check.",
+       choices=["warn", "block", "off"], why="Experiment worktrees start from the last commit, so uncommitted plans and code are invisible to agents and not reproducible.", effect="Applies to the next plan run, resume or promotion authorization.", risk="policy"),
     _o("supervisor.hpc_poll_seconds", "int", "supervisor", "HPC polling interval", "How often waiting computational runs are reconciled with the cluster. Unavailable status never causes a resubmission.",
        why="Be gentle with login nodes.", effect="Applies on the next cycle.", min_=5, max_=3600, unit="seconds", advanced=True),
+    _o("supervisor.recovery.enabled", "bool", "supervisor", "Recover from late evidence automatically", "Wait for a finished Slurm job's results to be collected before verifying, and re-verify a failed task unchanged when its missing results arrive. It never relaxes a check, changes the science, raises a budget or submits a job.",
+       why="A job can finish before its metrics are home; judging it then is a false failure.", effect="Off: a task is verified the moment its run is terminal, and a late result needs `research supervisor resolve`.", risk="policy"),
+    _o("supervisor.recovery.collection_wait_minutes", "int", "supervisor", "Wait for results collection", "How long a task whose Slurm job finished waits for its results to be collected and ingested before it is verified on what exists.",
+       why="Bounds the wait when the cluster or transfer is down.", effect="Past it a missing metric is reported as evidence_pending (and still re-verified automatically if the results arrive).", min_=0, max_=10080, unit="minutes"),
+    _o("supervisor.recovery.max_reverifications", "int", "supervisor", "Automatic re-verifications per attempt", "Most times one attempt is re-verified automatically because its evidence changed.", why="Bounds automatic work.", effect="Further changes need `research supervisor resolve TASK --completed`.", min_=0, max_=50, advanced=True),
+    _o("supervisor.recovery.max_syncs", "int", "supervisor", "Recovery syncs per task", "Most cluster syncs the recovery step runs for one stopped task while it waits for results.", why="Be gentle with login nodes.", effect="After it the task waits for a manual `research hpc collect`.", min_=0, max_=10000, advanced=True),
     _o("supervisor.max_hpc_resubmissions", "int", "supervisor", "Computational resubmissions", "How many extra runs an agent may submit per task after failures before the task is blocked.",
        why="Failed jobs cost allocation; repeats must be bounded.", effect="Further failures block the task.", min_=0, max_=20, risk="policy"),
 

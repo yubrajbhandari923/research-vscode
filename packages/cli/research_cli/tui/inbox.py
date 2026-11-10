@@ -187,10 +187,15 @@ def _findings(tree, items) -> None:
 
 
 def _blocked(p, items) -> None:
-    from research import notify
+    from research import notify, recovery
     for b in notify._blocked(p):
-        items.append(_item("blocked_task", "action", b["task"], f"{b['task']} blocked: {str(b.get('title') or '')[:60]}",
-                           f"Phase {b['phase']}: {str(b.get('reason') or 'waiting for a person')[:200]}", "Open Plans & Approvals; `/debug` or an instruction can unblock it.",
+        r = b.get("recovery") or {}
+        why = f"Phase {b['phase']}: {str(b.get('reason') or 'waiting for a person')[:200]}" + ("\n" + recovery.line(r) if r else "")
+        todo = " ".join(r.get("needs_human") or []) or "Open Plans & Approvals; `/debug` or an instruction can unblock it."
+        if b.get("promotion"):
+            todo = (f"Read the objection above, fix the code on the experiment branch, then `research plan autopromote {b.get('plan')} retry --item {b['task']}`. "
+                    "Verified tasks and finished runs are not re-run.")
+        items.append(_item("blocked_task", "action", b["task"], f"{b['task']} blocked: {str(b.get('title') or '')[:60]}", why, todo,
                            ["open_approvals", "help"], "t4", blocks=True, source=f"Plan {b.get('plan', '')}".strip()))
 
 

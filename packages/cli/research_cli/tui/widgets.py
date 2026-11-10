@@ -14,7 +14,7 @@ from textual.theme import Theme
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Label, OptionList, Static
 
-TABS = ["Home", "Runs", "Findings", "Plans & approvals", "Decisions", "Experiments", "System", "Inbox", "Worktrees", "Agents", "Guide & site", "Settings"]   # in tab-id order t1..t12
+TABS = ["Home", "Runs", "Findings", "Plans & approvals", "Decisions", "Experiments", "System", "Inbox", "Worktrees", "Agents", "Guide & site", "Settings", "Git health"]   # in tab-id order t1..t13
 from .helptext import KEYS      # noqa: E402  (one list for the Help screen and the docs)
 # Scientific Midnight: teal = brand and verified evidence, violet = agents and automation, amber = needs a decision, coral = failed or blocked.
 MIDNIGHT, SLATE, TEAL, VIOLET, AMBER, CORAL, CLOUD, MUTED = "#0D1626", "#172439", "#39D5C4", "#958BFF", "#F1B85B", "#F07880", "#EAF0F7", "#94A5BB"

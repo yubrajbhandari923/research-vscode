@@ -17,14 +17,14 @@ from .palette import Finder
 from .sections import SECTIONS
 from .widgets import (DARK, LIGHT, TABS, ActionMenu, Confirm, Help, Prompt, TextBox, badge, git_branch, mark_rows, plain, render, tail, wordmark)
 
-TABLES = {"inbox": "Needs attention", "work": "Worktrees and promotion", "agents": "Agents", "guide": "Guide and website", "settings": "Settings", "runs": "Runs", "findings": "Findings", "plans": "Plans", "approvals": "Approvals", "decisions": "Decisions", "records": "Records"}
+TABLES = {"inbox": "Needs attention", "work": "Worktrees and promotion", "agents": "Agents", "guide": "Guide and website", "settings": "Settings", "git": "Git health", "runs": "Runs", "findings": "Findings", "plans": "Plans", "approvals": "Approvals", "decisions": "Decisions", "records": "Records"}
 PANELS = {"p-need": "Needs you", "p-status": "Runs by status", "p-runs": "Last runs", "p-appr": "Approvals", "p-find": "Latest findings",
           "p-sup": "Supervised plans", "p-sys": "Project & system"}
-COLUMNS = {"inbox": ("", "What needs attention", "From"), "work": SECTIONS["work"].columns, "agents": SECTIONS["agents"].columns, "guide": SECTIONS["guide"].columns,
+COLUMNS = {"inbox": ("", "What needs attention", "From"), "work": SECTIONS["work"].columns, "agents": SECTIONS["agents"].columns, "guide": SECTIONS["guide"].columns, "git": SECTIONS["git"].columns,
            "settings": SECTIONS["settings"].columns, "runs": ("id", "status", "started", "summary"), "findings": ("id", "status", "title"), "plans": ("id", "status", "title"),
            "approvals": ("id", "status", "proposal", "from"), "decisions": ("id", "status", "about", "question"),
            "records": ("id", "type", "status", "title")}
-EMPTY = {"work": SECTIONS["work"].empty, "agents": SECTIONS["agents"].empty, "guide": "Loading…", "settings": SECTIONS["settings"].empty, "inbox": "Nothing needs you right now.\n\nThis list gathers everything that is waiting for a person: decisions, approvals, experiments that need a synthesis, "
+EMPTY = {"git": SECTIONS["git"].empty, "work": SECTIONS["work"].empty, "agents": SECTIONS["agents"].empty, "guide": "Loading…", "settings": SECTIONS["settings"].empty, "inbox": "Nothing needs you right now.\n\nThis list gathers everything that is waiting for a person: decisions, approvals, experiments that need a synthesis, "
                   "evidence that cannot be verified. Things that are merely recommended are marked so, and a planned experiment is informational.\n\nPress ? for the guide.",
          "runs": "No runs yet. Track one with `research run exec EXP-001 -- <command>`.", "findings": "No findings yet.",
          "approvals": "Nothing waiting for you. Proposals from agents (and requests from chat) show up here.",
@@ -33,14 +33,14 @@ EMPTY = {"work": SECTIONS["work"].empty, "agents": SECTIONS["agents"].empty, "gu
          "records": "No records yet."}
 NO_DECISIONS_OP = "This research core has no decision requests. Update it with `research self-update`."
 TAB_IDS = [f"t{i + 1}" for i in range(len(TABS))]
-DECISIONS_TAB, INBOX_TAB, FILTERABLE = "t5", "t8", ("t2", "t3", "t4", "t5", "t6", "t8", "t9", "t10", "t11", "t12")
+DECISIONS_TAB, INBOX_TAB, FILTERABLE = "t5", "t8", ("t2", "t3", "t4", "t5", "t6", "t8", "t9", "t10", "t11", "t12", "t13")
 ACTION_TAB = {"kill": "t2", "approve": "t4", "deny": "t4", "answer_text": DECISIONS_TAB}
-TAB_TABLE = {"t2": "runs", "t3": "findings", "t4": "approvals", "t5": "decisions", "t6": "records", "t8": "inbox", "t9": "work", "t10": "agents", "t11": "guide", "t12": "settings"}
-ACTION_TABS = ("t8", "t9", "t10", "t11", "t12")           # tabs whose rows have a menu of actions (Enter or x)
+TAB_TABLE = {"t2": "runs", "t3": "findings", "t4": "approvals", "t5": "decisions", "t6": "records", "t8": "inbox", "t9": "work", "t10": "agents", "t11": "guide", "t12": "settings", "t13": "git"}
+ACTION_TABS = ("t8", "t9", "t10", "t11", "t12", "t13")           # tabs whose rows have a menu of actions (Enter or x)
 # the left navigation: (id, key, label, tab). The digits 1-9 and the letters g, s, y jump straight to a section.
 NAV = [(None, [("home", "1", "Home", "t1"), ("inbox", "2", "Inbox", "t8")]),
        ("Research", [("exps", "3", "Experiments", "t6"), ("runs", "4", "Runs", "t2"), ("findings", "5", "Findings", "t3"), ("decisions", "6", "Decisions", "t5")]),
-       ("Work", [("plans", "7", "Plans & approvals", "t4"), ("work", "8", "Worktrees", "t9"), ("agents", "9", "Agents", "t10")]),
+       ("Work", [("plans", "7", "Plans & approvals", "t4"), ("work", "8", "Worktrees", "t9"), ("agents", "9", "Agents", "t10"), ("git", "h", "Git health", "t13")]),
        ("Project", [("guide", "g", "Guide & site", "t11"), ("settings", "s", "Settings", "t12"), ("system", "y", "System", "t7")])]
 NAV_ITEMS = [i for _, items in NAV for i in items]
 TAB_OF = {i[0]: i[3] for i in NAV_ITEMS}
@@ -96,7 +96,7 @@ class ResearchTUI(App):
     COMMANDS = {Finder}
     COMMAND_PALETTE_BINDING = "ctrl+p"
     BINDINGS = [Binding("i", "inbox", "Inbox"), Binding("x", "actions", "Actions"), Binding("w", "what", "Explain"), Binding("g", "nav('guide')", "Guide", show=False),
-                Binding("s", "nav('settings')", "Settings", show=False), Binding("y", "nav('system')", "System", show=False), Binding("k", "kill", "Cancel"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
+                Binding("s", "nav('settings')", "Settings", show=False), Binding("h", "nav('git')", "Git health", show=False), Binding("y", "nav('system')", "System", show=False), Binding("k", "kill", "Cancel"), Binding("a", "approve", "Approve"), Binding("d", "deny", "Reject"),
                 Binding("t", "answer_text", "Answer")] + [digit_binding(i) for i in range(1, 10)] + [
         Binding("left_square_bracket", "step(-1)", "Previous section", show=False), Binding("right_square_bracket", "step(1)", "Next section", show=False),
         Binding("question_mark", "help", "Guide"), Binding("q", "quit", "Quit"), Binding("slash", "filter", "Filter"),
@@ -152,7 +152,7 @@ class ResearchTUI(App):
                     yield VerticalScroll(Static(id="doctor"), classes="panel", id="doctor-box")
                 with TabPane(TABS[7], id="t8"):
                     yield self.split("inbox")
-                for k, tab in (("work", 8), ("agents", 9), ("guide", 10), ("settings", 11)):
+                for k, tab in (("work", 8), ("agents", 9), ("guide", 10), ("settings", 11), ("git", 12)):
                     with TabPane(TABS[tab], id=f"t{tab + 1}"):
                         yield self.split(k)
         yield Footer()

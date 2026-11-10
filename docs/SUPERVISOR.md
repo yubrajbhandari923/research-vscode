@@ -505,3 +505,45 @@ task when a plan halts because a task hit a failure the rules could not classify
 `supervisor.investigator.max_per_plan` and `budget_usd`; beyond them nothing is called and the halt alert stays as it is. The trigger and its outcome are events (`investigator_started`,
 `investigator_outcome`, `investigator_skipped`) and a line in `.research/supervisor/investigator.json`. Everything in §20 still holds: unprotected actions run, protected ones wait for the PIN
 approval, and the investigator never approves anything.
+
+## 23. Late evidence: HPC results that arrive after Slurm says "completed"
+
+A Slurm job passes through four stages that used to look like one: **Slurm finished** → **results collected** (the archive is home) → **ingested** (metrics and artifacts are records) →
+**verified**. `research plan status` shows the stage for a task that is waiting (`recovery` in `--json`, three lines in text: cause, decision, what needs you).
+
+* **Verification waits for collection.** A completed cluster run whose results are not collected is *not* a failure and is not verified: the task stays `waiting_hpc`
+  (reason: "Slurm finished RUN-… but its results are not collected and ingested yet") for at most `supervisor.recovery.collection_wait_minutes` (120). The existing poll
+  (`hpc_poll_seconds`) collects the results; nothing is resubmitted.
+* **Past the wait** the attempt is verified on what exists. A miss is classed `evidence_pending`, not an implementation failure: no repair attempt starts (an agent cannot create results
+  that are still on the cluster), the task is blocked with the reason and the command that fixes it (`research hpc collect RUN`).
+* **The same attempt is re-verified automatically.** Every failed verification stores a fingerprint of its evidence (runs, collection state, metric and artifact counts) and of the task's
+  contract. When the evidence changes and the contract does not, the supervisor re-runs the *unchanged* checks on the *same* attempt: it works for blocked, attention and repair-pending tasks,
+  and for **paused plans too** (a plan paused only because that task failed continues when it recovers; a pause you chose is never undone). The earlier result moves to
+  `verification_history`, every step is in the plan's `recovery_log` and the events (`supervisor_recovery`), and a `recovery` alert is sent to chat. At most `max_reverifications` (5) per
+  attempt; syncs are rate-limited and capped (`max_syncs`).
+* **A root cause is recorded for every failed verification**, deterministically: `collection_pending`, `late_metric`, `missing_file`, `job_failed`, or `numerical` (the evidence is complete and the
+  criterion is not met: *no automatic recovery*, a scientific decision). It is shown in the TUI Inbox, `/tasks`, `plan status` and the halt alert.
+* **Diagnosis in words, for halted *and paused* plans.** With `supervisor.investigator.auto: true` the investigator (§22) now also runs for tasks in `attention` and for paused plans with failed
+  tasks. It receives the run records, numerical metrics, log tails, artifact paths, the task checks, the root cause and previous attempts, and in this automatic mode it may only apply
+  `reverify`, `note` and `guide` by itself; `retry`, `unblock`, new tasks and edits wait for you, and anything protected waits for the PIN, as before.
+* **Never automatic:** relaxing a threshold, changing a scientific assumption or check, raising an HPC budget, submitting a job. Recovery only syncs/collects (read-only on the cluster),
+  reconciles collected files and re-runs the unchanged checks. Switch it off with `supervisor.recovery.enabled: false` (then a task is verified the moment its run is terminal).
+
+## 24. Git hygiene: what is uncommitted, and the reviewed commit
+
+Three places stay apart. The **main repository** is yours: Research OS never commits an arbitrary file there. **Experiment worktrees**: the supervisor commits verified work on the
+experiment's own branch. The **ledger** (`.research/`, the shared ledger) is Research OS's own and is only reported.
+
+* `research git status` (and the TUI **Git health** page, key `h`) lists tracked changes, untracked files, ignored files that look important, every worktree (modified, untracked, unpromoted commits),
+  pending promotions and the ledger, each file with *what it is and why it matters* (a plan, source, a report, scaffolding, a secret, a cache).
+* **Preflight.** `plan run`, `plan resume`, `plan autopromote authorize` and `promote approve` run the same check and print what matters ("experiment worktrees start from the last commit, so agents will NOT
+  see these edits"). `git.preflight`: `warn` (default, report and continue), `block` (refuse until reviewed and committed; promotion is also refused while main has uncommitted tracked changes), `off`.
+* **Reviewed commit.** `research git commit --paths notes.md` or `research git commit --scaffold` (AGENTS.md, CLAUDE.md, `.gitignore`, website sources: what Research OS generated) shows the staged diff, then needs `--yes`
+  (or `y` at a terminal / in the TUI). It commits exactly those files (`git commit --only`): anything else you staged or modified stays as it is. Secrets, caches and runtime state are refused, agents cannot run it,
+  nothing is pushed. After `init`, `agent setup` and `site init --apply`, uncommitted scaffolding is pointed out with the exact command.
+* **Ignores.** `research git ignore` previews and `--apply` writes one managed block in `.gitignore` for generated and internal files (`.research/`, caches, `.venv/`, `__pycache__/`, build output).
+  A pattern that would hide source, a plan, a report or documentation is refused and named; lines you wrote are never touched; tracked generated files stay tracked (untracking is yours).
+* **Verified work** is committed on the experiment branch with a safe selection: source, tests, reports and small figures go in (`supervisor.commit_keep`, `commit_max_file_mb`, even from `outputs/`);
+  bulky outputs, `commit_exclude` paths, caches, compiled files and secrets do not. The attempt records what was committed and skipped (`commit_report`).
+* **Headless.** Every git call is non-interactive (no prompts, editors, pager or credential helper) with a timeout; a hook, identity or signing problem is an error with the fix, never a hang. Supervisor commits
+  use the supervisor's identity without signing.

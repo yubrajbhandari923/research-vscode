@@ -135,6 +135,12 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
         f"  research agent propose {tid} --file /tmp/patch.yaml --rationale \"...\"   # keep the patch outside your workspace; plan changes need approval",
         f"  research agent finish {tid} --request-verification   # when you believe you are done",
         "You cannot mark the task done or verified; the supervisor verifies after you exit. Do not edit or weaken checks or frozen tests."]), "supervisor")
+    add("Results and provenance (required)", "\n".join([
+        "Any report, chapter or figure you write must be generated from the recorded data it describes: read values from the run's metrics and take the run, experiment and artifact "
+        "you cite from the records you actually used.",
+        "Never type in a result, a RUN-/EXP-/A- identifier, or a statement about what another run did; never invent run history. On other data it would be stale or false.",
+        "Keep internal identifiers out of scientific prose: cite them through provenance (`research guide claim add`, `research guide figure add`) or a researcher-only block.",
+        "A promotion containing Quarto chapters is checked for exactly this and is refused until it passes."]), "supervisor")
     text = "\n\n".join(parts)
     if len(text) > budget:
         text = text[:budget].rstrip() + "\n\n… [context truncated to supervisor.context_max_chars]"

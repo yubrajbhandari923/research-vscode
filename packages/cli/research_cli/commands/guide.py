@@ -479,6 +479,10 @@ def cmd_setup(a, p) -> int:
         for x in r.get(k) or []:
             print(f"  {k}: {x}")
     print(f"  routing: {r['routing_verified']}")
+    if r["applied"]:
+        from research import githygiene as GH
+        for l in GH.scaffold_hint(p):
+            print(dim(l))
     return 0
 
 

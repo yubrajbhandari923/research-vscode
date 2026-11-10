@@ -181,12 +181,17 @@ def _live(p) -> List[Dict[str, Any]]:
         for tid, e in (rs.get("tasks") or {}).items():
             if e.get("phase") in SV.ACTIVE_PHASES + SV.HUMAN_PHASES and p.exists("task", tid):
                 out.append({"task": tid, "title": p.get("task", tid)["title"], "phase": e["phase"], "plan": st["plan_key"],
-                            "attempts": len(e.get("attempts") or []), "reason": e.get("reason"), "human": e["phase"] in SV.HUMAN_PHASES})
+                            "attempts": len(e.get("attempts") or []), "reason": e.get("reason"), "human": e["phase"] in SV.HUMAN_PHASES, "recovery": e.get("recovery")})
     return out
 
 
 def _task_line(t: Dict[str, Any]) -> str:
     return f"{t['task']} {t['title'][:50]} [{t['phase']}" + (f", attempt {t['attempts']}" if t["attempts"] else "") + f"] ({t['plan']})"
+
+
+def _recovery_lines(t: Dict[str, Any]) -> str:
+    from .. import recovery
+    return "".join("\n      " + x for x in recovery.line(t.get("recovery")).splitlines())
 
 
 def _instruct(p, task: Optional[str], text: str, via: str) -> Dict[str, Any]:
@@ -214,17 +219,22 @@ def _instruct(p, task: Optional[str], text: str, via: str) -> Dict[str, Any]:
 @op(sync=False, chat="read")
 def chat_cmd_tasks(p) -> Dict[str, Any]:
     live = _live(p)
-    if not live:
+    from .. import notify
+    promos = [b for b in notify._blocked(p) if b.get("promotion")]
+    if not live and not promos:
         return _text("No task is running or waiting for you. /status shows the plans.")
     lines = []
     needs = [t for t in live if t["human"]]
     if needs:
         lines.append("Needs you:")
-        lines += [f"  {_task_line(t)}" + (f"\n      {str(t['reason'])[:200]}" if t.get("reason") else "") + f"\n      /say {t['task']} <instruction> · /logs {t['task']}" for t in needs]
+        lines += [f"  {_task_line(t)}" + (f"\n      {str(t['reason'])[:200]}" if t.get("reason") else "") + _recovery_lines(t) + f"\n      /say {t['task']} <instruction> · /logs {t['task']}" for t in needs]
+    if promos:
+        lines.append("Promotion paused (needs you):")
+        lines += [f"  {b['task']} {b['title']} ({b.get('plan')})\n      {str(b.get('reason') or '')[:300]}\n      fix it, then: research plan autopromote {b.get('plan')} retry --item {b['task']}" for b in promos]
     run = [t for t in live if not t["human"]]
     if run:
         lines.append("Running:")
-        lines += [f"  {_task_line(t)}\n      /task {t['task']} · /logs {t['task']} · /stop {t['task']}" for t in run]
+        lines += [f"  {_task_line(t)}" + _recovery_lines(t) + f"\n      /task {t['task']} · /logs {t['task']} · /stop {t['task']}" for t in run]
     return _text("\n".join(lines))
 
 

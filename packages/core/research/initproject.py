@@ -19,7 +19,7 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 
-from . import gitinfo, providers, strategy as _strategy
+from . import githygiene as GH, gitinfo, providers, strategy as _strategy
 from . import workspace as W
 from .util import ResearchError
 
@@ -267,7 +267,7 @@ def apply(root: str, spec: Dict[str, Any], author: Optional[Dict[str, Any]] = No
         if r.returncode:
             raise ResearchError("git init failed: " + r.stderr.strip())
         done.append("git init (branch main)")
-        for fname, text in ((".gitignore", ".research/\n.research.pre-ledger/\n.venv/\n__pycache__/\n*.pyc\n.claude/skills/\n.agents/skills/\n"),
+        for fname, text in ((".gitignore", GH._block_text(GH.GENERATED_IGNORES)),   # disposable and internal files only: never source, plans, reports or docs
                             ("README.md", f"# {name}\n\n{goal}\n\nManaged with [Research OS](https://github.com/yubrajbhandari923/research-vscode): "
                                           "see AGENTS.md for the project rules agents follow.\n")):
             fp = os.path.join(main, fname)

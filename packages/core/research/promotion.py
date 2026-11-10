@@ -148,6 +148,7 @@ def _gates(p, c: Dict[str, Any]) -> Dict[str, Any]:
         tests = {"state": "passed" if ver["ok"] else "failed", "detail": f"exit {ver.get('exit_code')} in {ver.get('seconds')}s",
                  "output": ver.get("output"), "command": ver.get("command")}
     ev = _evidence(p, c)
+    sci = _scientific_content(p, c, head)
     rev = [r for r in c["reviews"] if r.get("head") == head]
     verdict = next((r for r in reversed(rev) if r["verdict"] in ("approve", "changes")), None)
     review = {"state": "none", "detail": "No review of the current candidate."}
@@ -159,7 +160,28 @@ def _gates(p, c: Dict[str, Any]) -> Dict[str, Any]:
     if ap:
         approval = {"state": "approved" if ap.get("head") == head else "stale", "by": ap.get("author_name"), "head": ap.get("head"),
                     "detail": None if ap.get("head") == head else "The candidate changed after approval; approve again."}
-    return {"head": head, "tests": tests, "evidence": ev, "review": review, "approval": approval}
+    return {"head": head, "tests": tests, "evidence": ev, "review": review, "approval": approval, "scientific_content": sci}
+
+
+def _scientific_content(p, c: Dict[str, Any], head: Optional[str]) -> Dict[str, Any]:
+    """Provenance of scientific Quarto content the candidate adds or changes, using the guide's own source checks (identifiers in scientific prose, stale or
+    invented attribution, executable cells, captions). A candidate with no .qmd change is `not_applicable` and is never blocked by this."""
+    base = c.get("base_main")
+    if not head or not base:
+        return {"state": "not_applicable", "detail": "No candidate to inspect yet."}
+    top = _top(p)
+    names = [n for n in (W._git(top, "diff", "--name-only", "--diff-filter=AM", f"{base}..{head}", "--", "*.qmd") or "").splitlines()
+             if n and not os.path.basename(n).startswith("_")]
+    if not names:
+        return {"state": "not_applicable", "detail": "No scientific Quarto content changed: not checked."}
+    from . import guide_quarto as GQ
+    errs = []
+    for n in names:
+        text = W._git(top, "show", f"{head}:{n}") or ""
+        errs += [i["message"] for i in GQ.text_issues(p, n, text) if i["severity"] == "error"]
+    if errs:
+        return {"state": "failed", "files": names, "detail": " | ".join(errs[:4]), "issues": errs}
+    return {"state": "passed", "files": names, "detail": f"{len(names)} chapter(s) checked: no internal identifiers in scientific prose, every cited record exists"}
 
 
 def _evidence(p, c: Dict[str, Any]) -> Dict[str, Any]:
@@ -184,6 +206,7 @@ def _classify(p, c: Dict[str, Any], g: Dict[str, Any]) -> Dict[str, Any]:
             "technically_correct": {"passed": True, "failed": False}.get(g["tests"]["state"]),
             "reusable": bool(c.get("selection", {}).get("commits") or c.get("selection", {}).get("paths")),
             "integration_ready": g["tests"]["state"] == "passed" and ev in ("passed", "info") and g["review"]["state"] == "approved"
+            and g["scientific_content"]["state"] != "failed"
             and g["approval"]["state"] == "approved",
             "promoted": bool(c.get("integration"))}
 
@@ -348,10 +371,14 @@ def review(p, pid: str, verdict: str, note: Optional[str] = None) -> Dict[str, A
 def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
     if not _is_human(p):
         raise PolicyBlocked("Only a human can approve a promotion into main", hint="Ask the researcher to run `research promote approve` or use the Work page.")
+    from . import githygiene as GH
+    pf = GH.require_preflight(p, "promotion")      # before anything else: uncommitted work in main is reported (or, with git.preflight=block, refused) first
     c = show(p, pid)
     g = c["gates"]
     open_ = [k for k, ok in (("tests passing", g["tests"]["state"] == "passed"), ("independent review", g["review"]["state"] == "approved"),
-                             ("scientific evidence", g["evidence"]["state"] in ("passed", "info"))) if not ok]
+                             ("scientific evidence", g["evidence"]["state"] in ("passed", "info")),
+                             ("scientific content provenance: " + g["scientific_content"].get("detail", ""), g["scientific_content"]["state"] != "failed"))
+             if not ok]
     if open_:
         raise PolicyBlocked("Cannot approve yet; open gates: " + ", ".join(open_), hint="Each gate is shown by `research promote show`.")
     from . import approval
@@ -359,7 +386,10 @@ def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) 
     with p.tx():
         _append(p, {"op": "approve", "promotion": pid, "head": g["head"], "note": note})
         p.event("promotion", pid, "approved", f"{pid} approved at {g['head'][:8]} by {p.author.get('author_name')}")
-    return show(p, pid)
+    out = show(p, pid)
+    if pf.get("issues"):
+        out["git_preflight"] = pf
+    return out
 
 
 def _ff_merge(p, c: Dict[str, Any], strict: bool = False) -> Dict[str, str]:

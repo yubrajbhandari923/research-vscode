@@ -175,7 +175,16 @@ def gather(p, tid: str) -> Dict[str, Any]:
             "contract": {k: spec.get(k) for k in ("title", "prompt", "acceptance", "checks", "expected_artifacts", "inputs", "datasets", "depends_on",
                                                     "resources", "execution", "agent", "allowed_files")},
             "attempts": attempts, "logs": taskprompt.redact(logs) or "", "findings": findings,
+            "recovery": e.get("recovery"), "evidence": _evidence(p, tid), "verification_history": [(a.get("verification_history") or []) for a in e.get("attempts", [])][-1:],
             "running": e.get("phase") in ("running", "verifying", "waiting_hpc")}
+
+
+def _evidence(p, tid: str) -> Dict[str, Any]:
+    from . import recovery
+    try:
+        return recovery.evidence(p, tid)
+    except (ResearchError, OSError, KeyError):
+        return {}
 
 
 PROMPT = """You are the supervisor's intervention planner for a research project. A researcher gave an instruction about one task that is stuck or
@@ -285,12 +294,12 @@ def request(p, tid: str, message: str, interrupt: bool = False, source: str = "h
     return plan_it(p, it["id"]) if plan_now else it
 
 
-def create_planned(p, tid: str, instruction: str, raw_actions: Any, summary: str = "", rationale: str = "", source: str = "decision", allow_open: bool = False) -> Dict[str, Any]:
+def create_planned(p, tid: str, instruction: str, raw_actions: Any, summary: str = "", rationale: str = "", source: str = "decision", allow_open: bool = False, hold: bool = False) -> Dict[str, Any]:
     """An intervention whose actions are already known (a decision option's prepared action, the investigator's plan): no planning-agent call.
     Same validation, classification and approval rules as a planned one: unprotected actions are approved under the researcher's own authority,
     protected ones wait in `proposed` for ONE approval with the PIN (`research intervention approve`)."""
     prop = validate_proposal({"summary": summary, "rationale": rationale, "actions": raw_actions})   # raises before anything is stored
-    return _propose(p, _create(p, tid, instruction, False, source, allow_open), prop)
+    return _propose(p, _create(p, tid, instruction, False, source, allow_open), prop, hold)   # hold: wait for a person even though nothing is protected
 
 
 def plan_it(p, iid: str) -> Dict[str, Any]:
@@ -309,9 +318,9 @@ def plan_it(p, iid: str) -> Dict[str, Any]:
     return _propose(p, it, prop)
 
 
-def _propose(p, it: Dict[str, Any], prop: Dict[str, Any]) -> Dict[str, Any]:
+def _propose(p, it: Dict[str, Any], prop: Dict[str, Any], hold: bool = False) -> Dict[str, Any]:
     iid = it["id"]
-    prot = protected(prop["actions"])
+    prot = protected(prop["actions"]) or (["held: beyond what an automatic diagnosis may do"] if hold else [])
     _set(it, "proposed", summary=prop["summary"], rationale=prop["rationale"], actions=prop["actions"], protected=prot, preview=preview(p, {"actions": prop["actions"]}))
     save(p, it)
     p.event("task", it["task"], "intervention_proposed", f"{iid}: {prop['summary'][:200]}" + (f" [needs approval: {', '.join(prot)}]" if prot else ""))

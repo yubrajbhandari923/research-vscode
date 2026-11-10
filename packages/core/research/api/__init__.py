@@ -154,4 +154,4 @@ def call(name: str, session: Session, params: Optional[Dict[str, Any]] = None, s
                     pass
 
 
-from . import records, runs, plans, guide, site, hpc, agents, settings, agent_tools, chat, decisions  # noqa: E402,F401  (populate OPS)
+from . import records, runs, plans, guide, site, hpc, agents, settings, agent_tools, chat, decisions, git  # noqa: E402,F401  (populate OPS)
