@@ -87,3 +87,10 @@ and server, pairing, the approval PIN, and the machine project registry.
 * **Discord.** `research chat setup discord` stores the token once; later projects reuse it and add `project_channels[label] = channel` (`--channel ID`). Threads per task are keyed by label.
 * **HPC.** A project's remote directory is `<projects>/<slug>`; `metadata/project.json` carries a `project_id` (hash of name and creation time). `hpc.remote.check_owner` refuses a directory whose id (or, for an older
   directory without one, name) belongs to another project. Collection of one run is serialized by a per-run lock; a second collector finds the run `collected` and imports nothing (an explicit `research hpc collect` forces it).
+
+## 13.8 Promotion coverage
+
+Automatic promotion promotes the verified commits of an experiment branch, whoever made them, and nothing else. Every commit of `base_rev..HEAD` (merges and anything already in main excluded) has exactly one verdict: *included*, *in progress*, *excluded*, *orphan* or *ambiguous* (table in `docs/SUPERVISOR.md` §26). Evidence, strongest first: a human decision; the attempt's recorded commit; a supervisor trailer naming a recorded execution; the attempt's `head_before..head_after`; its started..ended window (ledgers written before heads were recorded). A commit claimed by two tasks, or by none, stops the candidate before it is prepared; a human attributes it to a verified task or excludes it. Attributions are recorded once in the run state with their basis and are idempotent across restarts and retries; attempts are never edited and history is never rewritten. Integration stays fast-forward only and every other gate is unchanged.
+
+A diagnosis requested from chat (Diagnose, `/debug`) is an answer, not an alert: it is delivered regardless of the halt card's cooldown. A paused promotion is diagnosed from its own record without an agent; a failure of the diagnosis is itself reported.
+

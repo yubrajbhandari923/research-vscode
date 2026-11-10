@@ -70,10 +70,11 @@ def allowed(p, kind: str) -> bool:
 
 def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[List[Dict[str, Any]]] = None,
            files: Optional[List[str]] = None, task: Optional[str] = None, decision: Optional[str] = None,
-           once: bool = False, chat: Optional[str] = None, platform: Optional[str] = None) -> Optional[Dict[str, Any]]:
+           once: bool = False, chat: Optional[str] = None, platform: Optional[str] = None, force: bool = False) -> Optional[Dict[str, Any]]:
     """Queue an alert unless the same `key` is inside its cooldown (then a "still: ..." reminder after it), the kind is switched off
     (`notifications.alerts.on`) or `notifications.level` is below the kind's level.
-    `actions`: [{label, op, params, style?, kind?: op|local|ask_code, text?, min_role?}]. Returns the record or None when suppressed."""
+    `actions`: [{label, op, params, style?, kind?: op|local|ask_code, text?, min_role?}]. Returns the record or None when suppressed.
+    `force`: an answer to something the person asked for (a diagnosis they requested) is never held back by the cooldown of the alert it answers."""
     c = cfg(p)
     if c["on"] and kind not in c["on"] and kind != "answer":
         return None
@@ -87,13 +88,13 @@ def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[L
     if e and once:
         return None
     sk = f"{kind}:{task or ''}"
-    if e and e.get("open"):
+    if e and e.get("open") and not force:
         if now - e["ts"] < float(c["cooldown_minutes"]) * 60:
             e["suppressed"] = e.get("suppressed", 0) + 1
             _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
             return None
         text = "still: " + text
-    else:
+    elif not (e and e.get("open")):
         n = st.setdefault("streak", {}).get(sk, 0) + 1
         st["streak"][sk] = n
         if n >= int(c["escalate_after"]) and kind in SUGGEST:

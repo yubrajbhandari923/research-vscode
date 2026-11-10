@@ -26,7 +26,7 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from . import autopromote as AP, durability, fork as FK, githygiene as GH, planspec as PS, recovery as RC, registry, taskprompt
+from . import autopromote as AP, commitprov as CP, durability, fork as FK, githygiene as GH, planspec as PS, recovery as RC, registry, taskprompt
 from .store import Project, _atomic_write
 from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 
@@ -188,19 +188,22 @@ def plan_run(p: Project, ref: str, start_daemon: bool = True) -> Dict[str, Any]:
     return out
 
 
-def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, pin: Optional[str] = None, item: Optional[str] = None) -> Dict[str, Any]:
-    """Human-only control of unattended code promotion: authorize | revoke | retry | status. Authorization needs the approval PIN."""
+def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, pin: Optional[str] = None, item: Optional[str] = None,
+                commit: Optional[str] = None, task: Optional[str] = None) -> Dict[str, Any]:
+    """Human-only control of unattended code promotion: authorize | revoke | retry | attribute | exclude | status | coverage. Authorization needs the approval PIN."""
     st = _plan_state(p, ref)
-    if action != "status":
+    if action not in ("status", "coverage"):
         require_human(p, f"autopromote {action}")
     rs = load_run(p, st["plan_id"])
     pre = rs is None      # before `plan run`: authorize/revoke/status work on a stub; nothing is started
     if pre:
-        if action == "retry":
+        if action in ("retry", "attribute", "exclude", "coverage"):
             raise ResearchError(f"{st['plan_key']} has not been run yet", hint=f"`research plan run {st['plan_id']}`")
         rs = _load_pre(p, st)
     if action == "status":
         return AP.summary(p, st, rs)
+    if action == "coverage":          # read-only: where every commit of each experiment branch stands, nothing is recorded
+        return {"coverage": [AP.coverage(p, st, rs, e, w, write=False) for e, w in AP._workspaces(p, rs)]}
     if action == "authorize":
         AP.check_ready(p, st)
         GH.require_preflight(p, "promotion")      # reports (or, with git.preflight=block, refuses) uncommitted work before an unattended merge is authorized
@@ -214,8 +217,10 @@ def autopromote(p: Project, ref: str, action: str, note: Optional[str] = None, p
             out = AP.revoke(p, st, rs)
         elif action == "retry":
             out = AP.retry(p, st, rs, item or "")
+        elif action in ("attribute", "exclude"):
+            out = AP.decide(p, st, rs, action, commit or "", task, note)
         else:
-            raise ResearchError("action must be authorize, revoke, retry or status")
+            raise ResearchError("action must be authorize, revoke, retry, attribute, exclude, status or coverage")
         if pre:
             _atomic_write(_pre_path(p, st["plan_id"]), json.dumps(rs, indent=1, sort_keys=True, default=str) + "\n")
         else:
@@ -630,6 +635,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         if c["usage_limit"]["on_limit"] != "halt" and limited_until(p, d.get("profile")):
             raise _Limited(d.get("profile"), limited_until(p, d.get("profile")))
         workspace = (d.get("allocation") or {}).get("workspace")
+        attempt["head_before"] = CP.head((workspace or {}).get("path"))       # where the experiment branch stood: commits the agent makes after this are its own
         text2 = text
         sid = None
         after_limit = e.pop("limit_relaunch", None)       # the previous attempt was refused by a provider limit: continue its session where possible
@@ -868,6 +874,7 @@ def _age(ts: Optional[str]) -> float:
 def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
     from . import execution as E
     a["ended"] = now_iso()
+    a["head_after"] = CP.head((a.get("workspace") or {}).get("path")) if a.get("head_before") else None
     a["outcome"] = ex["state"]
     a["exit_code"] = ex.get("exit_code")
     a["usage"] = ex.get("reported")
@@ -1437,8 +1444,21 @@ def _verified(p, st, rs, tid, e, a, out) -> None:
             a["commit"] = sha
     except ResearchError as ex:
         e["commit_note"] = f"verified, but the work could not be committed: {ex}"
+    _attribute(p, st, rs, tid)
     out["verified"].append({"task": tid, "attempt": a["n"]})
     _event(p, tid, "supervisor_verified", f"attempt {a['n']} verified: {a['verification'].get('checks')} checks")
+
+
+def _attribute(p, st, rs, tid) -> None:
+    """Tie the commits an agent made itself (the tree was already clean, so the supervisor made none) to this verified task, while the evidence is fresh.
+    Never blocks verification: promotion re-checks coverage before it prepares anything."""
+    try:
+        exp = p.get("task", tid).get("related_experiment_id")
+        ws = CP.ws_of(p, tid, rs["tasks"][tid]["attempts"][-1])
+        if exp and ws:
+            AP.coverage(p, st, rs, exp, ws)
+    except Exception:
+        pass
 
 
 def _commit_verified(p: Project, tid: str, a: Dict[str, Any], spec_title: str, plan_key: str, c: Dict[str, Any]) -> Optional[str]:
@@ -1476,17 +1496,22 @@ def promote_plan(p: Project, plan_ref: str, experiment: Optional[str] = None, ti
     from . import promotion as PR, workspace as W
     require_human(p, "Preparing a promotion")
     st = _plan_state(p, plan_ref)
-    rs = load_run(p, st["plan_id"]) or {}
     by_ws: Dict[str, List[str]] = {}
-    for tid, e in (rs.get("tasks") or {}).items():
-        exp = p.get("task", tid).get("related_experiment_id")
-        if experiment and exp != experiment and (st["experiments"].get(experiment) != exp):
-            continue
-        for a in e.get("attempts", []):
-            if a.get("commit") and a.get("state") == "verified":
-                ws = W.for_task(p, tid)
-                if ws:
-                    by_ws.setdefault(ws["id"], []).append(a["commit"])
+    unattributed: List[Dict[str, Any]] = []
+    with _lock(p):
+        rs = load_run(p, st["plan_id"]) or {}
+        for exp_id, ws_id in AP._workspaces(p, rs):
+            if experiment and exp_id != experiment and st["experiments"].get(experiment) != exp_id:
+                continue
+            rep = AP.coverage(p, st, rs, exp_id, ws_id)                  # an agent's own commits count when they are tied to a verified task
+            unattributed += [{"workspace": ws_id, **x} for x in rep["orphans"] + rep["ambiguous"]]
+            w = W.show(p, ws_id)
+            order = (W._git(w["path"], "rev-list", "--reverse", f"{w['base_rev']}..HEAD") or "").split()
+            shas = [x["sha"] for x in AP.pending(p, st, rs).get((exp_id, ws_id), [])]
+            if shas:
+                by_ws[ws_id] = sorted(set(shas), key=lambda s_: order.index(s_) if s_ in order else len(order))
+        if rs:
+            save_run(p, rs)
     if not by_ws:
         raise ResearchError("No verified, committed work to promote yet",
                             hint="Tasks are committed on their experiment branch when they verify (supervisor.commit_verified_work).")
@@ -1498,7 +1523,7 @@ def promote_plan(p: Project, plan_ref: str, experiment: Optional[str] = None, ti
     finally:
         p.author = human
     return {"plan": st["plan_key"], "candidates": [{"id": m.get("id") or m.get("promotion"), "workspace": w, "commits": by_ws[w]}
-                                                    for m, w in zip(made, by_ws)]}
+                                                    for m, w in zip(made, by_ws)], "unattributed": unattributed}
 
 
 def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:

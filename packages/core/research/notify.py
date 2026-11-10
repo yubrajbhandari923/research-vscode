@@ -128,34 +128,67 @@ def _halt_text(h: Dict[str, Any]) -> str:
     return "; ".join(f"{b['task']} {b['title'][:40]!r} [{b['phase']}] {(b.get('reason') or '')[:160]}" for b in h["blocking"])
 
 
+def _as_halt(h: Dict[str, Any]) -> Dict[str, Any]:
+    """A paused plan with failed tasks is diagnosed and reported like a halted one."""
+    if not h.get("blocking") and h.get("stuck"):
+        return {**h, "blocking": h["stuck"], "paused": True, "fingerprint": "paused|" + h.get("stuck_fingerprint", "")}
+    return h
+
+
 def run_debug(p, plan_ref: str, halt: Optional[Dict[str, Any]] = None, tasks: Optional[List[str]] = None) -> Dict[str, Any]:
     """Run the debug agent now (CLI/UI/Telegram) or from the halt watcher. Returns the stored record."""
     from . import intervene as I, planspec as PS, supervisor as SV
     st = PS._state_for(p, plan_ref)
     rs = SV.load_run(p, st["plan_id"]) or {}
     halt = halt or SV.plan_health(p, st, rs)
+    halt = _as_halt(halt)
     blocking = [b for b in halt.get("blocking", []) if not tasks or b["task"] in tasks]
     if not blocking:
         raise ResearchError("Nothing is blocked in this plan, so there is nothing to diagnose")
     fp = halt.get("fingerprint") or ",".join(b["task"] for b in blocking)
-    rec = {"id": f"DBG-{int(time.time())}", "plan": st["plan_key"], "plan_id": st["plan_id"], "fingerprint": fp, "tasks": [b["task"] for b in blocking],
-           "state": "running", "started": now_iso(), "model": I.assistant_cfg(p).get("model") or "default (strongest available)", "options": [], "summary": None}
+    promos = [b for b in blocking if b.get("promotion")]
+    work = [b for b in blocking if not b.get("promotion")]       # a paused promotion is not a task: it has no attempts, logs or contract to read
+    rec = {"id": f"DBG-{int(time.time())}", "plan": st["plan_key"], "plan_id": st["plan_id"], "fingerprint": fp, "tasks": [b["task"] for b in (work or blocking)],
+           "state": "running", "started": now_iso(), "model": I.assistant_cfg(p).get("model") or "default (strongest available)", "options": [], "summary": None,
+           "promotion_only": not work}
     _write(_dir(p, "latest.json"), rec)
     try:
-        ctx = [I.gather(p, b["task"]) for b in blocking[:4]]
-        raw = I._json_from(I.run_assistant(p, f"Diagnose halted plan {st['plan_key']}", DEBUG_PROMPT.format(halt=_halt_text({"blocking": blocking}), context=json.dumps(ctx, default=str, indent=1)[:26000])))
+        extra = "\n\n".join(promotion_diagnosis(st, rs, b) for b in promos)
+        if work:
+            ctx = [I.gather(p, b["task"]) for b in work[:4]]
+            raw = I._json_from(I.run_assistant(p, f"Diagnose halted plan {st['plan_key']}", DEBUG_PROMPT.format(halt=_halt_text({"blocking": work}), context=json.dumps(ctx, default=str, indent=1)[:26000])))
+        else:
+            raw = {"summary": extra}                                 # recorded facts and exact commands: no agent is needed, and none can invent a cause
+            extra = ""
         opts = []
         for o in (raw.get("options") or [])[:4]:
             if isinstance(o, dict) and str(o.get("instruction") or "").strip():
                 opts.append({"label": str(o.get("label") or o["instruction"])[:80], "instruction": str(o["instruction"])[:2000],
                              "class": o.get("class") if o.get("class") in ("operational", "implementation", "scientific", "resource") else "implementation"})
-        rec.update(state="done", summary=str(raw.get("summary") or "")[:1200], options=opts,
+        rec.update(state="done", summary=(str(raw.get("summary") or "") + ("\n\n" + extra if extra else ""))[:1800], options=opts,
                    recommended=raw.get("recommended") if isinstance(raw.get("recommended"), int) and 0 <= raw["recommended"] < len(opts) else None, finished=now_iso())
     except (ResearchError, ValueError) as ex:
         rec.update(state="failed", error=str(ex)[:400], finished=now_iso())
     _write(_dir(p, "latest.json"), rec)
     _write(_dir(p, rec["fingerprint"].replace("/", "_")[:80] + ".json"), rec)
     return rec
+
+
+def promotion_diagnosis(st: Dict[str, Any], rs: Dict[str, Any], b: Dict[str, Any]) -> str:
+    """What stopped an automatic promotion, from its own record, and the exact next step. Every task is verified and none is re-run."""
+    from . import commitprov as CP
+    item = next((i for i in ((rs.get("autopromote") or {}).get("items") or []) if i["id"] == b["task"]), {})
+    k, out = st["plan_key"], [f"Promotion {b['task']} ({item.get('experiment')}) is paused: {(item.get('error') or b.get('reason') or 'no reason recorded')[:500]}"]
+    for o in (item.get("objections") or [])[-2:]:
+        out.append(f"Earlier objection (attempt {o.get('attempt')}): {str(o.get('why'))[:200]}")
+    cov = (CP.state(rs)["reports"] or {}).get(item.get("workspace"))
+    if cov and cov.get("blocking"):
+        out.append(f"{len(cov['orphans']) + len(cov['ambiguous'])} commit(s) on the experiment branch are not tied to a verified task. See them with "
+                   f"`research plan autopromote {k} coverage`; then `attribute --commit SHA --task T-…` or `exclude --commit SHA`.")
+    if item.get("omits"):
+        out.append(f"The candidate omits {len(item['omits'])} verified commit(s) recorded after it was prepared; retry prepares a new one with them.")
+    out.append(f"Nothing is merged and no task is re-run. After fixing the cause: `research plan autopromote {k} retry --item {b['task']}`.")
+    return "\n".join(out)
 
 
 def message_for(rec: Dict[str, Any], halt: Dict[str, Any]) -> str:
@@ -166,6 +199,8 @@ def message_for(rec: Dict[str, Any], halt: Dict[str, Any]) -> str:
         if rec["options"]:
             body += "\n\nOptions:\n" + "\n".join(f"{i + 1}. {o['label']} [{o['class']}]" + (" (recommended)" if rec.get("recommended") == i else "") for i, o in enumerate(rec["options"]))
             body += "\n\nReply /choose N, or /say <your instruction>."
+        elif rec.get("promotion_only"):
+            body += "\n\nThe fix is on your side; the commands above do it. Tasks are not re-run."
         else:
             body += "\n\nNo obvious fix. Reply /say <your instruction>."
         return head + body
@@ -179,7 +214,7 @@ def _halt_actions(rec: Dict[str, Any], plan_key: str) -> List[Dict[str, Any]]:
     return acts + [{"label": "Pause plan", "op": "chat_cmd_pause", "params": {"plan": plan_key}}]
 
 
-def _alert_halt(p, plan_key: str, fingerprint: str, text: str, rec: Dict[str, Any]) -> None:
+def _alert_halt(p, plan_key: str, fingerprint: str, text: str, rec: Dict[str, Any], force: bool = False) -> None:
     from .chat import alerts, commands
     acts, dec = _halt_actions(rec, plan_key), None
     if rec.get("state") == "done" and rec.get("options"):
@@ -190,7 +225,7 @@ def _alert_halt(p, plan_key: str, fingerprint: str, text: str, rec: Dict[str, An
                 dec, acts = d["id"], commands.decision_actions(d) + [{"label": "Pause plan", "op": "chat_cmd_pause", "params": {"plan": plan_key}}]
         except Exception:        # noqa: BLE001 - fall back to the option buttons
             pass
-    alerts.raise_(p, f"halt:{plan_key}", "halt", "error", text, actions=acts, decision=dec)
+    alerts.raise_(p, f"halt:{plan_key}", "halt", "error", text, actions=acts, decision=dec, force=force)
 
 
 def _scan(p, c: Dict[str, Any]) -> None:
@@ -377,7 +412,7 @@ def _auto_investigate(root: str, halt: Dict[str, Any]) -> None:
     try:
         with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
             for b in halt["blocking"]:
-                if b["phase"] in ("blocked", "attention"):
+                if b["phase"] in ("blocked", "attention") and not b.get("promotion"):
                     investigator.maybe_auto(p, b["task"], halt.get("fingerprint") or "")
     except Exception:    # noqa: BLE001 - a diagnosis must never break the watcher
         pass
@@ -387,14 +422,31 @@ def _debug_and_alert(root: str, plan_key: str, halt: Dict[str, Any]) -> None:
     from .store import Project
     try:
         with Project(root, sync=False, author={"author_type": "system", "author_name": "supervisor", "author_model": None}) as p:
-            rec = run_debug(p, plan_key, halt)
+            halt = _as_halt(halt)
+            try:
+                rec = run_debug(p, plan_key, halt)
+            except Exception as ex:    # noqa: BLE001 - an unexpected failure is still an answer to "diagnose": say what happened
+                rec = {"state": "failed", "error": f"{type(ex).__name__}: {ex}", "plan": plan_key, "options": []}
+                _log(p, f"diagnosis of {plan_key} failed: {rec['error'][:300]}")
             marker = _dir(p, "halt-" + plan_key + ".json")
             m = _read(marker) or {}
             m["notified"] = True
             _write(marker, m)
             if chat_enabled(p):
-                _alert_halt(p, plan_key, halt.get("fingerprint", ""), message_for(rec, {**halt, "plan": plan_key}), rec)
-    except Exception:    # noqa: BLE001
+                _alert_halt(p, plan_key, halt.get("fingerprint", ""), message_for(rec, {**halt, "plan": plan_key}), rec, force=True)
+    except Exception as ex:    # noqa: BLE001
+        try:
+            with open(os.path.join(root, ".research", "supervisor", "daemon.log"), "a") as lf:
+                lf.write(f"{now_iso()} diagnosis of {plan_key} failed: {type(ex).__name__}: {str(ex)[:200]}\n")
+        except OSError:
+            pass
+
+
+def _log(p, line: str) -> None:
+    try:
+        with open(p.path("supervisor", "daemon.log"), "a") as lf:
+            lf.write(f"{now_iso()} {line}\n")
+    except OSError:
         pass
 
 
