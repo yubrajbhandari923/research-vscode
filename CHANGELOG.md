@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.5.1
+
+- **A headless agent refused a command is a permission failure, not missing metrics.** The provider's `permission_denials` are read from the agent's result; the attempt is `permission_denied` and the task is blocked with the denied commands and the fix (the failed attempt is kept, nothing is resubmitted, budgets and checks are unchanged).
+- **`research agent check TASK`** runs a task's declared checks through Research OS (read-only, no Bash needed); **`agents.profiles.<name>.allow_commands`** adds exactly the commands a project names to the restrictive default allow-list. The default policy is unchanged.
+- **Conflicts are reported before launch:** commands the task text asks the agent to run that its profile would refuse show as an event, in `plan status` (`permission_notes`) and in the agent's brief.
+
 ## 3.5.0
 
 **Upgrading an existing project:** nothing is rewritten for you. Upgrade the tool, then `research supervisor restart` (a running supervisor keeps the old code), `research agent instructions --diff` and `research agent instructions` (or `research doctor --fix agents_md.stale`) to bring AGENTS.md's managed block up to date, and optionally `research git ignore --apply` and `research git status`. New settings take their defaults; stored plan and run state is read as it is, and a plan an older version marked completed while a promotion was paused is reopened by the supervisor.

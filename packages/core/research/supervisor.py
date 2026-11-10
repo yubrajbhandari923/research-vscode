@@ -33,9 +33,9 @@ from .util import NoFrozenTests, PolicyBlocked, ResearchError, now_iso
 PHASES = ("waiting", "ready", "awaiting_approval", "waiting_provider", "running", "waiting_hpc", "verifying", "repair_pending", "attention", "blocked",
           "verified", "retired")
 REPAIRABLE = {"incomplete_deliverable", "incorrect_implementation", "agent_process_failure", "insufficient_test_oracle", "ambiguous_specification"}
-NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state", RC.EVIDENCE_PENDING}
+NEEDS_HUMAN = {"environment", "resource_limit", "unknown_execution_state", RC.EVIDENCE_PENDING, "permission_denied"}
 CATEGORIES = ("missing_prerequisite", "role_contradiction", "incomplete_deliverable", "incorrect_implementation", "ambiguous_specification", "insufficient_test_oracle", "environment", "scientific_assumption",
-              "resource_limit", "agent_process_failure", "unknown_execution_state", RC.EVIDENCE_PENDING)
+              "resource_limit", "agent_process_failure", "unknown_execution_state", RC.EVIDENCE_PENDING, "permission_denied")
 
 
 # ----------------------------------------------------------------------------------------------- config & paths
@@ -388,7 +388,7 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                      "execution": last and {"id": last["execution"], "state": ex and ex["state"], "alive": ex and ex.get("alive"),
                                             "kind": last["kind"], "verification": last.get("verification"), "outcome": last.get("outcome")},
                      "requires_approval": bool((flat[key].get("execution") or {}).get("requires_approval")) and not (rs.get("approvals") or {}).get(tid),
-                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso"),
+                     "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso"), "permission_notes": e.get("permission_notes"),
                      "recovery": e.get("recovery")})
     counts: Dict[str, int] = {}
     for r in rows:
@@ -599,6 +599,10 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
                "role": role,   # runs that already exist belong to earlier attempts; second-resolution timestamps cannot tell them apart
                "runs_before": [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=?", (exp_id,))] if exp_id else []}
     e["attempts"].append(attempt)
+    notes = _permission_conflicts(p, attempt["profile"], spec)
+    e["permission_notes"] = notes or None
+    if notes:
+        _event(p, tid, "supervisor_permission_conflict", "task text asks the agent to run commands its headless policy refuses: " + "; ".join(notes))
     e["phase"] = "running"
     e["reason"] = None
     rs["budgets"]["attempts"] += 1
@@ -893,6 +897,9 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
             return
         out["blocked"].append({"task": tid, "reason": e["reason"]})
         return
+    denied = _permission_denials(p, a)
+    if denied:      # the agent was refused a tool by the headless policy: that is a permission problem, not missing metrics or a broken environment
+        return _permission_failure(p, st, rs, tid, e, a, denied, c, out)
     if ex["state"] == "failed":
         a["state"] = "failed"
         logs = E.logs(p, a["execution"], 1500)
@@ -907,6 +914,51 @@ def _finish_attempt(p, st, rs, tid, e, a, ex, c, out) -> None:
     a["state"] = "done"
     e["phase"] = "verifying"
     _verify_attempt(p, st, rs, tid, e, a, c, out)
+
+
+def _permission_denials(p: Project, a: Dict[str, Any]) -> List[str]:
+    """Commands the provider refused under the headless permission policy, read from the agent's own structured result (Claude: `permission_denials`)."""
+    from . import execution as E
+    try:
+        text = (E.logs(p, a["execution"], 200000).get("out")) or ""
+        for line in reversed(text.strip().splitlines()):
+            d = json.loads(line)
+            if isinstance(d, dict):
+                return [str((x.get("tool_input") or {}).get("command") or x.get("tool_name") or "a tool")[:160] for x in (d.get("permission_denials") or []) if isinstance(x, dict)][:8]
+            break
+    except (OSError, ValueError, ResearchError):
+        pass
+    return []
+
+
+def _permission_failure(p, st, rs, tid, e, a, denied, c, out) -> None:
+    prof = a.get("profile") or "PROFILE"
+    why = (f"the agent was refused permission to run: {'; '.join(denied)}. The headless policy allows edits and the research CLI only. "
+           f"Run declared checks with `research agent check {tid}` (no Bash needed), or allow a command on purpose: agents.profiles.{prof}.allow_commands. "
+           "The attempt is kept; no job was submitted by it.")
+    a.update(state="failed", category="permission_denied", permission_denials=denied)
+    a["verification"] = {"passed": False, "diagnostics": [why], "ts": now_iso(), "skipped": "the agent was denied permission"}
+    e["recovery"] = {"ts": now_iso(), "attempt": a["n"], "cause": "permission_denied", "root_cause": why,
+                     "needs_human": [f"allow the command in agents.profiles.{prof}.allow_commands (or move the work to `research agent check`), then `research supervisor resolve {tid} --unblock`; "
+                                     "the failed attempt stays in the ledger and the next one counts against the normal budget"],
+                     "decision": "stopped: a permission is a human decision; nothing was resubmitted and no budget or check was changed", "reverifications": 0}
+    _event(p, tid, "supervisor_permission_denied", why[:300])
+    _after_failure(p, st, rs, tid, e, a, [why], "permission_denied", c, out)
+
+
+def _permission_conflicts(p: Project, profile: Optional[str], spec: Dict[str, Any]) -> List[str]:
+    """Before launch, when feasible: commands the task text tells the agent to run that the profile's headless allow-list would refuse. Only the Claude allow-list is
+    known exactly; anything else returns no opinion. Checks the supervisor runs itself (`cmd:` checks) are not the agent's to run and are not listed."""
+    import fnmatch
+    if _provider_kind(p, profile) != "claude":
+        return []
+    from .providers import claude as CL
+    prof = ((p.config.get("agents") or {}).get("profiles") or {}).get(profile or "") or {}
+    pats = [t[5:-1] for t in CL.allowed_tools(prof) if t.startswith("Bash(") and t.endswith(")")]
+    text = "\n".join(str(spec.get(k) or "") for k in ("prompt", "acceptance", "description"))
+    cmds = {m.strip() for m in re.findall(r"`([^`\n]+)`", text)} | {m.strip() for m in re.findall(r"(?m)^\s*\$ (.+)$", text)}
+    runnable = re.compile(r"^(?:[A-Z_][A-Z0-9_]*=\S+\s+)*(?:python3?|pytest|bash|sh|make|\./|Rscript|julia|uv run|sbatch|srun)\b")
+    return sorted(c for c in cmds if runnable.match(c) and not any(fnmatch.fnmatch(c, pat) for pat in pats))[:6]
 
 
 _PROVIDER_ERR = re.compile(r"hit your .*limit|rate.?limit|usage limit|overloaded|\b429\b|\b529\b|credit balance|quota", re.I)
@@ -1454,7 +1506,7 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
     spec = _flat(st, tid)
     max_att = int((spec.get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"])
     n_fail = len([x for x in e["attempts"] if not x.get("voided")])
-    if cat != RC.EVIDENCE_PENDING and not a.get("fail_recorded"):   # missing evidence is not an implementation failure; a re-verification is not a second one
+    if cat not in (RC.EVIDENCE_PENDING, "permission_denied") and not a.get("fail_recorded"):   # missing evidence is not an implementation failure; a re-verification is not a second one
         try:   # keep the established attempt ledger and escalation rules in step
             tier = a.get("tier") or (a.get("profile") or "agent")
             O.record_attempt(p, tid, tier, "fail", cat if cat in O.CATEGORIES else "incorrect_implementation", note=(diagnostics or [""])[0][:200])
