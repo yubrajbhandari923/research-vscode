@@ -100,3 +100,7 @@ An intervention is validated as a whole before any action runs: the remaining ac
 
 A halt diagnosis or investigation refused by a usage limit is `waiting_provider` with a resume time on the account's limit record (the one clock the supervisor's task waits use), and re-runs after it; a credit balance is a failure.
 
+## 13.10 Autonomy: standing authorization, self-healing, profiles, jobs
+
+Standing authorization is a project-level setting bound by a human through Settings to the verification policy; it fails closed when unbound or when the policy changes around Settings. Promotion integration requires (1) state approved, (2) every gate passing, (3) approval mode `supervisor_authorized`; the three are reported separately. Transient promotion failures retry within `auto_retry_attempts`. Self-healing adds one bounded repair task per attempt to the failing experiment, persisted in `rs["selfheal"]` before each step (idempotent, restart-safe), with a loop guard on the failure fingerprint and per-failure and per-plan caps; protected, scientific and permission failures are never repaired. A job is a persistent record over the same machinery (a managed plan, or authorization of the self-healing case for one promotion) and is done only after an independent verifier task passes the steps' deterministic checks.
+

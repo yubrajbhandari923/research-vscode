@@ -368,6 +368,27 @@ def review(p, pid: str, verdict: str, note: Optional[str] = None) -> Dict[str, A
     return show(p, pid)
 
 
+def open_gates(g: Dict[str, Any]) -> List[str]:
+    """The gates that must pass before ANY approval (human or the supervisor's): the same list integration later relies on, so nothing can be approved that
+    integration would then refuse."""
+    return [k for k, ok in (("tests passing", g["tests"]["state"] == "passed"), ("independent review", g["review"]["state"] == "approved"),
+                            ("scientific evidence", g["evidence"]["state"] in ("passed", "info")),
+                            ("scientific content provenance: " + g["scientific_content"].get("detail", ""), g["scientific_content"]["state"] != "failed"))
+            if not ok]
+
+
+def readiness(c: Dict[str, Any]) -> Dict[str, Any]:
+    """Why a candidate can or cannot be integrated, as SEPARATE facts: its state, who approved it and how (the approval's mode), and each gate. `state: approved`
+    only says an approval record exists for the current head; it does not say the gates still pass or that the supervisor made the approval."""
+    g, ap = c["gates"], c.get("approval") or {}
+    problems = open_gates(g)
+    if g["approval"]["state"] != "approved":
+        problems.append(f"approval {g['approval']['state']}" + (f" ({g['approval'].get('detail')})" if g["approval"].get("detail") else ""))
+    mode = ap.get("mode") or ("human" if ap else None)
+    return {"state": c["state"], "approval_state": g["approval"]["state"], "approval_mode": mode, "approval_by": ap.get("author_name"),
+            "gate_problems": problems, "ready": not problems and c["state"] == "approved"}
+
+
 def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) -> Dict[str, Any]:
     if not _is_human(p):
         raise PolicyBlocked("Only a human can approve a promotion into main", hint="Ask the researcher to run `research promote approve` or use the Work page.")
@@ -375,10 +396,7 @@ def approve(p, pid: str, note: Optional[str] = None, pin: Optional[str] = None) 
     pf = GH.require_preflight(p, "promotion")      # before anything else: uncommitted work in main is reported (or, with git.preflight=block, refused) first
     c = show(p, pid)
     g = c["gates"]
-    open_ = [k for k, ok in (("tests passing", g["tests"]["state"] == "passed"), ("independent review", g["review"]["state"] == "approved"),
-                             ("scientific evidence", g["evidence"]["state"] in ("passed", "info")),
-                             ("scientific content provenance: " + g["scientific_content"].get("detail", ""), g["scientific_content"]["state"] != "failed"))
-             if not ok]
+    open_ = open_gates(g)
     if open_:
         raise PolicyBlocked("Cannot approve yet; open gates: " + ", ".join(open_), hint="Each gate is shown by `research promote show`.")
     from . import approval
@@ -421,8 +439,9 @@ def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> 
     if not confirm:
         raise PolicyBlocked("Integration changes main; repeat with --confirm after reading `research promote diff`")
     c = show(p, pid)
-    if c["state"] != "approved" or not c["classification"]["integration_ready"]:   # before the PIN: a refused target is not an approval
-        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")
+    r = readiness(c)
+    if not r["ready"]:   # before the PIN: a refused target is not an approval
+        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing" + (": " + "; ".join(r["gate_problems"]) if r["gate_problems"] else ""))
     from . import approval
     approval.confirm(p, f"Merge {pid} into main", None, pin, rationale_required=False)
     m = _ff_merge(p, c)
@@ -435,28 +454,39 @@ def integrate(p, pid: str, confirm: bool = False, pin: Optional[str] = None) -> 
 
 def supervisor_approve(p, pid: str) -> Dict[str, Any]:
     """Technical approval of CODE under a human plan authorization. Recorded as the supervisor (system), never as a person, and
-    only when tests and an independent review already passed. It says nothing about the science."""
+    only when EVERY gate integration will check already passes (tests, independent review, evidence, scientific-content provenance), so it can never approve
+    what integration would then refuse. It says nothing about the science."""
     c = show(p, pid)
     auth = _require_supervisor(p, c)
     g = c["gates"]
-    if g["tests"]["state"] != "passed" or g["review"]["state"] != "approved":
-        raise PolicyBlocked(f"{pid}: tests and an independent review must pass first")
+    open_ = open_gates(g)
+    if open_:
+        raise PolicyBlocked(f"{pid} cannot be approved yet; open gates: " + ", ".join(open_))
     with p.tx():
         _append(p, {"op": "approve", "promotion": pid, "head": g["head"], "mode": "supervisor_authorized", "authorized_by": auth.get("by"),
-                    "note": "code only; no scientific claim is approved"})
-        p.event("promotion", pid, "approved", f"{pid} code-approved at {g['head'][:8]} under {auth.get('by')}'s plan authorization")
+                    **({"standing": True} if auth.get("standing") else {}), "note": "code only; no scientific claim is approved"})
+        p.event("promotion", pid, "approved", f"{pid} code-approved at {g['head'][:8]} under {auth.get('by')}'s " + ("standing authorization" if auth.get("standing") else "plan authorization"))
     return show(p, pid)
 
 
 def integrate_authorized(p, pid: str) -> Dict[str, Any]:
+    """Fast-forward an automatic candidate the SUPERVISOR approved. Three different refusals, each named: not approved at all; approved but a gate no longer
+    passes; approved by someone else (a human approval is never converted into the supervisor's own authorization)."""
     c = show(p, pid)
     auth = _require_supervisor(p, c)
-    if c["state"] != "approved" or not c["classification"]["integration_ready"] or (c.get("approval") or {}).get("mode") != "supervisor_authorized":
-        raise PolicyBlocked(f"{pid} is {c['state']}, not approved with every gate passing")
+    r = readiness(c)
+    if c["state"] != "approved":
+        raise PolicyBlocked(f"{pid} is {c['state']}, not approved")
+    if r["gate_problems"]:
+        raise PolicyBlocked(f"{pid} is approved but cannot be integrated: " + "; ".join(r["gate_problems"]))
+    if r["approval_mode"] != "supervisor_authorized":
+        raise PolicyBlocked(f"{pid} was approved by {r['approval_by'] or 'a person'} (approval mode: {r['approval_mode']}), not by the supervisor under an authorization. "
+                            f"The supervisor never turns another approval into its own: integrate it yourself with `research promote integrate {pid} --confirm`, "
+                            "or retry the automatic promotion so the gates run again under the authorization")
     m = _ff_merge(p, c, strict=True)
     with p.tx():
         _append(p, {"op": "integrate", "promotion": pid, "commit": m["commit"], "main_before": m["main_before"], "head": m["head"],
-                    "mode": "supervisor_authorized", "authorized_by": auth.get("by"), "experiment": c.get("experiment")})
+                    "mode": "supervisor_authorized", "authorized_by": auth.get("by"), **({"standing": True} if auth.get("standing") else {}), "experiment": c.get("experiment")})
         p.event("promotion", pid, "promoted", f"{pid} fast-forwarded into {_main_branch(p)} at {m['commit'][:8]} (authorized by {auth.get('by')})")
     return show(p, pid)
 

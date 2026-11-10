@@ -22,7 +22,10 @@ INTENDED_NEW = {
     "notifications.alerts.on", "notifications.alerts.cooldown_minutes", "notifications.alerts.escalate_after",       # WP14a chat gateway
     "notifications.alerts.approval_expiry_hours", "notifications.digest.at", "notifications.digest.silent_if_unchanged",
     "notifications.discord", "notifications.level", "notifications.summary", "ask", "guide.site.auto_include",                                          # WP15; 3.2.2 push level; 3.3.0 site
-    "governance.approval.chat", "governance.approval.chat_allow", "supervisor.investigator", "supervisor.usage_limit", "supervisor.recovery", "supervisor.commit_keep", "supervisor.commit_max_file_mb", "git.preflight",                                            # WP14b: approval from chat (TOTP)
+    "governance.approval.chat", "governance.approval.chat_allow", "supervisor.investigator", "supervisor.usage_limit", "supervisor.recovery", "supervisor.commit_keep", "supervisor.commit_max_file_mb", "git.preflight",
+    "auto_promotion.auto_approve_verified_code", "auto_promotion.auto_retry_attempts", "auto_promotion.auto_retry_minutes",      # 3.6.0: standing authorization
+    "supervisor_assistant.self_heal", "supervisor_assistant.max_repairs", "supervisor_assistant.max_repairs_per_plan", "supervisor_assistant.repair_instructions",   # 3.6.0: self-healing
+                                            # WP14b: approval from chat (TOTP)
 }
 
 

@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-127 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+134 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -121,6 +121,9 @@ dependency. A test checks that each option exists in the defaults with the right
 | `auto_promotion.numerical_command` | str | `null` | human only | Run after the promotion test command in an automatic-promotion candidate (for example `pytest -q -m oracle`). Optional; recorded as not configured when empty. |
 | `auto_promotion.reviewer_profile` | str | `null` | human only | The agent profile that independently reviews automatic-promotion candidates. It must not be a profile that implemented the work (unless require_distinct_reviewer is off). |
 | `auto_promotion.require_distinct_reviewer` | bool | `True` | human only | Refuse a reviewer profile that also implemented the work being promoted. |
+| `auto_promotion.auto_approve_verified_code` | bool | `False` | human only | On: the supervisor authorizes, approves and integrates eligible code promotions on its own, across plans and restarts, with no PIN prompt each time. Every gate still applies: the promotion tests, the independent reviewer, scientific-content provenance, frozen tests and fast-forward-only merging. It never approves a scientific claim. |
+| `auto_promotion.auto_retry_attempts` | int | `3` | human only | How many times a transient promotion failure (main moved, a git lock, a briefly dirty main worktree) is retried by itself before it asks you. Only with the standing authorization on. |
+| `auto_promotion.auto_retry_minutes` | list | `[1, 5, 15]` |  | Minutes to wait before each automatic retry; the last value repeats. |
 | `promotion.require_supported_finding` | bool | `True` | human only | A promotion can be approved only when its experiment has at least one supported (reviewed) finding. |
 
 #### Python environment
@@ -165,6 +168,10 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor.recovery.max_reverifications` | int | `5` |  | Most times one attempt is re-verified automatically because its evidence changed. |
 | `supervisor.recovery.max_syncs` | int | `100` |  | Most cluster syncs the recovery step runs for one stopped task while it waits for results. |
 | `supervisor.max_hpc_resubmissions` | int | `1` | human only | How many extra runs an agent may submit per task after failures before the task is blocked. |
+| `supervisor_assistant.self_heal` | bool | `False` | human only | On: when a promotion gate or a task fails for a recoverable engineering reason (failing tests, a reviewer's requested change, an executable cell in a report), the debug agent's diagnosis acts. Deterministic diagnosis first; then a bounded repair task runs in the experiment's own worktree, is verified by the supervisor, the promotion candidate is rebuilt, re-tested and independently re-reviewed, and integration is retried. Repairs never edit or weaken tests, acceptance criteria, hypotheses, evidence or governance; those stop and ask you. |
+| `supervisor_assistant.max_repairs` | int | `2` | human only | Most repair attempts for ONE failure before it asks you. |
+| `supervisor_assistant.max_repairs_per_plan` | int | `6` | human only | Most repair tasks self-healing may add to one plan run. |
+| `supervisor_assistant.repair_instructions` | str | `null` | human only | Project conventions appended to every repair task (for example how reports are built). They cannot relax the hard rules. |
 | `supervisor_assistant.profile` | str | `null` | human only | The agent profile used for the read-only planning agent (interventions) and the debug agent (halts). Empty uses `claude`. |
 | `supervisor_assistant.model` | str | `null` | human only | Model for the planning and debug agents. Empty uses the strongest Claude (claude-opus-5-5) when the profile is Claude, otherwise the profile's own model. |
 | `intervention.require_approval` | bool | `False` |  | Ask for approval even when an intervention changes nothing protected (unblock, retry, guidance). Protected changes always need approval and the PIN. |
@@ -174,7 +181,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `notifications.summary` | enum | `'facts'` |  | facts = a template filled from recorded facts only (free, instant, no agent). agent = a read-only agent (ask.profile / ask.model) writes a short plain-language summary from the same facts; it is read-only, may cost money, and falls back to the facts if it fails. |
 | `notifications.discord.mention` | bool | `True` |  | Mention the paired operators on Discord alerts that need a human (warnings and errors), so Discord sends a push notification even when the server only notifies for @mentions. |
 | `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
-| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified', 'recovery']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
+| `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified', 'recovery', 'promotion_done', 'job']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
 | `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |

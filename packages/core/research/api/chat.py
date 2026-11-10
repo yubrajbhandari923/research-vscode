@@ -405,3 +405,20 @@ def telegram_clear(p) -> Dict[str, Any]:
 def telegram_test(s) -> Dict[str, Any]:
     from ..chat import manage
     return manage.test_telegram()
+
+
+@op(mutates=True, chat="decide")
+def chat_cmd_do(p, text: str, via: str = "chat") -> Dict[str, Any]:
+    """`/do <request>`: delegate a job (the same record and machinery as `research job run`); the coordinator plans it and the supervisor carries it out."""
+    from .. import jobs
+    j = jobs.create(p, text, source=via)
+    return _text(f"{j['id']} started: {j['objective'][:200]}\nI will message you when it is done or if I am genuinely blocked. /jobs shows progress; research job logs {j['id']} has the detail.")
+
+
+@op(sync=False, chat="read")
+def chat_cmd_jobs(p) -> Dict[str, Any]:
+    from .. import jobs
+    rows = jobs.list_all(p)[-8:]
+    if not rows:
+        return _text("No jobs yet. /do <request> delegates one.")
+    return _text("\n".join(f"{j['id']} [{j['state']}] {j['progress']}  {j['objective'][:70]}" + (f"\n    BLOCKED: {j['blocked']['reason'][:200]}\n    needs: {j['blocked']['decision']}" if j.get("blocked") and j["state"] == "blocked" else "") for j in rows))

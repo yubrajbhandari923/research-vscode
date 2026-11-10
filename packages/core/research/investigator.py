@@ -163,7 +163,9 @@ def _apply(p, tid: str, ctx: Dict[str, Any], raw: Any, instruction: str, decisio
     acts = prop["actions"]
     entry["plan"] = acts
     entry["classes"] = sorted({I.classify_action(a) for a in acts})
-    prot = [a for a in acts if I.classify_action(a) in ("scientific", "resource", "frozen_test") or (safe_only and a["type"] not in SAFE_AUTO)]
+    from . import selfheal as SH
+    safe = SAFE_AUTO + (("retry",) if SH.retry_allowed(p, tid) else ())       # self-healing: a bounded retry of the task is something the automatic diagnosis may do
+    prot = [a for a in acts if I.classify_action(a) in ("scientific", "resource", "frozen_test") or (safe_only and a["type"] not in safe)]
     go = [a for a in acts if a not in prot]
     if prot:                       # resume-type actions wait with the protected part so they run after an approved amendment
         held = [a for a in go if a["type"] in RESUME]
@@ -196,7 +198,8 @@ def handle_text(p, d: Dict[str, Any], text: str, via: str) -> Dict[str, Any]:
 def maybe_auto(p, task: str, fingerprint: str) -> Optional[Dict[str, Any]]:
     """Opt-in automatic trigger for an unclassified failure: runs the investigator once per (task, fingerprint) when `supervisor.investigator.auto` is true.
     Call it from the halt watcher's worker thread, never from the supervisor tick."""
-    if not cfg(p)["auto"]:
+    from . import selfheal as SH
+    if not (cfg(p)["auto"] or SH.enabled(p)):
         return None
     if any(r.get("task") == task and r.get("fingerprint") == fingerprint for r in _load(p)["runs"]):
         return None

@@ -32,6 +32,8 @@ COMMANDS: Dict[str, Tuple[str, Any, str]] = {
     "options": ("chat_cmd_options", lambda a: {}, "show the latest diagnosis"),
     "debug": ("chat_cmd_debug", lambda a: {}, "diagnose the halt now"),
     "tasks": ("chat_cmd_tasks", lambda a: {}, "what is running, what waits for you, with the command for each"),
+    "do": ("chat_cmd_do", lambda a: {"text": a}, "REQUEST: delegate a job in words; it is planned, carried out, repaired and independently verified"),
+    "jobs": ("chat_cmd_jobs", lambda a: {}, "delegated jobs: state, progress, and what blocks them"),
     "say": ("chat_cmd_say", lambda a: {"text": a}, "[T-12] text: instruct the supervisor"),
     "choose": ("chat_cmd_choose", lambda a: {"n": a}, "N: pick a diagnosis option"),
     "pause": ("chat_cmd_pause", lambda a: {"plan": a or None}, "[plan]"),
