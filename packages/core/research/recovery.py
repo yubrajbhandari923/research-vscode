@@ -170,7 +170,9 @@ def decide(e: Dict[str, Any]) -> None:
     if not r:
         return
     ph = e.get("phase")
-    if r["cause"] in ("collection_pending", "late_metric", "missing_file") and ph in ("blocked", "attention", "repair_pending"):
+    if r["cause"] == "missing_file" and ph == "repair_pending":
+        r["decision"] = "a repair attempt is queued in the same worktree: the task did not write a file it owns, and no run can deliver it"
+    elif r["cause"] in ("collection_pending", "late_metric", "missing_file") and ph in ("blocked", "attention", "repair_pending"):
         r["decision"] = ("waiting: the same attempt is re-verified automatically, unchanged, as soon as new results arrive; " +
                          ("a repair attempt is queued meanwhile" if ph == "repair_pending" else "no new attempt or job is started"))
     elif r["cause"] == "numerical":

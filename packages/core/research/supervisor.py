@@ -1358,7 +1358,9 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
     if a["verification"]["passed"]:
         _verified(p, st, rs, tid, e, a, out)
         return
-    cat = _categorize(p, tid, a, diagnostics)
+    reported = cat = _categorize(p, tid, a, diagnostics)
+    if _contradicted(p, tid, a, cat, diagnostics):
+        cat = "incomplete_deliverable"         # the deterministic facts decide; the agent's word is kept in `category_override` below
     if cat == "incomplete_deliverable":
         cat, why = _refine_missing(p, st, tid, spec, diagnostics)
         if why:
@@ -1366,6 +1368,8 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
         elif a.get("collection_overdue"):      # the results never came home: no repair can create them
             cat = RC.EVIDENCE_PENDING
             a["blocker"] = RC.diagnose(p, tid, a, diagnostics)["text"]
+    if cat != reported and cat != RC.EVIDENCE_PENDING:
+        a["category_override"] = {"reported": reported, "decided": cat, "why": _OVERRIDE_WHY}
     a["category"] = cat
     RC.record(p, e, a, tid, diagnostics)
     _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out)
@@ -1374,6 +1378,29 @@ def _verify_attempt(p, st, rs, tid, e, a, c, out) -> None:
 
 # a required output is absent or empty (file check: "missing" / "exists but is empty") or a required metric was never recorded
 _INCOMPLETE = re.compile(r"check file: .+? failed \((?:missing|exists but is empty)\)|check metric:.+? failed \(.* not found")
+
+
+# an agent's own category is kept unless the verifier's facts contradict it: only these may be overridden, and only by a missing file that no run can still deliver
+_OVERRIDABLE = {"environment", "unknown_execution_state", RC.EVIDENCE_PENDING, "missing_prerequisite", "role_contradiction"}
+_OVERRIDE_WHY = ("the verifier found a required file missing, with no environment error in its output and no computational run that could still deliver it: "
+                 "that is an incomplete deliverable, not the environment")
+_ENV_EVIDENCE = re.compile(r"ModuleNotFoundError|command not found|Permission denied|No space left|OOM|out of memory|MemoryError|Read-only file system|Traceback", re.I)
+
+
+def evidence_can_arrive(p: Project, tid: str, a: Dict[str, Any]) -> bool:
+    """True only when something independent of the agent can still produce the evidence: a computational run not yet finished or collected."""
+    if a.get("collection_overdue"):
+        return True
+    try:
+        return any(RC.stage(r) in ("slurm_pending", "collection_pending") for r in RC.evidence_runs(p, tid))
+    except ResearchError:
+        return False
+
+
+def _contradicted(p: Project, tid: str, a: Dict[str, Any], cat: str, diagnostics: List[str]) -> bool:
+    text = " ".join(diagnostics)
+    return (cat in _OVERRIDABLE and bool(RC._MISSING_FILE.search(text)) and not _ENV_EVIDENCE.search(text)
+            and not any(d.startswith("computational run(s) did not complete") for d in diagnostics) and not evidence_can_arrive(p, tid, a))
 
 
 def _refine_missing(p: Project, st: Dict[str, Any], tid: str, spec: Dict[str, Any], diagnostics: List[str]) -> tuple:
@@ -1572,6 +1599,14 @@ def _after_failure(p, st, rs, tid, e, a, diagnostics, cat, c, out) -> None:
         rs["state"] = "stopped"
         e.update(phase="blocked", reason="on_failure=stop")
         return
+    if cat == "incomplete_deliverable":
+        missing = sorted({m.group(1) for d in diagnostics for m in RC._MISSING_FILE.finditer(d)})
+        a["failure_fp"] = "missing:" + ",".join(missing) if missing else None
+        prior = [x for x in e["attempts"] if not x.get("voided") and x is not a]
+        if a["failure_fp"] and prior and prior[-1].get("failure_fp") == a["failure_fp"]:      # a repair that wrote nothing new: another identical attempt is a loop
+            _block(p, st, rs, tid, f"incomplete_deliverable: attempt {prior[-1]['n']} and its repair both left {', '.join(missing)} unwritten; stopping instead of repeating. "
+                                   "Resolve by hand or change the task, then `research supervisor resolve TASK --unblock`.", out)
+            return
     if n_fail >= max_att:
         _block(p, st, rs, tid, f"attempt budget exhausted after {n_fail} attempt(s); last problem: {(diagnostics or ['unknown'])[0][:300]}", out)
         return

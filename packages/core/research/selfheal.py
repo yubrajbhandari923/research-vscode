@@ -140,6 +140,7 @@ def step(p, st, rs, c, out) -> None:
     if rs.get("state") != "running" or not (enabled(p) or (rs.get("selfheal") or {}).get("jobs")):
         return
     S = _state(rs)
+    _tasks(p, st, rs, c, S, out)
     for item in (AP._state(rs)["items"] or []):
         live = (S["cases"].get(f"promotion:{item['id']}") or {}).get("phase") in ("repairing", "retrying", "diagnose")
         if (item["status"] in AP.TERMINAL and not live) or not _allowed(p, rs, item["id"]):
@@ -150,6 +151,51 @@ def step(p, st, rs, c, out) -> None:
             _drive(p, st, rs, item, cid, case, S, out)
         except ResearchError as ex:
             _escalate(p, item, S["cases"].setdefault(cid, {"id": cid, "attempt": 0, "history": []}), f"self-healing hit a problem: {ex}", out)
+
+
+def _tasks(p, st, rs, c, S, out) -> None:
+    """An ordinary task stopped on a failure that the verifier's own facts contradict (T-023: the agent said `environment`, the output said a file it owns was never written).
+    Deterministic first: re-read the failed attempt's diagnostics with the same rules a fresh failure gets; an incomplete deliverable becomes ONE repair attempt in the existing worktree
+    (same task, same checks, attempt history and provenance kept). Anything still ambiguous is left to the diagnostic agent; nothing is retried here that the rules cannot explain.
+    Bounded by the task's attempt budget, the plan's, `max_repairs` per task and `max_repairs_per_plan`; marked on the attempt first, so a restart never does it twice."""
+    from . import plans as P, supervisor as SV
+    mx, cap = int(cfg(p)["max_repairs"]), int(cfg(p)["max_repairs_per_plan"])
+    for tid, e in list(rs["tasks"].items()):
+        if e.get("phase") not in ("blocked", "attention"):
+            continue
+        standing = [x for x in e.get("attempts", []) if not x.get("voided")]
+        a = standing[-1] if standing else None
+        if not a or not a.get("verification") or a.get("reclassified") or (a.get("verification") or {}).get("passed") or not p.exists("task", tid):
+            continue
+        diag = list((a.get("verification") or {}).get("diagnostics") or [])
+        if not SV._contradicted(p, tid, a, a.get("category") or "", diag):
+            continue
+        a["reclassified"] = now_iso()                                  # persisted with the run state before anything else happens
+        spec = SV._flat(st, tid)
+        cat, why = SV._refine_missing(p, st, tid, spec, diag)
+        a["category_override"] = {"reported": a.get("category"), "decided": cat, "why": SV._OVERRIDE_WHY}
+        if cat != "incomplete_deliverable":                            # still not a repairable fault (an upstream file, a verifier asked to write): the reason replaces the wrong one
+            a["category"] = cat
+            e["reason"] = f"{cat}: {why}"
+            out["events"].append(f"self-healing {tid}: reclassified {a['category_override']['reported']} -> {cat}; not repairable here")
+            continue
+        used = len(standing)
+        allowed = int((spec.get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"])
+        per = S.setdefault("task_repairs", {})
+        if used >= allowed or rs["budgets"]["attempts"] >= int(c["max_total_attempts"]) or per.get(tid, 0) >= mx or S["repairs"] >= cap:
+            e["reason"] = f"incomplete_deliverable: the task did not write {', '.join(sorted({m for d in diag for m in SV.RC._MISSING_FILE.findall(d)}))}; no repair budget is left, so it asks you"
+            continue
+        per[tid] = per.get(tid, 0) + 1
+        S["repairs"] += 1
+        a["category"] = "incomplete_deliverable"
+        a.pop("blocker", None)
+        e.update(phase="repair_pending", reason=f"self-healing: {tid} did not write a file it owns; a repair attempt runs in the same worktree")
+        try:
+            P.update_task(p, tid, status="todo", blockers=None)
+        except ResearchError:
+            pass
+        SV.RC.log(p, rs, tid, "task_repair", f"attempt {a['n']} was reported as {a['category_override']['reported']}; the output shows an incomplete deliverable: repair queued")
+        out["events"].append(f"self-healing {tid}: incomplete deliverable (was {a['category_override']['reported']}); repair attempt queued")
 
 
 def _drive(p, st, rs, item, cid, case, S, out) -> None:
