@@ -624,3 +624,19 @@ research job status JOB-001
 
 **Profiles** live on the machine (`profiles.yaml` next to the machine config) and are applied per project. **Jobs**: see the changelog entry for 3.6.0; `research job logs JOB-001` shows every checkpoint and each step's attempts and output.
 
+### 29.1 Ordinary task failures: incomplete deliverable vs environment
+
+A failed verification whose output says a required file is missing is classified from the verifier's own facts. The agent's reported category is kept unless these contradict it
+(only `environment`, `unknown_execution_state`, `evidence_pending`, `missing_prerequisite` and `role_contradiction` can be overridden, and only when the output has no environment
+error and no computational run can still deliver the file):
+
+| Fact | Category | What happens |
+|---|---|---|
+| the task owns the file and did not write it | `incomplete_deliverable` | one bounded repair attempt, same worktree, original diagnostics plus the exact missing paths |
+| another task owns it | `missing_prerequisite` | blocked with the producing task named |
+| a verifier is asked to write it | `role_contradiction` | blocked; the plan is not rewritten |
+| a run is outstanding or uncollected | `evidence_pending` | waits and re-verifies the same attempt when results arrive |
+| an environment or permission error in the output | the agent's category | asks you |
+
+An override is recorded on the attempt as `category_override` (`reported`, `decided`, `why`). If a repair leaves the same files unwritten the task stops instead of repeating.
+With self-healing on, a task already blocked this way is repaired once, within `max_repairs` and `max_repairs_per_plan`.

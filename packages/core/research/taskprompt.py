@@ -113,6 +113,10 @@ def assemble(p: Project, tid: str, plan_state: Dict[str, Any], entry: Dict[str, 
     add("Instruction from the researcher (follow it; it was approved for this task)", _IV.guidance(p, tid), "supervisor intervention", cap=per)
     if diagnostics:
         add("What failed verification (fix exactly this)", "\n".join("- " + x for x in diagnostics), "verification diagnostics", cap=per * 2)
+    missing = sorted({m for x in diagnostics or [] for m in re.findall(r"check file: (.+?) failed \((?:missing|exists but is empty)\)", x)})
+    if missing:
+        add("Files this task owns that are still missing", "The previous attempt did not write: " + ", ".join(f"`{m}`" for m in missing)
+            + ". Write each one now, in your workspace, with real content; the checks are unchanged and will look for exactly these paths.", "verification diagnostics")
     notes = [n["text"] for n in __import__("research.plans", fromlist=["x"]).progress_notes(p, tid, 5)]
     add("Progress notes left by earlier attempts", "\n".join("- " + n for n in notes), "task notes")
     # 6. workspace, HPC, reporting

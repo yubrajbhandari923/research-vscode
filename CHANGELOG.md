@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.6.1
+
+- **An incomplete deliverable is no longer mistaken for the environment (PRAVAH T-023).** When a verifier finds a required file missing, the supervisor now separates five cases from its own facts, not the agent's word: a file the task owns and never wrote (repair), an upstream file (missing prerequisite), a verifier asked to author a file (role contradiction), evidence a computational run can still deliver (waits), and a genuine environment or permission error (asks you). An agent-reported category that contradicts those facts is overridden **and the reason is recorded** on the attempt (`category_override`: reported, decided, why). An environment error in the output, a permission denial, or a missing metric is never overridden.
+- **The repair is a bounded attempt in the same worktree.** It carries the original diagnostics and a "files this task owns that are still missing" section naming the exact paths; the checks, frozen tests and acceptance criteria are untouched and no verified task is rerun. If the repair leaves the same files unwritten, the task stops and asks you instead of repeating, even with attempts left.
+- **Self-healing covers ordinary tasks.** With `supervisor_assistant.self_heal` on, a task already stopped on a contradicted failure is re-read once with the same rules and gets one repair attempt (counted against `max_repairs` and `max_repairs_per_plan`, restart-safe: marked on the attempt before anything runs). Anything the rules cannot explain stays with the diagnostic agent and you.
+- Evidence-only waiting is reserved for a run that is still outstanding or not yet collected; an absent deliverable never waits.
+
 ## 3.6.0
 
 - **Standing authorization for verified code (`auto_promotion.auto_approve_verified_code`).** One persistent, project-level setting (a toggle in Settings, `research config set`; needs your PIN once, because it is a policy setting). While on, the supervisor authorizes, approves and integrates eligible code promotions for every plan of the project, across restarts, with no per-plan declaration or PIN prompt. It is authorization, not a bypass: the promotion tests, the independent reviewer, scientific-content provenance, frozen tests and fast-forward-only merging still gate every promotion, and no scientific claim is approved. The authorization is bound to the verification policy: a change made through Settings keeps it, an edit around Settings (or the setting written by hand, which no human bound) fails closed as `suspended` with the exact reason. Turning it off removes it.
