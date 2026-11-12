@@ -191,7 +191,29 @@ def test_the_five_questions_are_reported_separately(world):
     p = world["p"]
     c = candidate(world)
     k = c["classification"]
-    assert k == {"scientifically_successful": None, "technically_correct": None, "reusable": True, "integration_ready": False, "promoted": False}
+    assert k == {"evidence_supported": None, "scientifically_successful": None, "technically_correct": None, "reusable": True, "integration_ready": False, "promoted": False}
+
+
+def test_a_supported_finding_is_supported_evidence_not_a_successful_experiment():
+    """TrueCT F-001: an independently supported finding that the pilot FAILED its QC used to yield scientifically_successful=True."""
+    from research import promotion as PR
+
+    class P:
+        status = "failed"
+
+        def exists(self, kind, ident):
+            return True
+
+        def get(self, kind, ident):
+            return {"status": self.status}
+    gates = {"evidence": {"state": "passed"}, "tests": {"state": "passed"}, "review": {"state": "approved"}, "scientific_content": {"state": "not_applicable"}, "approval": {"state": "approved"}}
+    c = {"experiment": "EXP-001", "selection": {"paths": ["src/x.py"]}}
+    k = PR._classify(P(), c, gates)
+    assert k["evidence_supported"] is True and k["scientifically_successful"] is False and k["integration_ready"] is True, "reusable, well-evidenced code from a failed experiment"
+    P.status = "completed"
+    assert PR._classify(P(), c, gates)["scientifically_successful"] is True
+    P.status = "running"
+    assert PR._classify(P(), c, gates)["scientifically_successful"] is None, "not known yet is different from no"
 
 
 def test_cli_lists_and_agents_cannot_approve_through_it(world):

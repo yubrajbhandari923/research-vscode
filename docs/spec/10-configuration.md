@@ -47,7 +47,7 @@ dependency. A test checks that each option exists in the defaults with the right
 ## Reference (generated)
 
 <!-- generated:config -->
-134 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
+139 registered settings. Keys not listed here still work in YAML but have no form; run `research config options` for the full help text.
 
 #### Project
 
@@ -143,6 +143,10 @@ dependency. A test checks that each option exists in the defaults with the right
 | `supervisor.max_total_attempts` | int | `20` | human only | Total agent attempts a plan run may start. |
 | `supervisor.max_wall_minutes` | int | `480` | human only | Minutes a plan may stay in the running state before the supervisor pauses it. |
 | `supervisor.attempt_timeout_minutes` | int | `90` |  | A single agent process that runs longer than this is asked to stop. Computation on HPC is not counted. |
+| `supervisor.plan_files.dir` | str | `'plans'` |  | Where each plan's YAML file lives, relative to the project (plans/<key>.yaml). |
+| `supervisor.plan_files.auto_sync` | enum | `'operational'` | human only | operational: budgets, attempts, prompts, profiles and resources apply on the next pass; new or removed tasks, checks, acceptance and policy wait for `research plan sync`. all: everything applies. off: nothing applies until you sync. |
+| `supervisor.session_group_max_tasks` | int | `4` |  | Tasks with the same `agent.session_group` continue one provider session (same role, profile and worktree), up to this many; then a fresh session starts. 0 turns it off. |
+| `supervisor.auto_restart` | bool | `True` |  | When the supervisor process has died while a plan is running, the chat gateway starts it again (at most 3 times an hour) and only tells you if that fails. |
 | `supervisor.on_failure` | enum | `'diagnose_and_repair'` | human only | diagnose_and_repair dispatches a bounded repair attempt; pause stops the plan for you to look; stop ends the run. |
 | `supervisor.enforce_completion` | bool | `True` | human only | While a plan runs, only the supervisor's verification (or a human `supervisor accept`) can mark its tasks done, by any route: CLI, MCP, UI or a hand-edited file. |
 | `supervisor.auto_apply_operational` | bool | `True` | human only | Agent proposals that only add new tasks (diagnostics, follow-ups) are applied without asking, up to the limit below. |
@@ -183,6 +187,7 @@ dependency. A test checks that each option exists in the defaults with the right
 | `notifications.discord.thread_per_task` | bool | `True` |  | Alerts about a task go to a thread named after it, so the conversation is the task's log; the channel gets a one-line pointer for errors and approvals. |
 | `notifications.alerts.on` | list | `['halt', 'task_failed', 'approval_needed', 'promotion_ready', 'plan_finished', 'run_failed', 'budget', 'supervisor_down', 'decision', 'provider_limit', 'plan_started', 'experiment_started', 'experiment_finished', 'run_finished', 'task_started', 'task_verified', 'recovery', 'promotion_done', 'job']` |  | Which events reach chat: halt, task_failed, approval_needed, promotion_ready, plan_finished, run_failed, budget, supervisor_down, decision, provider_limit. |
 | `notifications.alerts.cooldown_minutes` | int | `30` |  | The same alert is not repeated inside this time; after it, one reminder ('still: ...'). |
+| `notifications.alerts.max_per_hour` | int | `30` |  | A hard ceiling on what this project sends to one chat platform in an hour. Past it, one notice says so and the rest are held back; replies, decisions and approvals always come through. |
 | `notifications.alerts.escalate_after` | int | `3` |  | After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan). |
 | `notifications.alerts.approval_expiry_hours` | int | `24` |  | Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting. |
 | `notifications.digest.at` | str | `null` |  | Local time (HH:MM) for a daily summary of what changed. Empty turns the digest off. |

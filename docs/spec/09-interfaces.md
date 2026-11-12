@@ -1,4 +1,4 @@
-# 9. Interfaces: CLI, Python API, RPC, MCP, TUI, extension
+# 9. Interfaces: CLI, Python API, RPC, MCP, plan board, extension
 
 Every interface reaches the same core ([architecture](01-architecture.md)). The tables below marked *generated* are written from the code by
 `python tests/python/gen_reference.py`; do not edit them by hand (a test fails when they are stale).
@@ -29,7 +29,6 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research ledger` |  | shared research ledger for git worktrees: status \| enable [--apply] \| relink |
 | `research version` |  | print the core version and RPC protocol (--json for the extension) |
 | `research self-update` |  | install the newest GitHub release (sha256-verified) |
-| `research tui` |  | terminal UI (needs the tui extra) |
 | `research doctor` |  | inspect the project: records, workspaces, runs, agents, sandbox, context (read-only) |
 | `research show` |  | show any object by id (Q-…, EXP-…, RUN-…, F-…, D-…, CP-…, A-…, note:…) |
 | `research mark` |  | set status of any object: research mark Q-001 answered |
@@ -77,6 +76,16 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 | `research profile` |  | settings profiles: list \| show NAME \| diff NAME [OTHER] \| apply NAME [--set k=v] \| check [NAME] \| status \| revert \| create NAME \| delete NAME (machine level; applied per project) |
 | `research heal` |  | self-healing: status \| check-source FILE... (the check a promotion repair task must pass) |
 | `research job` |  | delegate work in words: run "…" \| status ID \| logs ID \| cancel ID \| list |
+| `research start` | `go` | start a plan: `research start plans/study.yaml` registers or syncs the file and lets the supervisor run it |
+| `research background` | `bg` | keep running after you log out (no tmux): check \| install (systemd user service + lingering, survives reboots) \| uninstall |
+| `research watch` | `board` | the plan board, live (read-only) |
+| `research bump` |  | a task ran out of attempts: allow more and retry now (`research bump T-023`, `research bump T-023 8`) |
+| `research why` |  | why a task (T-023) or promotion (AP-001) stopped, and what to do: recorded facts, no agent; --ask adds a diagnosis |
+| `research retry` |  | queue a stopped task again as it is |
+| `research tell` |  | steer a task in words: research tell T-023 "use the cached footprints instead of recomputing" |
+| `research logs` |  | what agents are doing and did: no id lists every attempt; T-023 / AP-001 shows its steps (-f follows a running one) |
+| `research archive` |  | hide a plan or experiment you no longer care about (nothing is deleted); --list shows the archive |
+| `research unarchive` |  | bring an archived plan or experiment back |
 
 **`research project`** actions: `set` (set name/goal/description)
 
@@ -98,7 +107,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 
 **`research note`** actions: `new` (create a note); `list` (list notes); `pin` (pin/unpin a note); `link` (link a note to questions/experiments/findings)
 
-**`research plan`** actions: `create` (create a plan); `list` (list plans); `show` (show plan with all tasks); `update` (update a plan); `yaml` (YAML plans: template | export | validate | diff | apply); `promote` (prepare promotion candidates from verified, committed work (nothing merges)); `autopromote` (unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry | coverage | attribute | exclude); `run` (let the supervisor execute a plan); `pause` (pause scheduling for a plan); `resume` (resume a paused or blocked plan); `stop` (stop a plan run (history is kept)); `status` (supervised status: phases, attempts, budgets)
+**`research plan`** actions: `create` (create a plan); `list` (list plans); `show` (show plan with all tasks); `update` (update a plan); `status` (the plan board: every task by experiment, what is stuck, why, and the command when it needs you); `edit` (open the plan file in $EDITOR; it is validated and applied when you save); `sync` (apply edits made to plan files now (the supervisor also does it by itself); --check previews); `set` (change values without an editor: T-023.max_attempts=6 execution.max_total_attempts=60 analyze.profile=claude-deep); `file` (where the plan's file is and whether it is in sync); `yaml` (YAML plans: template | export | validate | diff | apply); `promote` (prepare promotion candidates from verified, committed work (nothing merges)); `autopromote` (unattended code promotion into main (off by default): status | authorize (human, PIN; allowed before `plan run`, starts nothing) | revoke | retry | coverage | attribute | exclude); `run` (let the supervisor execute a plan); `pause` (pause scheduling for a plan); `resume` (resume a paused or blocked plan); `stop` (stop a plan run (history is kept))
 
 **`research task`** actions: `create` (create a task); `list` (list tasks); `show` (show task detail); `context` (focused context for working on a task: plan, deps, question, experiment, rules); `update` (update a task); `start` (claim a task and mark it running); `release` (give a claimed task back (→ todo) with a hand-off note); `intervene` (human control menu for a supervised task: research task intervene T-006 · … attempts 12 · … takeover · … release (previews first; --yes applies)); `budget` (set the attempt budget of tasks: research task budget T-006 T-007 --max-attempts 12 · or --stuck / --todo [--plan PLAN] (previews; --yes applies)); `note` (add a progress note: research task note T-003 "loader done, tests next"); `verify` (run the task's checks and record the result); `dispatch` (hand this task to an agent CLI (role from the task)); `done` (mark task as done (completed)); `block` (mark task as blocked); `next` (show next ready task (dependencies satisfied))
 
@@ -110,7 +119,7 @@ Every interface reaches the same core ([architecture](01-architecture.md)). The 
 
 **`research git`** actions: `status` (main repo, experiment worktrees, promotions and ledger: what is uncommitted and why it matters); `preflight` (the check run before a plan starts/resumes or promotion is authorized (exit 2 when blocked)); `ignore` (preview (default) or --apply a managed .gitignore block for generated and internal files); `commit` (show the staged diff of the named files; --yes commits exactly those files on main (humans only, never pushes))
 
-Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `telegram`, `usage`.
+Hidden top-level aliases (kept so older scripts and agent sessions keep working; not listed by `--help`): `agents`, `agents-md`, `bin`, `context`, `dispatch`, `exec`, `execution`, `project-init`, `provider`, `rebuild`, `resume`, `rpc`, `setup`, `telegram`, `tui`, `usage`.
 <!-- /generated:cli -->
 
 ## Python API
@@ -461,13 +470,12 @@ A parameter named `dry_run` is the preview convention. `api.call(name, session, 
 | `hpc_bundle` | Build a portable execution bundle for an experiment, for manual execution on a cluster (no agent or connection needed there). | yes | `experiment` |
 <!-- /generated:mcp -->
 
-## Terminal UI (`research tui`)
+## Plan board (`research watch`, `research plan status`)
 
-A Textual dashboard over the same core (`pip install 'research-panel[tui]'`; without Textual it prints the install hint). It runs in process and calls
-ops through `api.call(..., surface="tui")`. Tabs: **Overview**, **Runs**, **Findings**, **Plans & Approvals**, **Records**, **Doctor**. Keys: `1` to `6`
-switch tab, `r` refresh, `/` filter tables (empty clears), `k` cancel the selected run, `a` / `d` approve or reject the selected proposal, `ctrl+t`
-dark or light theme, `?` help, `q` quit. Protected actions ask for confirmation and, where the approval gate needs it, for the PIN. With `NO_COLOR` set or
-`TERM=dumb` it falls back to plain output.
+The Textual TUI was removed in 4.0. Its job is done by the plan board: `board.data(p)` assembles, per plan, the supervisor's status rows grouped by
+experiment as in the plan file, the plan file's sync state (`planfile.info`), promotion items with their reviewer's liveness, each running agent's latest
+step (`agentlog.last_activity`) and one `needs_you` list in which every entry names the command that resolves it (`board.next_steps`). The CLI renders it
+(`commands/flow.py`); `research watch` redraws it every few seconds and never writes. `research tui` is kept as a hidden alias for `research watch`.
 
 ## VS Code extension
 

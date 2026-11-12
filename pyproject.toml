@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "research-panel"
-version = "3.6.1"
-description = "ResearchOS: a CLI, terminal UI and supervisor for autonomous research with coding agents (Claude Code, Codex, Antigravity, opencode): plans, experiments, approvals, results."
+version = "4.0.0"
+description = "ResearchOS: a CLI and supervisor for autonomous research with coding agents (Claude Code, Codex, Antigravity, opencode): plans, experiments, approvals, results."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -38,7 +38,7 @@ Changelog = "https://github.com/yubrajbhandari923/research-vscode/blob/main/CHAN
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "pytest-xdist>=3"]
-tui = ["textual>=0.80; python_full_version >= '3.8.1'"]
+tui = []   # kept so `pip install research-panel[tui]` still resolves; the terminal UI was replaced by `research watch`, which needs nothing
 discord = ["discord.py>=2.4,<3; python_version >= '3.10'"]  # aiohttp needs 3.10; chat setup prints the install line
 
 [project.scripts]

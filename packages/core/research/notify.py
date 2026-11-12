@@ -245,7 +245,7 @@ def _scan(p, c: Dict[str, Any]) -> None:
             k = f"approval:{pr['id']}"
             want.add(k)
             acts = [{"label": "Reject", "op": "chat_cmd_reject", "params": {"kind": "proposal", "id": pr["id"]}, "style": "danger"},
-                    {"label": "Approve on my computer", "text": f"Approve with the PIN on your computer:\n  research proposal approve {pr['id']}\n(or VS Code → Plans → Approvals, or `research tui`)"}]
+                    {"label": "Approve on my computer", "text": f"Approve with the PIN on your computer:\n  research proposal approve {pr['id']}\n(or VS Code → Plans → Approvals, or `research watch`)"}]
             alerts.raise_(p, k, "approval_needed", "warn", f"Proposal {pr['id']} needs your approval: {(pr.get('rationale') or '')[:200]}",
                           actions=acts + commands.card_actions(p, "proposal", pr["id"]))
     for it in I.list_all(p):

@@ -426,11 +426,12 @@ def test_all_tasks_verified_with_a_paused_promotion_is_not_completed_anywhere(ap
     assert "rename the helper" in msg                                                             # Discord/Telegram halt text carries the objection
     tasks = CH.chat_cmd_tasks(ap)
     assert "Promotion paused" in str(tasks) and "rename the helper" in str(tasks)
-    pytest.importorskip("research_cli.tui.inbox")
-    from research_cli.tui import inbox
-    items_ = []
-    inbox._blocked(ap, items_)
-    assert "rename the helper" in items_[0]["why"] and "retry --item AP-001" in items_[0]["next"] and "not re-run" in items_[0]["next"]
+    from research import board as BD
+    from research_cli.commands import flow
+    need = BD.plan(ap, "ap")["needs_you"]
+    assert "rename the helper" in need[0]["why"] and any("retry --item AP-001" in n["cmd"] for n in need[0]["next"])
+    shown = "\n".join(flow.plan_lines(BD.plan(ap, "ap")))
+    assert "rename the helper" in shown and "retry --item AP-001" in shown and "research why AP-001" in shown
     assert not os.path.exists(os.path.join(repo, "lib1.py")), "nothing merged"
 
 

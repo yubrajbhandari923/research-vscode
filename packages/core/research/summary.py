@@ -58,7 +58,7 @@ def experiment_summary(p, exp_id: str) -> Tuple[str, str]:
              f"Recorded results: {res}" if res else "Recorded results: none (no metric values logged).",
              "Know this: " + "; ".join(know) + "." if know else "Nothing flagged by the evidence checks."]
     if st["needs_synthesis"] or st["over_run_budget"]:
-        lines.append("Next: a synthesis is due. These are recorded values, not an interpretation. Review in the TUI Inbox (research tui, i).")
+        lines.append("Next: a synthesis is due. These are recorded values, not an interpretation. See `research experiment show` for the runs; record the interpretation with `research experiment synthesize`.")
     return ("warn" if know else "ok"), "\n".join(lines)
 
 

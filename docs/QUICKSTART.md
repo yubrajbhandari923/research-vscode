@@ -26,11 +26,11 @@ If you use VS Code, download the extension (`research-panel-X.Y.Z.vsix`) from th
 **The CLI** (in its own isolated environment, so it never touches your project's packages):
 
 ```bash
-uv tool install "research-panel[tui]"
+uv tool install research-panel
 research version
 ```
 
-With pipx instead: `pipx install "research-panel[tui]"`. If `research` is not found afterwards, add the tool directory to
+With pipx instead: `pipx install research-panel`. If `research` is not found afterwards, add the tool directory to
 your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new terminal. The same wheel is also attached to every GitHub release
 (with `SHA256SUMS`) if you prefer to install from a file; see [other ways to install](#other-ways-to-install) below.
 
@@ -38,10 +38,9 @@ your `PATH` (`uv tool update-shell` or `pipx ensurepath`) and open a new termina
 
 | Extra | Gives you |
 |---|---|
-| `[tui]` | the terminal UI, `research tui` |
 | `[discord]` | the Discord bot (Python 3.10 or newer; Telegram needs no extra) |
 
-Combine them as `research-panel[tui,discord]`. Add one later by installing again with `--force`, for example `uv tool install --force "research-panel[tui,discord]"`, or `pipx inject research-panel discord.py`.
+Combine them as `research-panel[discord]`. Add one later by installing again with `--force`, for example `uv tool install --force "research-panel[discord]"`, or `pipx inject research-panel discord.py`.
 
 ### Other ways to install
 
@@ -51,9 +50,9 @@ PyPI, plus `SHA256SUMS`:
 ```bash
 # download research_panel-X.Y.Z-py3-none-any.whl and SHA256SUMS from the release page, then
 grep '\.whl$' SHA256SUMS | shasum -a 256 -c -           # Linux: sha256sum -c -
-uv tool install "research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
 # or straight from the release URL:
-uv tool install "research-panel[tui] @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
 ```
 
 Without extras: `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl`, `pipx install ./research_panel-X.Y.Z-py3-none-any.whl`, or `pip install` the file inside a
@@ -64,7 +63,7 @@ virtual environment. `research self-update --from-file WHEEL` installs a downloa
 ```bash
 git clone https://github.com/yubrajbhandari923/research-vscode.git && cd research-vscode
 uv build                                        # or: python -m pip install build && python -m build
-uv tool install "research-panel[tui] @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
 ```
 
 **The VS Code extension** (needs the CLI above):
@@ -298,13 +297,32 @@ supervisor never submits more than the plan allows (`max_hpc_resubmissions`). Ru
 
 ## 6. Watching and steering
 
-**The terminal UI.** Install the `[tui]` extra (section 1), then:
+**The plan board.**
 
 ```bash
-research tui
+research watch            # every plan, live; read-only, safe to leave open in a pane
+research plan status      # the same picture once
 ```
 
-It is the main interface: a left navigation with **Home**, **Inbox**, **Experiments**, **Runs**, **Findings**, **Decisions**, **Plans & approvals**, **Worktrees**
+It shows each plan the way its file is organised: experiments, their tasks, progress and budgets. A task that is running shows what its agent did last and
+how long ago; one that waits shows what it waits for; one that needs you shows why and the exact command (`research bump T-023`, `research plan sync study`,
+`research supervisor approve T-004`). A promotion waiting for review shows whether its reviewer is alive. "Needs you" at the bottom is the whole list.
+
+**What the agents are doing.** `research logs` lists every attempt (running ones first, with their latest step). `research logs T-023` prints the steps of the
+latest attempt: what the agent said, each tool call, shortened results, errors in full. `-f` follows a running agent, `--attempt 1` reads an earlier one,
+`--full` cuts nothing, and `research logs AP-001` reads a promotion's independent reviewer. This is read from the provider's own live session record, so it
+works while the agent runs, not only after it exits.
+
+**Changing a running plan.** Edit `plans/<key>.yaml` and save. Budgets, attempts, prompts, profiles and resources apply on the supervisor's next pass; new or
+removed tasks, checks and acceptance wait for `research plan sync` (see the README table). `research bump T-023` is the one-word fix for "attempt budget exhausted".
+
+**Leaving it.** `research background check` says whether the run survives closing your terminal or SSH session; `research background install` makes it a
+user service that also survives reboots. `research start PLAN --unattended` applies the overnight settings first.
+
+**Settings** have no screen of their own: `research config show`, `research config set KEY VALUE`, `research config explain KEY`, and
+`research profile apply overnight|interactive` for the common bundles.
+
+**Decisions**, **Plans & approvals**, **Worktrees**
 (fork, archive, promotion), **Agents**, **Guide & site** (create, build, publish and unpublish experiments), **Settings** (every setting, with its help, default and where it is set;
 changes go through the same preview and approval path, PIN included) and **System** (doctor, chat, HPC). Digits `1`-`9` and `g`, `s`, `y` jump to a section; `Ctrl+P` finds any section,
 setting or inbox item by typing a few letters. It refreshes by itself, works in a narrow terminal (the navigation folds away and the status bar names your section), and has a light theme (`Ctrl+T`).
@@ -369,7 +387,7 @@ research chat doctor                                # what is set up, what is mi
 
 **On the machine, once** (the bot, the server and who may talk to it):
 
-1. Install the extra: `uv tool install "research-panel[tui,discord]"` (Python 3.10+).
+1. Install the extra: `uv tool install "research-panel[discord]"` (Python 3.10+).
 2. In the [Discord developer portal](https://discord.com/developers/applications) create an application, add a bot, copy its token. No privileged intents are needed.
 3. In your first project run `research chat setup discord`. Paste the token at the hidden prompt; it prints an invite URL (scopes `bot` and `applications.commands`, minimal permissions): open it and
    add the bot to your server.

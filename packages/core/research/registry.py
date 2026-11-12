@@ -31,7 +31,8 @@ SUPERVISOR: Dict[str, Any] = {
     "poll_seconds": 5, "max_parallel_agents": 1, "max_attempts_per_task": 3, "max_total_attempts": 20, "max_wall_minutes": 480,
     "attempt_timeout_minutes": 90, "on_failure": "diagnose_and_repair", "enforce_completion": True, "auto_apply_operational": True,
     "max_auto_tasks": 5, "require_approval_for_scientific_changes": True, "session_resume": "auto", "context_max_chars": 24000,
-    "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120,
+    "hpc_poll_seconds": 30, "max_hpc_resubmissions": 1, "launch_grace_seconds": 120, "auto_restart": True, "session_group_max_tasks": 4,
+    "plan_files": {"dir": "plans", "auto_sync": "operational"},      # planfile.py: every plan is a YAML file in the repository
     "recovery": {"enabled": True, "collection_wait_minutes": 120, "max_reverifications": 5, "max_syncs": 100},   # late-evidence recovery (recovery.py); never relaxes a check or submits a job
     "investigator": {"auto": False, "max_per_plan": 3, "budget_usd": 2.0},   # on-demand investigator agent (investigator.py); auto = also on unclassified failures
     "usage_limit": {"on_limit": "halt", "wait_buffer_seconds": 120, "max_wait_hours": 8,      # H.10: what a provider usage/rate limit does (supervisor.py)
@@ -60,7 +61,7 @@ NOTIFICATIONS: Dict[str, Any] = {
     "discord": {"enabled": False, "thread_per_task": True, "mention": True},
     "alerts": {"on": ["halt", "task_failed", "approval_needed", "promotion_ready", "plan_finished", "run_failed", "budget", "supervisor_down", "decision", "provider_limit",
                       "plan_started", "experiment_started", "experiment_finished", "run_finished", "task_started", "task_verified", "recovery", "promotion_done", "job"],
-               "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24},
+               "cooldown_minutes": 30, "escalate_after": 3, "approval_expiry_hours": 24, "max_per_hour": 30},
     "digest": {"at": None, "silent_if_unchanged": True},
 }
 
@@ -343,6 +344,14 @@ OPTIONS: List[Option] = [
        why="Stops unattended runs from going on indefinitely.", effect="The plan pauses; resume it to continue.", min_=1, max_=100000, unit="minutes", risk="policy"),
     _o("supervisor.attempt_timeout_minutes", "int", "supervisor", "Agent attempt timeout", "A single agent process that runs longer than this is asked to stop. Computation on HPC is not counted.",
        why="A hung agent should not hold the plan forever.", effect="A timed-out attempt is verified as it stands, then repaired or blocked.", min_=1, max_=10000, unit="minutes"),
+    _o("supervisor.plan_files.dir", "str", "supervisor", "Plan files folder", "Where each plan's YAML file lives, relative to the project (plans/<key>.yaml).",
+       why="The plan file is the plan: you edit it, the supervisor follows it.", effect="Applies to plans tracked afterwards; a tracked plan keeps its path."),
+    _o("supervisor.plan_files.auto_sync", "enum", "supervisor", "Apply plan-file edits automatically", "operational: budgets, attempts, prompts, profiles and resources apply on the next pass; new or removed tasks, checks, acceptance and policy wait for `research plan sync`. all: everything applies. off: nothing applies until you sync.",
+       choices=["operational", "all", "off"], why="A file in the repository can also be written by an agent, so scientific changes get one human command by default.", effect="Applies on the supervisor's next pass.", risk="policy"),
+    _o("supervisor.session_group_max_tasks", "int", "supervisor", "Tasks sharing one agent session", "Tasks with the same `agent.session_group` continue one provider session (same role, profile and worktree), up to this many; then a fresh session starts. 0 turns it off.",
+       min_=0, max_=50, why="Continuing a session saves the tokens an agent spends re-reading the project; a very long one costs more per turn than it saves.", effect="Applies to the next task launched."),
+    _o("supervisor.auto_restart", "bool", "supervisor", "Restart a stopped supervisor", "When the supervisor process has died while a plan is running, the chat gateway starts it again (at most 3 times an hour) and only tells you if that fails.",
+       why="A crashed supervisor at night should not wait for you.", effect="Applies at the gateway's next check (every 30 s)."),
     _o("supervisor.on_failure", "enum", "supervisor", "When verification fails", "diagnose_and_repair dispatches a bounded repair attempt; pause stops the plan for you to look; stop ends the run.",
        choices=["diagnose_and_repair", "pause", "stop"], why="Engineering failures are usually fixable without you; scientific ones never are automatic.", effect="Applies to failures after the change.", risk="policy"),
     _o("supervisor.enforce_completion", "bool", "supervisor", "Only the supervisor completes supervised tasks", "While a plan runs, only the supervisor's verification (or a human `supervisor accept`) can mark its tasks done, by any route: CLI, MCP, UI or a hand-edited file.",
@@ -460,6 +469,8 @@ OPTIONS: List[Option] = [
        why="Silence the kinds you do not want on your phone.", effect="Alerts of other kinds are not queued."),
     _o("notifications.alerts.cooldown_minutes", "int", "supervisor", "Alert cooldown", "The same alert is not repeated inside this time; after it, one reminder ('still: ...').", min_=1, max_=10080, unit="minutes",
        why="An unattended run must not repeat itself.", effect="Applies to the next alert."),
+    _o("notifications.alerts.max_per_hour", "int", "supervisor", "Most messages per hour", "A hard ceiling on what this project sends to one chat platform in an hour. Past it, one notice says so and the rest are held back; replies, decisions and approvals always come through.",
+       min_=5, max_=1000, why="No bug upstream may turn into hundreds of bot messages (that is how a bot token gets revoked).", effect="Applies to the next message."),
     _o("notifications.alerts.escalate_after", "int", "supervisor", "Escalate after", "After this many failures in a row for one task the alert suggests a next step (continue with another agent, pause the plan).", min_=1, max_=100,
        why="Repeated failure needs a decision, not more retries.", effect="Applies to the next alert."),
     _o("notifications.alerts.approval_expiry_hours", "int", "supervisor", "Approval buttons expire after", "Buttons on approval cards disappear after this time. The proposal stays pending; nothing is approved or denied by waiting.", min_=1, max_=720, unit="hours",

@@ -394,7 +394,10 @@ def status(p: Project, ref: str) -> Dict[str, Any]:
                                             "kind": last["kind"], "verification": last.get("verification"), "outcome": last.get("outcome")},
                      "requires_approval": bool((flat[key].get("execution") or {}).get("requires_approval")) and not (rs.get("approvals") or {}).get(tid),
                      "deferred": key in (st.get("deferred") or {}), "hpc_runs": e.get("hpc_runs") or [], "resume_at": e.get("resume_at_iso"), "permission_notes": e.get("permission_notes"),
-                     "recovery": e.get("recovery")})
+                     "recovery": e.get("recovery"), "block_kind": _budget_kind(e),
+                     "allowed": int((flat[key].get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"]),
+                     "started": last and last.get("started"), "session_group": flat[key]["agent"].get("session_group"),
+                     "continues_session": bool(last and last.get("resumed_session"))})
     counts: Dict[str, int] = {}
     for r in rows:
         counts[r["phase"]] = counts.get(r["phase"], 0) + 1
@@ -419,6 +422,11 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
     """One deterministic scheduling pass over every running plan. Safe to call concurrently (state lock) and repeatedly."""
     out = {"plans": 0, "launched": [], "verified": [], "repairs": [], "blocked": [], "events": []}
     busy = False
+    try:
+        from . import planfile as PF
+        PF.step(p, out)            # the plan files are the plans: apply what was edited before anything is scheduled
+    except Exception:   # noqa: BLE001
+        pass
     with _lock(p):
         for rs in all_runs(p):
             if rs.get("state") == "completed":   # persisted completion that hid an authorized promotion that is not settled: reopen it so it can be recovered
@@ -430,7 +438,10 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
                     out["events"].append(f"{rs['plan_key']}: reopened, automatic promotion unresolved")
             if rs.get("state") == "paused":      # a paused plan starts nothing, but evidence that arrives is still re-verified (never launches an agent or a job)
                 st = PS.load_state(p, rs["plan_key"])
-                if st:
+                if st and _resume_wall(p, st, rs, cfg(p, st)):
+                    out["events"].append(f"{rs['plan_key']}: resumed, the wall-time budget has room again")
+                    save_run(p, rs)
+                elif st:
                     RC.step(p, st, rs, cfg(p, st), out)
                     save_run(p, rs)
                 continue
@@ -455,6 +466,9 @@ def tick(p: Project, now: Optional[float] = None) -> Dict[str, Any]:
             save_run(p, rs)          # interventions edit the run state through the public APIs; persist what this pass already did first
             IV.step(p, st, rs, out)
             rs = load_run(p, rs["plan_id"]) or rs     # an intervention may have resolved/voided through the same state file
+            st = PS.load_state(p, rs["plan_key"]) or st      # ... or changed the plan (a budget, a new task)
+            c = cfg(p, st)
+            _release_budget(p, st, rs, c)
             _schedule(p, st, rs, c, out)
             _apply_deferred(p, st, rs)
             wp = waiting_provider(rs)
@@ -572,13 +586,69 @@ def _lease_conflict(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str
 def _block(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, why: str, out: Dict[str, Any]) -> None:
     from . import plans as P
     e = _entry(rs, tid)
-    e.update(phase="blocked", reason=why)
+    kind = "plan_budget" if why.startswith("plan attempt budget exhausted") else "task_budget" if why.startswith("attempt budget exhausted") else None
+    if kind == "task_budget":
+        why += f" More attempts: `research bump {tid}` (adds 3 and retries now), or raise `max_attempts` for this task in the plan file."
+    elif kind == "plan_budget":
+        why += f" Raise it: `research plan set {st['plan_key']} execution.max_total_attempts=N`, or edit `max_total_attempts` in the plan file; blocked tasks continue by themselves."
+    e.update(phase="blocked", reason=why, block_kind=kind)
     try:
         P.block_task(p, tid, why)
     except ResearchError:
         pass
     out["blocked"].append({"task": tid, "reason": why})
     _event(p, tid, "supervisor_blocked", why)
+
+
+def _budget_kind(e: Dict[str, Any]) -> Optional[str]:
+    if e.get("phase") != "blocked":
+        return None
+    r = e.get("reason") or ""           # run states written before block_kind existed are recognised by their text
+    return e.get("block_kind") or ("plan_budget" if r.startswith("plan attempt budget exhausted") else "task_budget" if r.startswith("attempt budget exhausted") else None)
+
+
+def _release_budget(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any], only: Optional[str] = None) -> List[str]:
+    """A task that stopped only because a budget ran out continues as soon as the budget has room again, however it was raised (the plan file,
+    `research plan set`, `research bump`, an approved intervention). Nothing else is ever unblocked here."""
+    freed = []
+    for tid, e in list((rs.get("tasks") or {}).items()):
+        kind = _budget_kind(e)
+        if not kind or (only and tid != only) or not p.exists("task", tid):
+            continue
+        spec = _flat(st, tid)
+        used = len([x for x in e.get("attempts") or [] if not x.get("voided")])
+        if used >= int((spec.get("execution") or {}).get("max_attempts") or c["max_attempts_per_task"]):
+            continue
+        if rs["budgets"]["attempts"] >= int(c["max_total_attempts"]):
+            continue
+        e.update(phase="repair_pending" if used else "waiting", reason=None, block_kind=None)
+        freed.append(tid)
+        _event(p, tid, "supervisor_budget_released", f"the attempt budget has room again ({used} used): continuing")
+    return freed
+
+
+def release_budget_blocks(p: Project, ref: str, only: Optional[str] = None) -> List[str]:
+    st = _plan_state(p, ref)
+    with _lock(p):
+        rs = load_run(p, st["plan_id"])
+        if not rs:
+            return []
+        freed = _release_budget(p, st, rs, cfg(p, st), only)
+        if freed:
+            save_run(p, rs)
+    return freed
+
+
+def _resume_wall(p: Project, st: Dict[str, Any], rs: Dict[str, Any], c: Dict[str, Any]) -> bool:
+    """A plan the supervisor itself paused for wall time continues once `max_wall_minutes` has room again. A plan a person paused is never touched."""
+    last = (rs.get("history") or [{}])[-1]
+    if rs.get("state") != "paused" or last.get("event") != "paused" or last.get("why") != "wall-time budget exhausted":
+        return False
+    if c["max_wall_minutes"] and rs["budgets"].get("wall_seconds", 0.0) > c["max_wall_minutes"] * 60:
+        return False
+    rs["state"] = "running"
+    rs["history"].append({"ts": now_iso(), "event": "resumed", "why": "the wall-time budget was raised"})
+    return True
 
 
 # ----------------------------------------------------------------------------------------------- launching an attempt
@@ -609,7 +679,7 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         P.update_task(p, tid, claimed_by=None, claimed_at=None)
     exp_id = task.get("related_experiment_id")
     attempt = {"n": n, "kind": kind, "execution": None, "started": now_iso(), "state": "reserved", "profile": e.get("provider_override") or (esc or {}).get("profile") or ag.get("profile"),
-               "escalated": esc,
+               "escalated": esc, "session_group": ag.get("session_group"),
                "role": role,   # runs that already exist belong to earlier attempts; second-resolution timestamps cannot tell them apart
                "runs_before": [r["id"] for r in p.q("SELECT id FROM runs WHERE experiment_id=?", (exp_id,))] if exp_id else []}
     e["attempts"].append(attempt)
@@ -650,6 +720,8 @@ def _launch(p: Project, st: Dict[str, Any], rs: Dict[str, Any], tid: str, kind: 
         after_limit = e.pop("limit_relaunch", None)       # the previous attempt was refused by a provider limit: continue its session where possible
         if (kind in ("repair", "resume") or after_limit) and role != "verifier" and c["session_resume"] != "never" and not esc:   # a different model cannot resume the old session
             sid = _resumable_session(p, e, spec, role, d)
+        if not sid and kind == "initial" and role != "verifier" and c["session_resume"] != "never" and not esc:
+            sid = _group_session(p, rs, tid, spec, role, d, attempt, int(c.get("session_group_max_tasks") or 0))
         if sid:
             attempt["resumed_session"] = sid
         _amend_execution(p, d["execution_id"], tid, n, sid, d)
@@ -713,6 +785,39 @@ def _resumable_session(p: Project, e: Dict[str, Any], spec: Dict[str, Any], role
             kind = pv.provider_of({"command": cmd}, os.path.basename(cmd))
             return sid if pv.native_resume_supported(kind, cmd) else None
     return None
+
+
+def _group_session(p: Project, rs: Dict[str, Any], tid: str, spec: Dict[str, Any], role: str, d: Dict[str, Any], attempt: Dict[str, Any], cap: int) -> Optional[str]:
+    """`agent.session_group: NAME` in the plan: tasks of one group continue ONE agent session, so the second task starts with what the first already read
+    and decided (the repository, the conventions, the experiment's code) instead of paying to rediscover it.
+
+    Continued only when it is the same conversation in every sense that matters: same group, role and profile, same working directory (a provider keys its
+    sessions by directory), the earlier task verified, and the installed CLI proves native resume. A verifier never joins a group: independent review must not
+    inherit the implementer's context. `supervisor.session_group_max_tasks` bounds how many tasks share one session (a long context costs more per turn than it
+    saves); the next task then starts a fresh session that the following ones continue."""
+    group = (spec.get("agent") or {}).get("session_group")
+    if not group or cap <= 0:
+        return None
+    pv = _providers()
+    cmd = (d.get("provider_argv") or d["argv"])[0]
+    kind = pv.provider_of({"command": cmd}, os.path.basename(cmd))
+    best = None
+    for other, e in (rs.get("tasks") or {}).items():
+        if other == tid or e.get("phase") != "verified":
+            continue
+        for a in reversed(e.get("attempts") or []):
+            if a.get("voided") or not a.get("session_id") or not (a.get("verification") or {}).get("passed"):
+                continue
+            if a.get("session_group") != group or a.get("role") != role or a.get("profile") != d.get("profile") or os.path.realpath(a.get("cwd") or "") != os.path.realpath(d.get("cwd") or p.root):
+                continue
+            if not best or (a.get("ended") or a.get("started") or "") > (best.get("ended") or best.get("started") or ""):
+                best = a
+            break
+    if not best or int(best.get("session_chain") or 1) >= cap or not pv.native_resume_supported(kind, cmd):
+        return None
+    attempt["session_chain"] = int(best.get("session_chain") or 1) + 1
+    attempt["session_from"] = best.get("execution")
+    return best["session_id"]
 
 
 # ----------------------------------------------------------------------------------------------- provider handoff
@@ -2001,9 +2106,15 @@ def daemon_status(p: Project) -> Dict[str, Any]:
         except (OSError, subprocess.SubprocessError):
             pass
     age = time.time() - float(d.get("heartbeat", 0))
+    try:        # the beat file is touched every few seconds by the daemon's own thread, also while a pass is long or the loop sleeps out a provider limit
+        age = min(age, time.time() - os.stat(sdir(p, "daemon.beat")).st_mtime)
+    except OSError:
+        pass
     from . import __version__
     stale = alive and bool(d.get("version")) and d["version"] != __version__
+    busy = d.get("pass_started") if alive else None
     return {"running": alive, "pid": d.get("pid"), "started_at": d.get("started_at"), "heartbeat_age_seconds": round(age, 1),
+            "pass_seconds": round(time.time() - float(busy), 1) if busy else None, "sleeping_until": d.get("sleeping_until") if alive else None,
             "version": d.get("version"), "installed_version": __version__, "restart_required": stale,
             "restart_reason": f"the supervisor runs Research OS {d.get('version')}; {__version__} is installed" if stale else None,
             "last_reload": d.get("last_reload"),
@@ -2146,6 +2257,19 @@ def daemon_start(p: Project, detach: bool = True, exit_when_idle: bool = False) 
     argv = [sys.executable, "-m", "research.supervisord", "run", "--root", p.root] + (["--exit-when-idle"] if exit_when_idle else [])
     if not detach:
         return {"argv": argv}
+    if not exit_when_idle:       # installed as a user service (`research background install`): start THAT, so it survives logout and reboots
+        try:
+            from . import background as BG
+            if os.path.exists(os.path.join(BG.unit_dir(), BG.unit_name(p.root))) and BG.has_systemd_user():
+                r = BG._run("systemctl", "--user", "start", BG.unit_name(p.root), timeout=30)
+                if r and r.returncode == 0:
+                    for _ in range(50):
+                        time.sleep(0.1)
+                        s = daemon_status(p)
+                        if s["running"]:
+                            return {**s, "service": BG.unit_name(p.root)}
+        except Exception:    # noqa: BLE001 - fall back to starting it directly
+            pass
     log = open(sdir(p, "daemon.log"), "ab")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([os.path.dirname(os.path.dirname(os.path.abspath(__file__))), os.environ.get("PYTHONPATH", "")])}
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=os.name == "posix", env=env)
@@ -2192,8 +2316,22 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
             stop = {"now": False}
             signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
             signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
+            if hasattr(signal, "SIGHUP"):        # a closing terminal or SSH session must never stop the supervisor (it already has no controlling terminal)
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
             started = now_iso()
             idle = 0
+            beat = os.path.join(sup_dir, "daemon.beat")
+
+            def _beat() -> None:        # liveness is the process, not the loop: one long pass or a long sleep must not look like a dead supervisor
+                while not stop["now"]:
+                    try:
+                        with open(beat, "w") as bf:
+                            bf.write(str(time.time()))
+                    except OSError:
+                        pass
+                    time.sleep(5)
+            import threading
+            threading.Thread(target=_beat, name="research-heartbeat", daemon=True).start()
             while not stop["now"]:
                 with _P(root, author=sysauthor, sync=False) as p:
                     from . import __version__
@@ -2209,8 +2347,9 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                         keep = {"last_reload": (json.load(open(_daemon_path(p), encoding="utf-8")) or {}).get("last_reload")}
                     except (OSError, ValueError):
                         pass
-                    _atomic_write(_daemon_path(p), json.dumps({"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root, "version": __version__,
-                                                               "settings": _snapshot(p), **keep, **({"last_reload": reloaded} if reloaded else {})}) + "\n")
+                    info = {"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root, "version": __version__,
+                            "settings": _snapshot(p), **keep, **({"last_reload": reloaded} if reloaded else {})}
+                    _atomic_write(_daemon_path(p), json.dumps({**info, "pass_started": time.time()}) + "\n")
                     if os.path.exists(sdir(p, "stop")):
                         break
                     try:
@@ -2225,6 +2364,7 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                     if r.get("next_wake") and not r.get("launched"):      # only provider waits are pending: sleep to the earliest reset (capped so stop/heartbeat stay responsive)
                         poll = max(poll, min(60.0, r["next_wake"] - time.time()))
                     active = any(x.get("state") in ("running",) for x in all_runs(p))
+                    _atomic_write(_daemon_path(p), json.dumps({**info, "heartbeat": time.time(), "sleeping_until": time.time() + poll}) + "\n")
                 idle = 0 if active else idle + 1
                 if exit_when_idle and idle >= 2:
                     break
@@ -2235,10 +2375,11 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
     except ResearchError:
         return 3        # another daemon owns this project
     with _P(root, author=sysauthor, sync=False) as p:
-        try:
-            os.unlink(_daemon_path(p))
-        except OSError:
-            pass
+        for leftover in (_daemon_path(p), sdir(p, "daemon.beat")):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
         pending = sdir(p, "restart.pending")
         if os.path.exists(pending):          # a restart was requested while this pass was running: hand over to a fresh process
             try:

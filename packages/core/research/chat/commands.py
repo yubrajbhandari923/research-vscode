@@ -234,7 +234,7 @@ class Inbox:
         cmd = ALIASES.get(cmd, cmd)
         if cmd == "REFUSE" or cmd in ("approve-proposal", "approve-intervention"):
             return self._msg(inc, "That needs your computer: it is PIN-protected or bypasses verification. Use the terminal, VS Code → Plans → Approvals, "
-                                  "or `research tui`. (A card with an Approve button appears here only when authenticator approval is set up.)", "warn")
+                                  "or `research watch`. (A card with an Approve button appears here only when authenticator approval is set up.)", "warn")
         if cmd in LOCAL:
             return self._local(inc, role, cmd, rest)
         spec = COMMANDS.get(cmd)

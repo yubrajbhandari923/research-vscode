@@ -56,7 +56,7 @@ Rules the code follows:
 |---|---|---|
 | `research` CLI invocation | one command | yes |
 | `research.rpc` (one per VS Code window) | the window; the extension restarts it if it dies | yes |
-| `research tui` | the session; runs the core in process | yes |
+| `research watch` | the session; runs the core in process | yes |
 | `research mcp` (started by an agent client) | the client session | yes |
 | `research.supervisord` (one per project with a running plan, or when Telegram is enabled) | until `supervisor stop`; reopens the project every pass so settings apply live | yes |
 | agent CLI sessions (started by dispatch or the supervisor) | one attempt, in the task's worktree | only through `research` commands |
@@ -68,7 +68,7 @@ Rules the code follows:
 - **All business logic is Python**, standard library only. The extension renders data and calls the core; it does not read SQLite or write
   `.research/` files itself (except previews of artifact heads and log tails).
 - **One install, several clients.** The core and CLI ship as one wheel (`research-panel`). The VSIX contains no Python and spawns the
-  installed `research rpc`; `research tui` is a second UI over the same core; agents use the same `research` command or MCP server.
+  installed `research rpc`; `research watch` is a second UI over the same core; agents use the same `research` command or MCP server.
 - **YAML.** The system PyYAML is used when importable; otherwise the vendored PyYAML 6.0.3 under `research/_vendor/yaml`.
 - **HPC friendliness.** `python3` exists on every login and compute node; the runner needs only the standard library; SQLite uses a rollback
   journal and compute nodes never open the database ([storage](03-storage-sync.md#sqlite-index)).

@@ -9,7 +9,7 @@ from research_cli.main import build_parser, main
 
 OLD = ["resume", "context", "dispatch", "execution", "exec", "provider", "project-init", "agents", "agents-md", "setup", "usage",
        "rpc", "rebuild", "bin"]
-NEW_VISIBLE = ["init", "status", "current", "agent", "doctor", "promote"]
+NEW_VISIBLE = ["start", "watch", "logs", "plan", "why", "bump", "background", "init", "status", "agent", "doctor"]      # the everyday surface (`research --help`)
 REGROUPED_AWAY = ["resume", "context", "dispatch", "execution", "provider", "project-init", "agents", "agents-md", "setup", "usage"]
 
 
@@ -40,7 +40,12 @@ def test_help_lists_the_regrouped_commands_only(capsys):
     listed = set(re.findall(r"^    ([a-z][a-z-]*)\b", out, re.M))
     assert set(NEW_VISIBLE) <= listed
     assert not (set(REGROUPED_AWAY) & listed), set(REGROUPED_AWAY) & listed
-    assert "==SUPPRESS==" not in out and len(listed) <= 56        # 56: `profile`, `heal` and `job` (3.6.0) are top-level groups on purpose; `research site` (3.3.0) and `research git` (3.5.0) are top-level groups on purpose
+    assert "==SUPPRESS==" not in out and len(listed) <= 26, "the first screen is the everyday commands, not all of them"
+    assert main(["commands"]) == 0
+    full = capsys.readouterr().out
+    everything = set(re.findall(r"^    ([a-z][a-z-]*)\b", full, re.M))
+    assert listed <= everything | {"decisions"} and {"promote", "current", "intervention", "hook", "skills"} <= everything and "==SUPPRESS==" not in full
+    assert not (set(REGROUPED_AWAY) & everything)
     code, agent_help = _run(["agent", "--help"], capsys)
     for sub in ("dispatch", "profiles", "providers", "executions", "instructions", "setup", "usage"):
         assert re.search(r"^    " + sub + r"\b", agent_help, re.M), sub

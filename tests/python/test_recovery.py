@@ -219,10 +219,11 @@ def test_the_root_cause_and_what_needs_a_person_reach_status_chat_halt_text_and_
     assert "Cause:" in tasks and "Decision:" in tasks
     from research_cli.commands import supervisor as CLS
     assert any("Cause:" in l for l in CLS._status_lines(SV.status(lproj, "race")))
-    inbox = pytest.importorskip("research_cli.tui.inbox")
-    items = []
-    inbox._blocked(lproj, items)
-    assert "Needs you:" in items[0]["why"] and "never relaxes" in items[0]["next"]
+    from research import board as BD
+    from research_cli.commands import flow
+    b = BD.plan(lproj, "race")
+    shown = "\n".join(flow.plan_lines(b))
+    assert "Cause:" in shown and "Needs you:" in shown and b["needs_you"] and b["needs_you"][0]["next"]
 
 
 def test_automatic_diagnosis_may_only_reverify_note_or_guide_by_itself(lproj, quiet_cluster):

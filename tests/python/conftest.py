@@ -191,7 +191,6 @@ NO_PIN_TESTS = {
     "test_supervisor::test_proposals_are_classified_and_applied_through_the_same_engine",
     "test_supervisor::test_verified_work_is_committed_on_its_branch_and_promoted_to_main_with_provenance",
     "test_fork::test_forks_stay_pinned_through_sibling_promotion_sync_archival_restart_and_runs_are_recoverable",   # authorizes auto-promotion headlessly
-    "test_tui::test_approve_pending_proposal[False]",   # the no-PIN variant of the TUI approval flow
 }
 
 
@@ -365,7 +364,7 @@ def pytest_collection_modifyitems(items):
         mod = item.module.__name__
         if mod == "test_config_parity" and item.originalname == "test_precedence_default_machine_project_is_visible":
             item.fixturenames.append("_no_pin_project")
-        if mod in ("test_autopromote", "test_promotion_coverage", "test_auto_approve", "test_selfheal", "test_task_recovery", "test_jobs", "test_profiles", "test_tui_profiles"):   # promotion/approval machinery, none of it about the PIN (no test there sets one)
+        if mod in ("test_autopromote", "test_promotion_coverage", "test_auto_approve", "test_selfheal", "test_task_recovery", "test_jobs", "test_profiles"):   # promotion/approval machinery, none of it about the PIN (no test there sets one)
             item.fixturenames.insert(item.fixturenames.index("_clean_env") + 1, "_no_pin")
         elif item.nodeid.split("/", 2)[-1].replace(".py::", "::") in NO_PIN_TESTS or f"{mod}::{item.originalname}" in NO_PIN_TESTS:
             item.fixturenames.insert(item.fixturenames.index("_clean_env") + 1, "_no_pin")   # before proj/repo open the config

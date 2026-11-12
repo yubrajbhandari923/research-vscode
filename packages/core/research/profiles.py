@@ -20,6 +20,7 @@ UNATTENDED = {
     "supervisor.usage_limit.on_limit": "wait", "supervisor.usage_limit.max_wait_hours": 10, "supervisor.recovery.enabled": True,
     "supervisor.commit_verified_work": True, "supervisor.investigator.auto": True, "notifications.auto_debug": True, "notifications.level": "medium",
     "auto_promotion.auto_approve_verified_code": True, "auto_promotion.auto_retry_attempts": 3,
+    "supervisor_assistant.self_heal": True,       # without it a recoverable failure at 2 a.m. still waits for a person
 }
 BUILTIN: Dict[str, Dict[str, Any]] = {
     "default": {"description": "Research OS's shipped settings for everything a profile controls. Applying it puts those settings back to their defaults.",

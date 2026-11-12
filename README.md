@@ -5,7 +5,7 @@ results were, what you concluded and what should happen next. Agents (Claude, Co
 it with programs, not opinions; you keep every scientific decision. It runs experiments locally, on Slurm clusters over SSH, or as portable bundles, and
 talks to you through a terminal UI, Discord or Telegram.
 
-The `research` CLI is the product. The terminal UI (`research tui`), the Python API, the MCP server and the optional VS Code extension are interfaces to the
+The `research` CLI is the product. The plan board (`research watch`), the Python API, the MCP server and the optional VS Code extension are interfaces to the
 same project folder. Records are plain text files; SQLite is only an index. Nothing needs a cloud service.
 
 ```text
@@ -18,7 +18,7 @@ The two are kept apart on purpose: a task that verified is not a claim that the 
 ## Install
 
 ```bash
-uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"; add ,discord for the Discord bot (Python 3.10+)
+uv tool install research-panel      # or: pipx install research-panel; add ,discord for the Discord bot (Python 3.10+)
 research version
 ```
 
@@ -37,16 +37,59 @@ cd sparse-ct/main && research doctor
 research agent setup claude --apply
 research strategy use balanced_first
 
-# 3. a plan: validate, apply, run
-research plan yaml template -o plans/research.yaml
-research plan yaml validate plans/research.yaml
-research plan yaml apply plans/research.yaml
-research plan run PLAN-001
+# 3. a plan is a YAML file in your repository: write it, start it
+research plan yaml template -o plans/study.yaml
+$EDITOR plans/study.yaml
+research start plans/study.yaml          # registers the file and starts the supervisor (--unattended: wait out limits, self-heal, promote verified code)
 
-# 4. watch and steer
-research tui
-research plan status PLAN-001
+# 4. watch, read what the agents do, change the plan by editing the file
+research watch                           # the plan board, live: what runs, what is stuck, why, and the command when it needs you
+research logs                            # every agent attempt; `research logs T-003 -f` follows one step by step
+$EDITOR plans/study.yaml                 # save, and the supervisor follows (new tasks and changed checks ask for one `research plan sync`)
 ```
+
+## The plan file is the plan
+
+Each plan lives in `plans/<key>.yaml`. You edit that file; nothing is exported, re-applied or reloaded.
+
+| You want to | Do this |
+|---|---|
+| Give a task more attempts after "attempt budget exhausted" | `research bump T-023` (3 more, retried now), or raise `max_attempts` in the file |
+| Raise the plan's attempt or wall-time budget | edit `execution:` in the file, or `research plan set study execution.max_total_attempts=60`; whatever the budget stopped continues by itself |
+| Change a prompt, a profile, a resource request | edit the file and save |
+| Add, remove or redefine tasks and experiments, change checks or acceptance | edit the file, then `research plan sync study` (one command, because a file in the repository can also be written by an agent; `supervisor.plan_files.auto_sync: all` removes the step) |
+| See what an edit would do first | `research plan sync study --check` |
+| Open it in your editor and apply on save | `research plan edit study` |
+
+An edit that does not validate changes nothing: the plan keeps running on its last good version and `research plan status` shows the problem. When Research OS
+itself changes a plan (a repair task from self-healing, an approved intervention, `bump`), it rewrites the file, so the file never lies. Tasks that share
+`agent.session_group` continue one agent session (same role, profile and worktree), so the second task does not pay to re-read what the first one learned.
+
+## When something stops
+
+```bash
+research watch                 # every stopped item shows its reason and the command that moves it
+research why T-023             # the recorded facts: attempts, what each one failed on, the cause (no agent, no tokens); --ask adds a diagnosis
+research logs T-023            # what the agent actually did, step by step; -f follows a running one; AP-001 shows a promotion's reviewer
+research bump T-023            # out of attempts
+research retry T-023           # try again as it is
+research tell T-023 "use the cached footprints instead of recomputing them"
+```
+
+## Leave it running
+
+```bash
+research background check      # will it survive closing this terminal or SSH session? says exactly what would stop it
+research background install    # run the supervisor as a user service with lingering: survives logout, crashes and reboots (no tmux)
+```
+
+The supervisor, the chat gateway and every agent run detached from your terminal. `check` also catches the two things that still kill unattended work on a
+shared machine: a login manager that kills user processes at logout, and cluster access through an SSH agent forwarded from your laptop (it ends with your session).
+
+## Keep it tidy
+
+`research archive PLAN-001` (or `EXP-004`) takes a plan or experiment out of every list and the board without deleting anything; `research archive --list`
+shows the archive and `research unarchive` brings one back.
 
 `research init --template -o research-os.yaml` writes a fully commented project file with every setting and its default (a copy is in
 [examples/](https://github.com/yubrajbhandari923/research-vscode/blob/main/examples/research-os.yaml)); edit it and `research init --from research-os.yaml --apply`.
@@ -117,7 +160,7 @@ staged diff of the files Research OS generated and commits them only after `--ye
 
 ```bash
 research doctor                      # project, agents, environment, launcher; --fix agents_md.stale refreshes AGENTS.md
-research plan status PLAN-001        # per task: phase, reason, root cause, what needs you
+research plan status                 # the board: per task the phase, reason, root cause and the command when it needs you
 research supervisor status           # is the supervisor running? `research supervisor restart` after an upgrade
 research chat doctor --live          # Discord / Telegram
 research hpc doctor                  # cluster

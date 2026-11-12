@@ -16,8 +16,10 @@ def _attention(p) -> List[Dict[str, Any]]:
         items.append({"kind": kind, "id": id_, "title": title, "detail": detail, "severity": severity,
                       "open": {"page": page, "target": target or id_}})
 
+    from . import archive as AR
+    gone = AR.ids(p)
     for e in p.list("experiment"):
-        if e["status"] in ("completed", "failed", "abandoned", "cancelled"):
+        if e["status"] in ("completed", "failed", "abandoned", "cancelled") or e["id"] in gone:
             continue
         st = services.experiment_state(p, e["id"])
         if st["over_run_budget"]:
@@ -31,6 +33,8 @@ def _attention(p) -> List[Dict[str, Any]]:
         if f["status"] == "preliminary" and not f.get("reviewed"):
             add("review", f["id"], f"{f['id']} awaits independent review", f["title"], "research", f["id"])
     for pl in P.list_plans(p, status="active"):
+        if pl["id"] in gone:
+            continue
         for t in P.list_tasks(p, plan_id=pl["id"]):
             if t["status"] == "blocked":
                 add("blocked", t["id"], f"{t['id']} is blocked", t.get("title") or "", "work", t["id"], "warn")
