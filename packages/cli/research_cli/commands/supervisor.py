@@ -551,6 +551,8 @@ def cmd_promote(a, p) -> int:
 
 # ----------------------------------------------------------------------------------------------- registration
 def attach_plan(g, add) -> None:
+    from . import flow
+    flow.attach_plan(g, add)       # status (the board), edit, sync, set, file
     x = add(g, "yaml", cmd_plan_yaml, "YAML plans: template | export | validate | diff | apply",
             needs_project=lambda a: a.action != "template")  # a template needs no project
     x.add_argument("action", choices=["template", "export", "validate", "diff", "apply"])
@@ -568,8 +570,7 @@ def attach_plan(g, add) -> None:
     x.add_argument("--note", help="authorize / attribute / exclude: why"); x.add_argument("--item", help="retry: the paused item (AP-001)")
     x.add_argument("--commit", help="attribute / exclude: a commit of the experiment branch"); x.add_argument("--task", help="attribute: the verified task it belongs to (T-003)")
     for name, fn, h in (("run", cmd_plan_run, "let the supervisor execute a plan"), ("pause", cmd_plan_pause, "pause scheduling for a plan"),
-                        ("resume", cmd_plan_resume, "resume a paused or blocked plan"), ("stop", cmd_plan_stop, "stop a plan run (history is kept)"),
-                        ("status", cmd_plan_status, "supervised status: phases, attempts, budgets")):
+                        ("resume", cmd_plan_resume, "resume a paused or blocked plan"), ("stop", cmd_plan_stop, "stop a plan run (history is kept)")):
         x = add(g, name, fn, h)
         x.add_argument("id", help="plan id (PLAN-001) or key")
         if name == "run":

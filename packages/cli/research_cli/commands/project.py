@@ -186,15 +186,11 @@ def cmd_self_update(a) -> int:
     return selfupdate.run(check=a.check, version=a.version, repo=a.repo, major=a.major, from_file=a.from_file)
 
 
-def cmd_tui(a) -> int:
-    from research.store import find_root
-    try:
-        from research_cli.tui import run
-    except ImportError:
-        print("TUI needs textual: pip install 'research-panel[tui]'")
-        return 1
-    run(os.path.abspath(a.root or find_root() or os.getcwd()))
-    return 0
+def cmd_tui(a, p) -> int:
+    """The terminal UI was replaced by the plan board (3.7): one screen that shows the plans as they are in their files, live."""
+    from . import flow
+    import argparse
+    return flow.cmd_watch(argparse.Namespace(id=None, interval=5.0, once=False, all=False, json=a.json), p)
 
 
 def cmd_doctor(a) -> int:
@@ -564,7 +560,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("--repo", default=_REPO, help="GitHub OWNER/NAME")
     x.add_argument("--major", action="store_true", help="allow a major-version (breaking) upgrade")
     x.add_argument("--from-file", metavar="WHEEL", help="offline install from a local wheel (checks a sibling SHA256SUMS)")
-    add(sub, "tui", cmd_tui, "terminal UI (needs the tui extra)", needs_project=False)
+    add(sub, "tui", cmd_tui, None)      # the old name: opens the plan board (`research watch`)
     x = add(sub, "doctor", cmd_doctor, "inspect the project: records, workspaces, runs, agents, sandbox, context (read-only)", needs_project=False)
     x.add_argument("--all", action="store_true", help="also list the checks that passed")
     x.add_argument("--fix", metavar="CHECK", help="apply one safe fix for generated files (context.stale, agents_md.stale, bin.stale)")

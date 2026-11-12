@@ -540,8 +540,50 @@ def _review(p, item, pol, out) -> None:
     if not item.get("review_requested"):
         item["review_requested"] = _launch_reviewer(p, item, pol)
         return _set(item, "awaiting_review")
-    if time.time() - item["review_requested"]["epoch"] > float(pol["review_timeout_minutes"]) * 60:
-        _pause(item, "no independent review arrived in time", out)
+    rr = item["review_requested"]
+    ended = _reviewer_ended(p, rr)
+    if ended:           # the reviewer's process is gone and left no verdict: that is known now, not after review_timeout_minutes
+        tries = int(item.get("review_attempts") or 1)
+        if tries < 2:
+            item["review_attempts"] = tries + 1
+            item.setdefault("review_history", []).append({**rr, "ended": ended})
+            item["review_requested"] = _launch_reviewer(p, item, pol)
+            out["events"].append(f"{item['id']}: the reviewer exited without a verdict ({ended}); a second reviewer was started")
+            return
+        return _pause(item, f"the independent reviewer exited twice without recording a verdict ({ended}); its output: `research logs {item['id']}`", out)
+    if time.time() - rr["epoch"] > float(pol["review_timeout_minutes"]) * 60:
+        _pause(item, f"no independent review arrived in time; the reviewer's output: `research logs {item['id']}`", out)
+
+
+def _reviewer_ended(p, rr: Dict[str, Any]) -> Optional[str]:
+    """Why the reviewer is no longer running, or None while it is (or while that cannot be known: an item launched by an older version has no execution)."""
+    if not rr.get("execution") or time.time() - float(rr.get("epoch") or 0) < 20:
+        return None
+    from . import execution as E
+    try:
+        ex = E.show(p, rr["execution"])
+    except (OSError, ValueError, ResearchError):
+        return None
+    if ex["state"] in ("prepared", "launched") or (ex["state"] == "running" and ex.get("alive")):
+        return None
+    return f"execution {rr['execution'][:8]} is {ex['state']}" + (f", exit code {ex.get('exit_code')}" if ex.get("exit_code") is not None else "")
+
+
+def reviewer_status(p, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """What the independent reviewer of this item is doing now: for `plan status` and `research logs AP-…`."""
+    rr = item.get("review_requested")
+    if not rr:
+        return None
+    out = {"profile": rr.get("profile"), "since": rr.get("at"), "execution": rr.get("execution"), "attempt": int(item.get("review_attempts") or 1),
+           "minutes": round((time.time() - float(rr.get("epoch") or time.time())) / 60, 1), "state": "unknown"}
+    if rr.get("execution"):
+        from . import execution as E
+        try:
+            ex = E.show(p, rr["execution"])
+            out.update(state="running" if ex["state"] == "running" and ex.get("alive") else ex["state"], exit_code=ex.get("exit_code"))
+        except (OSError, ValueError, ResearchError):
+            pass
+    return out
 
 
 def _launch_reviewer(p, item, pol) -> Dict[str, Any]:
@@ -561,7 +603,7 @@ def _launch_reviewer(p, item, pol) -> Dict[str, Any]:
         raise ResearchError(d.get("problem") or "reviewer provider not available")
     proc = subprocess.Popen(d["argv"], cwd=cand["path"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=os.name == "posix", env={**os.environ, **(d.get("env") or {})})
-    return {"at": now_iso(), "epoch": time.time(), "profile": d.get("profile"), "pid": proc.pid}
+    return {"at": now_iso(), "epoch": time.time(), "profile": d.get("profile"), "pid": proc.pid, "execution": d.get("execution_id")}
 
 
 def _integrate(p, rs, item, auth, out) -> None:

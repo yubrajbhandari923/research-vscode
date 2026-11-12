@@ -60,7 +60,8 @@ def cmd_experiment_list(a, p) -> int:
     if a.question:
         where.append("question_id=?")
         args.append(normalize_id(a.question, "Q"))
-    rows = p.list("experiment", " AND ".join(where), tuple(args))
+    from research import archive as AR
+    rows = AR.visible(p, p.list("experiment", " AND ".join(where), tuple(args)), include=a.all)
     for r in rows:
         r["state"] = S.experiment_state(p, r["id"])
         r["runs"] = f"{r['state']['runs']} runs" + (f" ⚠{r['state']['unsynthesized']}" if r["state"]["unsynthesized"] else "")
@@ -807,6 +808,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("--override", metavar="REASON", help="bypass synthesis-before-new-experiment (logged)")
     x = add(g, "list", cmd_experiment_list, "list experiments", aliases=["ls"])
     x.add_argument("--status", choices=STATUSES["experiment"])
+    x.add_argument("--all", action="store_true", help="include archived experiments")
     x.add_argument("--question", "-q")
     x = add(g, "show", cmd_experiment_show, "experiment detail: runs, metrics, artifacts, synthesis")
     x.add_argument("id")

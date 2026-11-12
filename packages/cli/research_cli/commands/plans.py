@@ -79,7 +79,8 @@ def cmd_plan_create(a, p) -> int:
 
 
 def cmd_plan_list(a, p) -> int:
-    rows = P.list_plans(p, a.status)
+    from research import archive as AR
+    rows = AR.visible(p, P.list_plans(p, a.status), include=a.all)
     for r in rows:
         tasks = P.list_tasks(p, plan_id=r["id"])
         done = sum(1 for t in tasks if t["status"] == "done")
@@ -372,6 +373,7 @@ def attach(sub, add, group) -> None:
     x.add_argument("--skill", action="append", help="project skill for every task in the plan (repeatable)")
     x = add(g, "list", cmd_plan_list, "list plans", aliases=["ls"])
     x.add_argument("--status", choices=STATUSES["plan"])
+    x.add_argument("--all", action="store_true", help="include archived plans")
     x = add(g, "show", cmd_plan_show, "show plan with all tasks")
     x.add_argument("id")
     x = add(g, "update", cmd_plan_update, "update a plan")

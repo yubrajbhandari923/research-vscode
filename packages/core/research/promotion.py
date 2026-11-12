@@ -202,7 +202,17 @@ def _evidence(p, c: Dict[str, Any]) -> Dict[str, Any]:
 def _classify(p, c: Dict[str, Any], g: Dict[str, Any]) -> Dict[str, Any]:
     """The separate questions. None means not known yet, which is different from no."""
     ev = g["evidence"]["state"]
-    return {"scientifically_successful": True if ev == "passed" else False if g["evidence"].get("contradicted") else None,
+    # A supported finding says the EVIDENCE was independently reviewed, not that the experiment met its own criteria: a well-supported negative
+    # result (TrueCT F-001, "the pilot failed QC") is `evidence_supported` and not a success. Success is the experiment's recorded outcome.
+    exp = c.get("experiment")
+    status = None
+    try:
+        status = p.get("experiment", exp)["status"] if exp and p.exists("experiment", exp) else None
+    except ResearchError:
+        status = None
+    ok = False if (g["evidence"].get("contradicted") or status == "failed") else True if (ev == "passed" and status == "completed") else None
+    return {"evidence_supported": True if ev == "passed" else None,
+            "scientifically_successful": ok,
             "technically_correct": {"passed": True, "failed": False}.get(g["tests"]["state"]),
             "reusable": bool(c.get("selection", {}).get("commits") or c.get("selection", {}).get("paths")),
             "integration_ready": g["tests"]["state"] == "passed" and ev in ("passed", "info") and g["review"]["state"] == "approved"
@@ -343,7 +353,8 @@ def verify(p, pid: str, command: Optional[str] = None) -> Dict[str, Any]:
         raise ResearchError(f"{pid}'s worktree has uncommitted changes, so a test run would not match any commit",
                             hint="Commit them in the candidate worktree (or discard them), then verify again.")
     head = _head(c["path"])
-    r = shell_check(cmd, cwd=c["path"], env={**os.environ, "RESEARCH_PROMOTION": pid}, timeout=int(_cfg(p).get("test_timeout_seconds") or 1800), output_limit=3000)
+    from . import envcheck      # the project's interpreter, exactly as task checks use it: a promotion must not be tested with whatever `python` the shell finds
+    r = shell_check(envcheck.expand(p, cmd), cwd=c["path"], env={**os.environ, "RESEARCH_PROMOTION": pid, "RESEARCH_ROOT": p.root, "PATH": envcheck.path_with_python(p)}, timeout=int(_cfg(p).get("test_timeout_seconds") or 1800), output_limit=3000)
     with p.tx():
         _append(p, {"op": "verify", "promotion": pid, "head": head, "command": cmd, "ok": r["ok"], "exit_code": r["exit_code"],
                     "seconds": r["seconds"], "timed_out": r["timed_out"], "output": r["output"]})
