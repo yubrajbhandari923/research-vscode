@@ -13,7 +13,7 @@ import sys
 import time
 from collections import deque
 from datetime import datetime
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional, Tuple
 
 from .. import daemonlib, registry
 from ..util import PolicyBlocked, ResearchError
@@ -22,6 +22,8 @@ from . import alerts, commands, digest
 
 IDLE_EXIT = 600
 STORM_N, STORM_WINDOW = 5, 60
+MAX_PER_HOUR = 30                                            # default of notifications.alerts.max_per_hour
+UNCAPPED = ("answer", "decision", "approval_needed")         # replies and things waiting for a person are never held back by the hourly cap
 MAX_REFS, MAX_SENT = 500, 2000
 
 
@@ -109,6 +111,10 @@ class Gateway:
         self.tasks: Dict[str, Any] = {}
         self.window: Dict[str, Deque[float]] = {}
         self.fails: Dict[str, int] = {}
+        self.restarts: Dict[str, List[float]] = {}          # project root -> times this gateway restarted its supervisor (bounded per hour)
+        self.backoff: Dict[str, Tuple[float, float]] = {}   # platform|root -> (not before, current delay): a failing send is not hammered every tick
+        self.hour: Dict[str, Deque[float]] = {}             # platform|root -> send times of the last hour (hard cap, see MAX_PER_HOUR)
+        self.capped: Dict[str, float] = {}                  # platform|root -> when the "muted for now" notice was sent
         self._proj_cache: Dict[str, Any] = {}
 
     # --- projects (cached 15 s: opening every project's config each tick is wasteful)
@@ -179,6 +185,9 @@ class Gateway:
                 path = alerts.outbox_path(p)
         except Exception:    # noqa: BLE001
             pass
+        pk = f"{platform}|{root}"
+        if self.backoff.get(pk, (0.0, 0.0))[0] > self.now():      # the last send failed (rate limit, network, revoked token): wait, do not retry every 2 s
+            return 0
         with txn("cursors"):
             cur = read_json(gdir("cursors.json"))
         c = (cur.get("outbox") or {}).get(f"{platform}|{root}") or {}
@@ -186,6 +195,17 @@ class Gateway:
         seen = set((cur.get("sent") or {}).get(platform) or [])
         fresh = [r for r in recs if r["id"] not in seen and (not r.get("platform") or r["platform"] == platform)]    # an /ask answer goes back to where it was asked
         n, done_to, ok_ids = 0, c.get("offset") or 0, []
+        fresh, dropped = self._cap(pk, fresh, root)
+        if dropped:                # over the hourly cap: consumed (they stay in the outbox file and in `research status`), one notice instead
+            ok_ids += [r["id"] for r in dropped]
+            if self.now() - self.capped.get(pk, 0.0) > 3600:
+                self.capped[pk] = self.now()
+                kinds = ", ".join(sorted({r["kind"] for r in dropped}))
+                fresh.append({"id": "cap-" + dropped[-1]["id"], "kind": "answer", "severity": "warn", "_end": dropped[-1]["_end"],
+                              "text": f"More than {self._max_per_hour(root)} messages in an hour from this project, so further ones are held back for now ({kinds}). "
+                                      "Nothing is lost: `research status` shows the current state. Decisions and approvals still come through."})
+            elif not fresh:
+                done_to = max(done_to, dropped[-1]["_end"])
         w = self.window.setdefault(f"{platform}|{root}", deque())
         while w and self.now() - w[0] > STORM_WINDOW:
             w.popleft()
@@ -207,11 +227,14 @@ class Gateway:
                             raise            # keep the cursor before this record; it is retried next tick
                     n += 1
                     w.append(self.now())
+                    self.hour.setdefault(pk, deque()).append(self.now())
                     ok_ids.append(r["id"])
                     done_to = r["_end"]
             done_to = max(done_to, recs[-1]["_end"]) if recs and not fresh else done_to
+            self.backoff.pop(pk, None)
         except (ResearchError, OSError):
-            pass
+            delay = min(600.0, max(10.0, self.backoff.get(pk, (0.0, 5.0))[1] * 2))      # 10 s, 20 s, ... 10 min
+            self.backoff[pk] = (self.now() + delay, delay)
         with txn("cursors"):
             cur = read_json(gdir("cursors.json"))
             cur.setdefault("outbox", {})[f"{platform}|{root}"] = {"offset": done_to, "inode": ino}
@@ -219,6 +242,34 @@ class Gateway:
             cur["sent"][platform] = lst[-MAX_SENT:]
             write_json(gdir("cursors.json"), cur)
         return n
+
+    def _max_per_hour(self, root: str) -> int:
+        from ..store import Project
+        try:
+            with Project(root, sync=False) as p:
+                return int(alerts.cfg(p).get("max_per_hour") or MAX_PER_HOUR)
+        except Exception:    # noqa: BLE001
+            return MAX_PER_HOUR
+
+    def _cap(self, pk: str, fresh: List[Dict[str, Any]], root: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        """A hard ceiling on what one project may send to one platform in an hour, whatever produced it. A bug upstream (a flapping alert, a loop)
+        must never turn into hundreds of bot messages: that is what gets a bot token revoked. Things a person is waiting for are never dropped."""
+        h = self.hour.setdefault(pk, deque())
+        while h and self.now() - h[0] > 3600:
+            h.popleft()
+        if not fresh:
+            return fresh, []
+        room = max(0, self._max_per_hour(root) - len(h))
+        keep, drop = [], []
+        for r in fresh:
+            if r.get("kind") in UNCAPPED or r.get("decision") or r.get("actions"):
+                keep.append(r)
+            elif room > 0:
+                keep.append(r)
+                room -= 1
+            else:
+                drop.append(r)
+        return keep, drop
 
     # --- watchdog, digest, button expiry
     async def watch_once(self) -> None:
@@ -233,15 +284,41 @@ class Gateway:
                     running = any(r.get("state") == "running" for r in SV.all_runs(p))
                     d = SV.daemon_status(p)
                     poll = float(registry.section(p, "supervisor")["poll_seconds"])
-                    if running and "heartbeat_age_seconds" in d and (not d["running"] or d["heartbeat_age_seconds"] > 3 * poll):
-                        alerts.raise_(p, "supervisor_down", "supervisor_down", "error",
-                                      "The supervisor is not running while a plan is running. Start it with `research supervisor start`; nothing is lost.")
-                    elif d.get("running"):
-                        alerts.clear(p, "supervisor_down", "The supervisor is running again.")
+                    self._watch_supervisor(p, root, running, d, poll)
                     await self._digest(p, root, roots[root])
             except Exception:    # noqa: BLE001 - a bad project must not stop the watchdog for the others
                 continue
         await self._expire()
+
+    def _watch_supervisor(self, p, root: str, running: bool, d: Dict[str, Any], poll: float) -> None:
+        """Down means the PROCESS is gone (or silent far longer than any pass or sleep explains), and the first answer to that is to start it again.
+
+        This used to compare one heartbeat written at the top of each pass with 3 x poll_seconds. A supervisor sleeping out a provider limit (up to 60 s
+        between passes) or busy in one long pass therefore looked dead, and looked alive again on its next pass: a "not running" / "running again" pair
+        every minute for as long as the wait lasted. The heartbeat is now a thread in the supervisor (`daemon.beat`), the two states have one definition,
+        and a dead supervisor is restarted here (bounded) before anyone is told."""
+        from .. import supervisor as SV
+        silent = max(180.0, 6 * poll)
+        dead = not d.get("running") or float(d.get("heartbeat_age_seconds") or 0) > silent
+        if not running or not dead:
+            if d.get("running") and float(d.get("heartbeat_age_seconds") or 0) <= silent:
+                alerts.clear(p, "supervisor_down", "The supervisor is running again.")
+            return
+        hist = [t for t in self.restarts.get(root, []) if self.now() - t < 3600]
+        can = bool(registry.section(p, "supervisor").get("auto_restart", True)) and not d.get("running") and len(hist) < 3
+        if can:
+            self.restarts[root] = hist + [self.now()]
+            try:
+                r = SV.daemon_start(p)
+                if r.get("running") or r.get("started") or r.get("pid"):
+                    p.event("project", None, "supervisor_restarted", "the chat gateway found the supervisor stopped while a plan was running and started it again")
+                    return                                # recovered without waking anyone; the next pass confirms it
+            except Exception:    # noqa: BLE001 - fall through to telling the researcher
+                pass
+        why = ("it stopped and could not be started again automatically" if not d.get("running")
+               else f"its process exists but has been silent for {int(float(d.get('heartbeat_age_seconds') or 0) // 60)} min")
+        alerts.raise_(p, "supervisor_down", "supervisor_down", "error",
+                      f"The supervisor is not working while a plan is running ({why}). `research supervisor restart` starts a fresh one; nothing is lost.")
 
     async def _digest(self, p, root: str, label: str) -> None:
         c = registry.section(p, "notifications")["digest"]

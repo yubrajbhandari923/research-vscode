@@ -2001,9 +2001,15 @@ def daemon_status(p: Project) -> Dict[str, Any]:
         except (OSError, subprocess.SubprocessError):
             pass
     age = time.time() - float(d.get("heartbeat", 0))
+    try:        # the beat file is touched every few seconds by the daemon's own thread, also while a pass is long or the loop sleeps out a provider limit
+        age = min(age, time.time() - os.stat(sdir(p, "daemon.beat")).st_mtime)
+    except OSError:
+        pass
     from . import __version__
     stale = alive and bool(d.get("version")) and d["version"] != __version__
+    busy = d.get("pass_started") if alive else None
     return {"running": alive, "pid": d.get("pid"), "started_at": d.get("started_at"), "heartbeat_age_seconds": round(age, 1),
+            "pass_seconds": round(time.time() - float(busy), 1) if busy else None, "sleeping_until": d.get("sleeping_until") if alive else None,
             "version": d.get("version"), "installed_version": __version__, "restart_required": stale,
             "restart_reason": f"the supervisor runs Research OS {d.get('version')}; {__version__} is installed" if stale else None,
             "last_reload": d.get("last_reload"),
@@ -2194,6 +2200,18 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
             signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
             started = now_iso()
             idle = 0
+            beat = os.path.join(sup_dir, "daemon.beat")
+
+            def _beat() -> None:        # liveness is the process, not the loop: one long pass or a long sleep must not look like a dead supervisor
+                while not stop["now"]:
+                    try:
+                        with open(beat, "w") as bf:
+                            bf.write(str(time.time()))
+                    except OSError:
+                        pass
+                    time.sleep(5)
+            import threading
+            threading.Thread(target=_beat, name="research-heartbeat", daemon=True).start()
             while not stop["now"]:
                 with _P(root, author=sysauthor, sync=False) as p:
                     from . import __version__
@@ -2209,8 +2227,9 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                         keep = {"last_reload": (json.load(open(_daemon_path(p), encoding="utf-8")) or {}).get("last_reload")}
                     except (OSError, ValueError):
                         pass
-                    _atomic_write(_daemon_path(p), json.dumps({"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root, "version": __version__,
-                                                               "settings": _snapshot(p), **keep, **({"last_reload": reloaded} if reloaded else {})}) + "\n")
+                    info = {"pid": os.getpid(), "started_at": started, "heartbeat": time.time(), "root": root, "version": __version__,
+                            "settings": _snapshot(p), **keep, **({"last_reload": reloaded} if reloaded else {})}
+                    _atomic_write(_daemon_path(p), json.dumps({**info, "pass_started": time.time()}) + "\n")
                     if os.path.exists(sdir(p, "stop")):
                         break
                     try:
@@ -2225,6 +2244,7 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
                     if r.get("next_wake") and not r.get("launched"):      # only provider waits are pending: sleep to the earliest reset (capped so stop/heartbeat stay responsive)
                         poll = max(poll, min(60.0, r["next_wake"] - time.time()))
                     active = any(x.get("state") in ("running",) for x in all_runs(p))
+                    _atomic_write(_daemon_path(p), json.dumps({**info, "heartbeat": time.time(), "sleeping_until": time.time() + poll}) + "\n")
                 idle = 0 if active else idle + 1
                 if exit_when_idle and idle >= 2:
                     break
@@ -2235,10 +2255,11 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
     except ResearchError:
         return 3        # another daemon owns this project
     with _P(root, author=sysauthor, sync=False) as p:
-        try:
-            os.unlink(_daemon_path(p))
-        except OSError:
-            pass
+        for leftover in (_daemon_path(p), sdir(p, "daemon.beat")):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
         pending = sdir(p, "restart.pending")
         if os.path.exists(pending):          # a restart was requested while this pass was running: hand over to a fresh process
             try:

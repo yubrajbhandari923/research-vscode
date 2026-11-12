@@ -30,6 +30,7 @@ KIND_LEVEL = {"halt": 1, "task_failed": 1, "run_failed": 1, "budget": 1, "superv
               "answer": 0}      # a reply to something you asked for (/ask): never filtered by the level or the kind list
 SUGGEST = {"halt": "continue with another agent, pause the plan, or run /debug", "task_failed": "continue with another agent (/continue T-n PROFILE) or pause the plan"}
 _now = time.time                                        # tests replace it
+FLAP_WINDOW, FLAP_LIMIT = 3600.0, 3      # a condition that comes and goes: at most this many raise/clear pairs per key and hour, then it is muted
 
 
 def outbox_path(p) -> str:
@@ -95,11 +96,24 @@ def raise_(p, key: str, kind: str, severity: str, text: str, actions: Optional[L
             return None
         text = "still: " + text
     elif not (e and e.get("open")):
+        # Flap damping. `clear` used to forget the key, so a condition that toggled every minute sent a raise and a clear every minute, all night
+        # (the supervisor_down / "running again" pair). The raises of the last hour are remembered across clears; past the limit the key is muted:
+        # it is tracked (open) but neither the raise nor its clear is sent until an hour passes without a new raise.
+        recent = [t for t in ((e or {}).get("raises") or []) if now - t < FLAP_WINDOW]
+        if len(recent) >= FLAP_LIMIT and not force:
+            st["keys"][key] = {"ts": now, "open": True, "kind": kind, "task": task, "raises": recent, "muted": True,
+                               "suppressed": (e or {}).get("suppressed", 0) + 1}
+            _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
+            return None
+        recent.append(now)
+        if len(recent) == FLAP_LIMIT:
+            text += f"\n(This has now come and gone {FLAP_LIMIT} times within an hour. Further repeats are muted for an hour; `research status` always shows the current state.)"
         n = st.setdefault("streak", {}).get(sk, 0) + 1
         st["streak"][sk] = n
         if n >= int(c["escalate_after"]) and kind in SUGGEST:
             text += f"\n{n} {kind.replace('_', ' ')} alerts in a row for {task or 'this plan'}: consider {SUGGEST[kind]}."
-    st["keys"][key] = {"ts": now, "open": True, "kind": kind, "task": task}
+    st["keys"][key] = {"ts": now, "open": True, "kind": kind, "task": task,
+                       "raises": recent if not (e and e.get("open")) else list((e or {}).get("raises") or [])}
     _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
     return _append(p, {"id": uuid.uuid4().hex[:12], "ts": now, "key": key, "kind": kind, "severity": severity, "text": text, "actions": actions or [],
                        "files": files or [], "task": task, "decision": decision, "clear": False, "project_root": p.root,
@@ -113,8 +127,11 @@ def clear(p, key: str, text: str) -> Optional[Dict[str, Any]]:
     if not e or not e.get("open"):
         return None
     e["open"] = False
+    muted = bool(e.pop("muted", False))
     (st.setdefault("streak", {})).pop(f"{e['kind']}:{e.get('task') or ''}", None)
     _atomic_write(_state_path(p), json.dumps(st, indent=1) + "\n")
+    if muted:                 # the raise was never sent, so "it is over" would be noise too
+        return None
     return _append(p, {"id": uuid.uuid4().hex[:12], "ts": _now(), "key": key, "kind": e["kind"], "severity": "ok", "text": text, "actions": [],
                        "files": [], "task": e.get("task"), "decision": None, "clear": True, "project_root": p.root})
 

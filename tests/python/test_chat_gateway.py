@@ -43,8 +43,11 @@ def test_a_failed_delivery_is_retried_not_lost_and_sent_once(ch, two):
         alerts.raise_(p, "k", "halt", "error", "halted")
         alerts.raise_(p, "k2", "halt", "error", "halted again", task="T-2")
     ch.fail = 1
-    g = gw_for(ch)
+    c = Clock(time.time())
+    g = gw_for(ch, c)
     assert run(g.pump_once()) == 0 and not ch.delivered
+    assert run(g.pump_once()) == 0 and not ch.delivered, "a failed send backs off: it is not retried on the very next tick"
+    c.t += 11
     assert run(g.pump_once()) == 2 and [m.text.split("] ")[-1][:6] for m in ch.delivered] == ["halted", "halted"]
     assert run(g.pump_once()) == 0
 
@@ -64,7 +67,7 @@ def test_supervisor_down_watchdog_raises_from_a_stale_heartbeat_and_clears(ch, t
     g = gw_for(ch)
     run(g.watch_once())
     run(g.pump_once())
-    assert any("supervisor is not running" in t for t in ch.texts())
+    assert any("supervisor is not working" in t and "silent" in t for t in ch.texts())
     n = len(ch.delivered)
     run(g.watch_once())
     run(g.pump_once())
