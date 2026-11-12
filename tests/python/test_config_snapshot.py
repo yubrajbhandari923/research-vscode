@@ -11,6 +11,8 @@ from research.store import DEFAULT_CONFIG, Project
 FIX = os.path.join(os.path.dirname(__file__), "fixtures")
 # Keys that did not exist when the snapshot was taken. Anything else appearing or changing is a regression.
 INTENDED_NEW = {
+    "notifications.alerts.max_per_hour", "supervisor.auto_restart",                                       # 3.7: chat can no longer be flooded; a dead supervisor is restarted
+    "supervisor.plan_files", "supervisor.session_group_max_tasks",                                         # 3.7: plan files, shared agent sessions
     "agents.profiles.codex-fast", "agents.profiles.codex-balanced", "agents.profiles.codex-deep",         # generated from the provider registry
     "agents.profiles.agy-fast", "agents.profiles.agy-balanced", "agents.profiles.agy-deep",
     "agents.profiles.opencode", "agents.profiles.opencode-fast", "agents.profiles.opencode-balanced", "agents.profiles.opencode-deep",   # WP13

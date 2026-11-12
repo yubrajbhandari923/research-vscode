@@ -2257,6 +2257,19 @@ def daemon_start(p: Project, detach: bool = True, exit_when_idle: bool = False) 
     argv = [sys.executable, "-m", "research.supervisord", "run", "--root", p.root] + (["--exit-when-idle"] if exit_when_idle else [])
     if not detach:
         return {"argv": argv}
+    if not exit_when_idle:       # installed as a user service (`research background install`): start THAT, so it survives logout and reboots
+        try:
+            from . import background as BG
+            if os.path.exists(os.path.join(BG.unit_dir(), BG.unit_name(p.root))) and BG.has_systemd_user():
+                r = BG._run("systemctl", "--user", "start", BG.unit_name(p.root), timeout=30)
+                if r and r.returncode == 0:
+                    for _ in range(50):
+                        time.sleep(0.1)
+                        s = daemon_status(p)
+                        if s["running"]:
+                            return {**s, "service": BG.unit_name(p.root)}
+        except Exception:    # noqa: BLE001 - fall back to starting it directly
+            pass
     log = open(sdir(p, "daemon.log"), "ab")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([os.path.dirname(os.path.dirname(os.path.abspath(__file__))), os.environ.get("PYTHONPATH", "")])}
     proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=os.name == "posix", env=env)
@@ -2303,6 +2316,8 @@ def run_forever(root: str, exit_when_idle: bool = False) -> int:
             stop = {"now": False}
             signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
             signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
+            if hasattr(signal, "SIGHUP"):        # a closing terminal or SSH session must never stop the supervisor (it already has no controlling terminal)
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)
             started = now_iso()
             idle = 0
             beat = os.path.join(sup_dir, "daemon.beat")

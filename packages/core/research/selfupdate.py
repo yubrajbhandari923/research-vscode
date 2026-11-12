@@ -29,7 +29,7 @@ def core_satisfies(core_version: str, required: str) -> bool:
     return c[0] == r[0] and c[1] >= r[1]
 
 
-EXTRAS = {"tui": "textual", "discord": "discord"}   # extra name -> module that proves it is installed
+EXTRAS = {"discord": "discord"}   # extra name -> module that proves it is installed
 
 
 def installed_extras() -> list:

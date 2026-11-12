@@ -424,6 +424,8 @@ class Gateway:
         stop = asyncio.Event()
         try:
             loop = asyncio.get_event_loop()
+            if hasattr(signal, "SIGHUP"):
+                signal.signal(signal.SIGHUP, signal.SIG_IGN)      # survives the terminal or SSH session it was started from
             loop.add_signal_handler(signal.SIGTERM, stop.set)
             loop.add_signal_handler(signal.SIGINT, stop.set)
         except (NotImplementedError, RuntimeError, ValueError):

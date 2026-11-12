@@ -11,7 +11,7 @@ Start with `research doctor`. It is read-only, checks the project, agents, git w
 | The extension says "CLI not found" | It could not find `research` in the `research.cliPath` setting, on `PATH`, in `~/.local/bin` or in pipx's bin directory. Run `which research` in a terminal, put that full path in **Settings → Research: Cli Path**, and reload the window. Over Remote SSH, install the CLI on the remote host |
 | "version mismatch" in the status bar | The extension needs the same major version as the CLI and a CLI minor at least what it declares. Click the warning (or run **Research: Show Version Info**) to see both versions. "CLI is too old": `research self-update`. "Extension is older than your CLI": install the newer VSIX from the GitHub release. Reload the window after either |
 | `research self-update` fails | The existing install is untouched on any failure. A checksum mismatch means the download was corrupted or incomplete: try again, or download the wheel and `SHA256SUMS` yourself and run `research self-update --from-file WHEEL`. A new major version needs `--major` |
-| `research tui` says it needs the extra | Reinstall with `[tui]`: `uv tool install --force "research-panel[tui]"` |
+| `research watch` says it needs the extra | Reinstall with `[tui]`: `uv tool install --force research-panel` |
 | Discord says `discord.py` is missing | Install the `[discord]` extra the same way (Python 3.10 or newer). `research chat status` prints the exact line for how you installed |
 | "… is a Research OS v1 project" | The folder holds an older project. Nothing was changed. See [Recovery](REFERENCE.md#recovery) in the README for starting fresh beside it |
 

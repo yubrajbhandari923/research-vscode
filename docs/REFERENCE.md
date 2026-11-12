@@ -28,7 +28,7 @@ restricts what a *job* can touch; it does not sandbox *agents* (agent boundaries
 
 ```bash
 # 1. Install the CLI from PyPI, in its own isolated environment ([tui] adds the terminal UI)
-uv tool install "research-panel[tui]"      # or: pipx install "research-panel[tui]"   (from a wheel or from source: see Install)
+uv tool install research-panel      # or: pipx install research-panel   (from a wheel or from source: see Install)
 research version
 
 # 2. Create a project (a preview; add --apply to create it). For every setting with its default and a comment,
@@ -49,7 +49,7 @@ research plan yaml apply plans/research.yaml
 research plan run PLAN-001
 
 # 5. Watch and steer
-research tui                                                 # needs the [tui] extra
+research watch                                                 # needs the [tui] extra
 research plan status PLAN-001
 ```
 
@@ -62,7 +62,7 @@ The step-by-step guide, with a worked example, is [QUICKSTART.md](QUICKSTART.md)
 | Install, update, match the extension and CLI versions | [Install](#install), [Getting started](QUICKSTART.md#1-install) |
 | Let agents run a plan while you sleep, with checks and retries | [Supervisor](SUPERVISOR.md), [Plans, tasks and agents](#plans-tasks-and-agents) |
 | Choose which model does which work (fast, balanced, deep) | [Providers and strategies](PROVIDERS.md), [Model allocation](#model-allocation-and-contracts) |
-| Watch from a terminal or a panel | [`research tui`](QUICKSTART.md#6-watching-and-steering) (the optional VS Code extension shows the same project) |
+| Watch from a terminal or a panel | [`research watch`](QUICKSTART.md#6-watching-and-steering) (the optional VS Code extension shows the same project) |
 | Branch an experiment from another's verified code, without promoting it | [Forking](SUPERVISOR.md#forking-an-experiment-from-anothers-verified-code) (`research experiment fork`, `inherits:` in the plan YAML) |
 | Let verified code reach `main` unattended, with your authorization | [Auto-promotion](SUPERVISOR.md) (`research plan autopromote PLAN authorize`, before or after `plan run`) |
 | Answer questions and steer from Telegram or Discord | [Chat](CHAT.md) (`research chat doctor` checks the setup and prints the fix) |
@@ -114,21 +114,21 @@ There are three ways to install the CLI and terminal UI; the VS Code extension i
 The CLI and terminal UI are on [PyPI](https://pypi.org/project/research-panel/) as `research-panel`.
 
 ```bash
-uv tool install "research-panel[tui]"       # an isolated environment, `research` on your PATH ([tui] = the terminal UI)
+uv tool install research-panel       # an isolated environment, `research` on your PATH ([tui] = the terminal UI)
 research version
-research tui                                 # the terminal UI; `research --help` lists everything
+research watch                                 # the terminal UI; `research --help` lists everything
 ```
 
 With pipx, or with pip in a virtual environment you manage:
 
 ```bash
-pipx install "research-panel[tui]"
+pipx install research-panel
 # or
-python3 -m venv .venv && . .venv/bin/activate && pip install "research-panel[tui]"
+python3 -m venv .venv && . .venv/bin/activate && pip install research-panel
 ```
 
 If `research` is not found afterwards, run `uv tool update-shell` (or `pipx ensurepath`) and open a new terminal. Extras: `tui` is the terminal UI,
-`discord` the Discord bot (Python 3.10 or newer); combine them as `research-panel[tui,discord]`. Then follow the [Getting started](QUICKSTART.md).
+`discord` the Discord bot (Python 3.10 or newer); combine them as `research-panel[discord]`. Then follow the [Getting started](QUICKSTART.md).
 
 ### Option 2: from the release wheel
 
@@ -138,10 +138,10 @@ extension (`.vsix`) and `SHA256SUMS`. Use it to pin an exact file, install witho
 ```bash
 # download the wheel and SHA256SUMS from the release page, then verify and install
 grep '\.whl$' SHA256SUMS | shasum -a 256 -c -          # Linux: sha256sum -c -
-uv tool install "research-panel[tui] @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ file:///full/path/to/research_panel-X.Y.Z-py3-none-any.whl"
 
 # or straight from the release URL (replace X.Y.Z)
-uv tool install "research-panel[tui] @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ https://github.com/yubrajbhandari923/research-vscode/releases/download/vX.Y.Z/research_panel-X.Y.Z-py3-none-any.whl"
 ```
 
 Without extras it is just `uv tool install ./research_panel-X.Y.Z-py3-none-any.whl` (or `pipx install ./research_panel-X.Y.Z-py3-none-any.whl`, or
@@ -152,7 +152,7 @@ Without extras it is just `uv tool install ./research_panel-X.Y.Z-py3-none-any.w
 ```bash
 git clone https://github.com/yubrajbhandari923/research-vscode.git && cd research-vscode
 uv build                                       # or: python -m pip install build && python -m build   -> dist/*.whl and dist/*.tar.gz
-uv tool install "research-panel[tui] @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
+uv tool install "research-panel @ file://$PWD/dist/research_panel-X.Y.Z-py3-none-any.whl"
 ```
 
 This builds only the Python package and needs no Node. The VS Code extension and the full test suite are in [Development](#development) below.

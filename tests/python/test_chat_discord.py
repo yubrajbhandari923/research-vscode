@@ -218,9 +218,12 @@ def test_a_rate_limited_send_is_retried_and_a_persistent_one_is_left_for_the_out
     with Project(fake.roots[0], sync=False) as p:
         alerts.raise_(p, "k", "halt", "error", "halted")
     fake.fail = [D.RateLimited(1)] * 4
-    g = Gateway({"discord": ch}, discover=False)
+    now = {"t": 1_000_000.0}
+    g = Gateway({"discord": ch}, now=lambda: now["t"], discover=False)
     assert run(g.pump_once()) == 0
-    assert run(g.pump_once()) == 1, "the outbox cursor stayed before the record: it is delivered on the next pass"
+    assert run(g.pump_once()) == 0, "a rate-limited bot is not retried on the very next tick"
+    now["t"] += 11
+    assert run(g.pump_once()) == 1, "the outbox cursor stayed before the record: it is delivered once the backoff has passed"
 
 
 def test_sends_to_one_channel_are_paced(env, monkeypatch):

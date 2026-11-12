@@ -101,6 +101,8 @@ def plan_lines(s: Dict[str, Any], wide: int = 100) -> List[str]:
             if t.get("resume_at"):
                 bits.append(f"resumes {t['resume_at'][11:16]}")
             out.append(f"    {col(g)} {t['id']:<6} {t['title'][:46]:<46} {col(t['phase']):<18} " + dim("  ".join(bits)) + dim(f"  {t.get('profile') or ''}"))
+            if t.get("activity"):
+                out.append(dim(f"        {_dur(t['activity']['seconds_ago'])} ago: ") + t["activity"]["text"] + dim(f"   (research logs {t['id']} -f)"))
             if t.get("reason") and t["mark"] in ("you", "wait", "run"):
                 out.append(dim("        " + t["reason"][:wide * 2]))
             if t.get("recovery") and t["phase"] in ("waiting_hpc", "blocked", "attention", "repair_pending"):
@@ -229,7 +231,17 @@ def cmd_start(a, p) -> int:
     if a.json:
         out_json(d["plans"][0])
         return 0
-    for l in msgs + plan_lines(d["plans"][0]) + ["", dim("Follow it: research watch    Change it: edit " + (d["plans"][0].get("file") or {}).get("path", "the plan file") + " and save")]:
+    tail = ["", dim("Follow it: research watch · research logs -f T-ID    Change it: edit " + (d["plans"][0].get("file") or {}).get("path", "the plan file") + " and save")]
+    if not a.no_daemon:
+        try:
+            from research import background as BG
+            c = BG.check(p)
+            bad = [r for r in c["rows"] if r["status"] != "ok" and r["what"] in ("logout", "cluster access")]
+            tail.append(dim("You can close this terminal or the SSH session: it keeps running.") if not bad else
+                        (red if not c["survives_logout"] else yellow)("Before you log out: ") + bad[0]["detail"] + dim("   (research background check)"))
+        except Exception:    # noqa: BLE001 - advice only
+            pass
+    for l in msgs + plan_lines(d["plans"][0]) + tail:
         print(l)
     return 0
 
@@ -425,37 +437,125 @@ def cmd_tell(a, p) -> int:
     return 0
 
 
-def cmd_logs(a, p) -> int:
+def _attempt_rows(p, plan: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Every agent attempt of every (non-archived) plan, newest first: what `research logs` lists when no id is given."""
+    from research import agentlog as AL, execution as EX
+    rows = []
+    for st in PS.all_states(p):
+        if st.get("archived") or (plan and st["plan_key"] != plan):
+            continue
+        rs = SV.load_run(p, st["plan_id"]) or {}
+        keys = {v: k for k, v in st["tasks"].items()}
+        for tid, e in (rs.get("tasks") or {}).items():
+            for x in e.get("attempts") or []:
+                if not x.get("execution"):
+                    continue
+                try:
+                    ex = EX.show(p, x["execution"])
+                except (OSError, ValueError):
+                    continue
+                live = ex["state"] == "running" and ex.get("alive")
+                rows.append({"task": tid, "key": keys.get(tid), "plan": st["plan_key"], "attempt": x["n"], "kind": x.get("kind"), "profile": x.get("profile"), "state": "running" if live else ex["state"],
+                             "exit_code": ex.get("exit_code"), "started": x.get("started"), "ended": x.get("ended"), "execution": x["execution"],
+                             "verified": (x.get("verification") or {}).get("passed"), "activity": AL.last_activity(p, x["execution"], x.get("session_id")) if live else None})
+        for it in (rs.get("autopromote") or {}).get("items") or []:
+            rr = it.get("review_requested") or {}
+            if rr.get("execution"):
+                try:
+                    ex = EX.show(p, rr["execution"])
+                except (OSError, ValueError):
+                    continue
+                live = ex["state"] == "running" and ex.get("alive")
+                rows.append({"task": it["id"], "key": "review", "plan": st["plan_key"], "attempt": int(it.get("review_attempts") or 1), "kind": "review", "profile": rr.get("profile"),
+                             "state": "running" if live else ex["state"], "exit_code": ex.get("exit_code"), "started": rr.get("at"), "ended": ex.get("ended_at"), "execution": rr["execution"],
+                             "verified": None, "activity": AL.last_activity(p, rr["execution"]) if live else None})
+    return sorted(rows, key=lambda r: (r["state"] != "running", -(_age(r["started"]) or 0) * -1))
+
+
+def _logs_target(p, ref: str, attempt: Optional[int]):
+    """(execution id, provider session id, label) for T-023, AP-001 or an execution id."""
     from research import execution as EX
-    ref = a.id
-    if ref.upper().startswith("AP-"):
+    up = ref.upper()
+    if up.startswith("AP-"):
         _, _, it = _promotion_item(p, ref)
         rr = it.get("review_requested") or {}
         if not rr.get("execution"):
             raise ResearchError(f"{it['id']} has no reviewer output" + (" (its reviewer was started by an older version that kept none)" if rr else " yet: no reviewer has been started"))
-        ident, label = rr["execution"], f"{it['id']} reviewer ({rr.get('profile')})"
-    elif ref.upper().startswith("RUN-") or ref.upper().startswith("R-"):
-        raise ResearchError("for a run's output use: research run logs " + ref)
-    else:
-        tid, st, _ = _task_plan(p, ref)
-        e = ((SV.load_run(p, st["plan_id"]) or {}).get("tasks") or {}).get(tid) or {}
-        atts = [x for x in e.get("attempts") or [] if x.get("execution")]
-        if a.attempt:
-            atts = [x for x in atts if x["n"] == a.attempt]
-        if not atts:
-            raise ResearchError(f"{tid} has no agent output" + (f" for attempt {a.attempt}" if a.attempt else " yet: no attempt has been launched"))
-        ident, label = atts[-1]["execution"], f"{tid} attempt {atts[-1]['n']} ({atts[-1].get('profile')})"
-    ex = EX.show(p, ident)
-    lg = EX.logs(p, ident, tail=a.tail)
+        return rr["execution"], None, f"{it['id']} reviewer ({rr.get('profile')})"
+    if up.startswith("RUN-") or up.startswith("R-"):
+        raise ResearchError("for a computational run's output use: research run logs " + ref)
+    if not up.startswith("T-") and not up.isdigit():
+        hits = [r for r in EX.list_all(p) if r["id"].startswith(ref)]
+        if len(hits) == 1:
+            return hits[0]["id"], None, f"execution {hits[0]['id'][:8]} ({hits[0].get('task')})"
+        raise ResearchError(f"{ref} is not a task (T-023), a promotion (AP-001) or an execution id", hint="`research logs` without an id lists every attempt.")
+    tid, st, _ = _task_plan(p, ref)
+    e = ((SV.load_run(p, st["plan_id"]) or {}).get("tasks") or {}).get(tid) or {}
+    atts = [x for x in e.get("attempts") or [] if x.get("execution")]
+    if attempt:
+        atts = [x for x in atts if x["n"] == attempt]
+    if not atts:
+        raise ResearchError(f"{tid} has no agent output" + (f" for attempt {attempt}" if attempt else " yet: no attempt has been launched"))
+    x = atts[-1]
+    return x["execution"], x.get("session_id") or x.get("resumed_session"), f"{tid} attempt {x['n']} of {len(e.get('attempts') or [])} ({x.get('kind')}, {x.get('profile')})"
+
+
+def cmd_logs(a, p) -> int:
+    """No id: every attempt, running ones first with what they are doing. With an id: the agent's steps, live with -f."""
+    from research import agentlog as AL
+    if not a.id:
+        rows = _attempt_rows(p)
+
+        def lines(rs):
+            out = []
+            for r in rs:
+                col = cyan if r["state"] == "running" else green if r.get("verified") else red if r["state"] in ("failed", "unknown") or r.get("verified") is False else dim
+                dur = _dur((_age(r["started"]) or 0) - ((_age(r["ended"]) or 0) if r.get("ended") else 0)) if r.get("started") else ""
+                what = "verified" if r.get("verified") else "not verified" if r.get("verified") is False else r["state"]
+                out.append(f"  {r['task']:<7} attempt {r['attempt']:<2} {col(what if r['state'] != 'running' else 'running'):<14} {dur:>7}  {(r['profile'] or ''):<16} " + dim(f"{r['plan']}/{r['key']}"))
+                if r.get("activity"):
+                    out.append(dim(f"            {_dur(r['activity']['seconds_ago'])} ago: ") + r["activity"]["text"])
+            return out + [dim("  research logs T-ID          the steps of its latest attempt      -f  follow a running one      --attempt N  an earlier one")] if out else [dim("No agent has been launched yet.")]
+        return _emit(a, rows, lines)
+    ident, sid, label = _logs_target(p, a.id, a.attempt)
+    rd = AL.Reader(p, ident, sid)
+    ev = rd.more()
+    rec = rd.record()
     if a.json:
-        out_json({"execution": ident, "state": ex["state"], "exit_code": ex.get("exit_code"), **lg})
+        out_json({"execution": ident, "state": rec["state"], "exit_code": rec.get("exit_code"), "source": rd.source, "events": ev})
         return 0
-    print(bold(label) + dim(f"  execution {ident[:8]}  {ex['state']}" + (f"  exit {ex['exit_code']}" if ex.get("exit_code") is not None else "")))
-    print(lg.get("out") or dim("(no output captured yet)"))
-    if lg.get("err"):
-        print(dim("[stderr]"))
-        print(lg["err"])
-    return 0
+    if a.raw:
+        from research import execution as EX
+        lg = EX.logs(p, ident, tail=a.tail)
+        print((lg.get("out") or "") + (("\n[stderr]\n" + lg["err"]) if lg.get("err") else ""))
+        return 0
+    print(bold(label) + dim(f"  {rec['state']}" + (f", exit {rec['exit_code']}" if rec.get("exit_code") is not None else "") + f"  ·  {rec.get('cwd') or ''}"))
+    if rd.source:
+        print(dim(f"  from {rd.source}"))
+    lines = AL.render(ev, full=a.full, show_prompt=a.prompt)
+    if not a.full and not a.follow and len(lines) > a.lines:
+        print(dim(f"  … {len(lines) - a.lines} earlier line(s); --lines N or --full shows more"))
+        lines = lines[-a.lines:]
+    print("\n".join(lines) if lines else dim("  (nothing recorded yet)"))
+    if not a.follow:
+        if rec["state"] == "running" and rec.get("alive"):
+            print(dim(f"  still running: research logs {a.id} -f follows it"))
+        return 0
+    try:
+        idle = 0
+        while True:
+            time.sleep(1.0)
+            ev = rd.more()
+            if ev:
+                print("\n".join(AL.render(ev, full=a.full, show_prompt=a.prompt)), flush=True)
+            rec = rd.record()
+            if not (rec["state"] in ("prepared", "launched") or (rec["state"] == "running" and rec.get("alive"))):
+                idle += 1
+                if idle >= 3:          # a few more reads so the provider's last lines are not missed
+                    print(dim(f"  the agent has finished ({rec['state']}" + (f", exit {rec['exit_code']}" if rec.get("exit_code") is not None else "") + "); the supervisor verifies its work next"))
+                    return 0
+    except KeyboardInterrupt:
+        return 0
 
 
 # ----------------------------------------------------------------------------------------------- archive
@@ -471,6 +571,37 @@ def cmd_archive(a, p) -> int:
 def cmd_unarchive(a, p) -> int:
     res = [AR.unarchive(p, i) for i in a.ids]
     return _emit(a, res, lambda rs: [green("✓ ") + (f"{r['id']} is back" + (f" with {', '.join(r['also'])}" if r["also"] else "") if r["changed"] else f"{r['id']} was not archived") for r in rs])
+
+
+def cmd_background(a, p) -> int:
+    """Will it keep running after you close the terminal or the SSH session? `check` answers; `install` makes it a user service that also survives reboots."""
+    from research import background as BG
+    mark = {"ok": green("ok  "), "warn": yellow("warn"), "fail": red("FAIL")}
+
+    def check_lines(c):
+        out = [bold("After you log out: ") + (green("keeps running") if c["status"] == "ok" else yellow("keeps running, with caveats") if c["survives_logout"] else red("would be stopped"))]
+        for r in c["rows"]:
+            out.append(f"  {mark[r['status']]} {r['what']}: {r['detail']}")
+            if r.get("fix") and r["status"] != "ok":
+                out.append(dim("        fix: ") + r["fix"])
+            elif r.get("fix"):
+                out.append(dim("        " + r["fix"]))
+        return out
+    if a.action == "check":
+        c = BG.check(p)
+        _emit(a, c, check_lines)
+        return 0 if c["survives_logout"] else 1
+    if a.action == "install":
+        r = BG.install(p, gateway=not a.no_gateway)
+
+        def lines(d):
+            out = [(green("✓ ") + f"{u} is enabled and running" if ok is True else red("✗ ") + f"{u}: {ok}") for u, ok in d["started"].items()]
+            out.append(green("✓ ") + "lingering is on: your services run without an open session and start at boot" if d["lingering"] else
+                       yellow("! ") + "lingering is off and could not be turned on from here; run once: " + bold(d["linger_command"] or "loginctl enable-linger $USER"))
+            return out + [""] + check_lines(d["check"]) + [dim("  logs: journalctl --user -u " + d["units"][0] + " -f    stop: research supervisor stop    remove: research background uninstall")]
+        return _emit(a, r, lines)
+    r = BG.uninstall(p)
+    return _emit(a, r, lambda d: [green("✓ ") + f"{d['unit']} removed" + dim("  (" + d["note"] + ")") if d["removed"] else dim(f"{d['unit']} is not installed")])
 
 
 for _f in (cmd_start, cmd_plan_sync, cmd_plan_edit, cmd_plan_set, cmd_bump, cmd_retry, cmd_tell, cmd_archive, cmd_unarchive):
@@ -500,6 +631,9 @@ def attach(sub, add, group) -> None:
     x.add_argument("target", nargs="?", help="a plan file, or a plan key/id (default: the only unfinished plan)")
     x.add_argument("--unattended", action="store_true", help="apply the `overnight` settings first (wait out usage limits, self-heal, promote verified code)")
     x.add_argument("--no-daemon", action="store_true", help="do not start the supervisor process")
+    x = add(sub, "background", cmd_background, "keep running after you log out (no tmux): check | install (systemd user service + lingering, survives reboots) | uninstall", aliases=["bg"])
+    x.add_argument("action", nargs="?", default="check", choices=["check", "install", "uninstall"])
+    x.add_argument("--no-gateway", action="store_true", help="install: leave the chat gateway as it is")
     x = add(sub, "watch", cmd_watch, "the plan board, live (read-only)", aliases=["board"])
     x.add_argument("id", nargs="?", help="one plan (default: all)")
     x.add_argument("--interval", type=float, default=5.0, help="seconds between refreshes (default 5)")
@@ -520,10 +654,15 @@ def attach(sub, add, group) -> None:
     x.add_argument("message", nargs="+")
     x.add_argument("--interrupt", action="store_true", help="stop the running agent now (its attempt is kept)")
     x.add_argument("--yes", action="store_true", help="approve the resulting proposal right away (protected changes still ask for the PIN)")
-    x = add(sub, "logs", cmd_logs, "agent output of a task (T-023) or of a promotion's reviewer (AP-001)")
-    x.add_argument("id")
+    x = add(sub, "logs", cmd_logs, "what agents are doing and did: no id lists every attempt; T-023 / AP-001 shows its steps (-f follows a running one)", )
+    x.add_argument("id", nargs="?", help="a task (T-023), a promotion's reviewer (AP-001) or an execution id; omit to list all attempts")
+    x.add_argument("-f", "--follow", action="store_true", help="keep printing new steps until the agent finishes")
     x.add_argument("--attempt", type=int, help="a specific attempt (default: the latest)")
-    x.add_argument("--tail", type=int, default=8000, help="characters from the end (default 8000)")
+    x.add_argument("--lines", type=int, default=60, help="how many of the latest lines to show (default 60)")
+    x.add_argument("--full", action="store_true", help="everything, with tool results uncut")
+    x.add_argument("--prompt", action="store_true", help="include the task prompt the agent was given")
+    x.add_argument("--raw", action="store_true", help="the provider's captured stdout/stderr as they are")
+    x.add_argument("--tail", type=int, default=8000, help="--raw: characters from the end (default 8000)")
     x = add(sub, "archive", cmd_archive, "hide a plan or experiment you no longer care about (nothing is deleted); --list shows the archive")
     x.add_argument("ids", nargs="*", metavar="PLAN|EXP")
     x.add_argument("--reason")

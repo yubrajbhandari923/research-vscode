@@ -1,5 +1,56 @@
 # Changelog
 
+## 4.0.0
+
+A redesign around three things: the plan file is the plan, nothing that stops should need more than one command, and it must be safe to leave running.
+Breaking: the Textual terminal UI is gone (`research tui` now opens the plan board), `research plan status` prints the board, and `research --help` shows
+the everyday commands (`research commands` lists all of them).
+
+**Chat: the overnight "not running" / "running again" loop**
+- Cause: the supervisor wrote its heartbeat once per pass. Sleeping out a provider limit (up to 60 s between passes) or sitting in one long pass looked dead
+  to the gateway's watchdog, alive again on the next pass, and clearing an alert forgot its cooldown: one pair of messages a minute until Discord revoked the bot token.
+- The heartbeat is a thread in the supervisor (`daemon.beat`); "down" means the process is gone or silent for minutes. A dead supervisor is restarted by the
+  gateway (3 times an hour, `supervisor.auto_restart`) before anyone is told.
+- Alerts are flap-damped (3 raise/clear rounds per key and hour, then muted with one notice), a failed send backs off (10 s to 10 min) instead of retrying every
+  2 s, and one project can send at most `notifications.alerts.max_per_hour` (30) messages per platform; replies, decisions and approvals are exempt.
+- Two projects on one machine and one Discord server are covered by tests: separate alert state, cursors and caps per project.
+
+**Plan files**
+- Every plan is `plans/<key>.yaml`. `research start plans/study.yaml` registers it and starts the supervisor. Edits are picked up on the next pass:
+  operational ones (budgets, attempts, prompts, profiles, resources) by themselves, scientific ones (tasks, checks, acceptance, dependencies, policy) after one
+  `research plan sync` (`supervisor.plan_files.auto_sync`: operational | all | off). An invalid file changes nothing and is reported. When Research OS changes
+  the plan, the file is rewritten; when both changed, they are merged and nothing is retired.
+- `research plan edit | sync [--check] | set TARGET.FIELD=VALUE | file`.
+- **Attempt budget exhausted is one command:** `research bump T-023`. A task or plan stopped only by a budget (attempts, plan attempts, wall time) continues
+  by itself as soon as the budget has room, however it was raised. The stop message names the command.
+- `agent.session_group` was accepted in plans and never used. Tasks of one group now continue one provider session (same role, profile and worktree, verified
+  work only, never a verifier, at most `supervisor.session_group_max_tasks`), so later tasks do not pay to re-read the project.
+
+**Seeing what happens**
+- `research watch` / `research plan status`: the plan board (see README). Every stopped item carries its reason and the command that moves it.
+- `research logs`: every agent attempt; `research logs T-023 [-f]` shows what the agent did step by step **while it runs**, read from the provider's live
+  session transcript (Claude Code prints nothing to stdout until it exits, which is why there was nothing to look at before). `research logs AP-001` reads a
+  promotion's reviewer.
+- `research why ID` (recorded facts, no tokens; `--ask` adds the diagnostic agent), `research retry`, `research tell`.
+
+**Leaving it running**
+- `research background check | install | uninstall`: the supervisor, gateway and agents already detach from the terminal and now ignore SIGHUP; `check`
+  reports the two things that still stop unattended work (logind's `KillUserProcesses`, an SSH agent forwarded from your laptop), and `install` runs the
+  supervisor as a `systemd --user` service with lingering (`KillMode=process`, so restarting it never kills agents).
+- `research start PLAN --unattended` applies the `overnight` profile, which now also turns self-healing on.
+
+**Promotion**
+- The independent reviewer is a tracked execution: an exit without a verdict is noticed at once and a second reviewer is started once, instead of waiting
+  out `review_timeout_minutes` (120). Its liveness is on the board.
+- Promotion tests run with the project's interpreter (`environment.python`), as task checks always did.
+- `scientifically_successful` no longer follows from "a supported finding exists" (a supported finding that the pilot failed is `evidence_supported`, not success).
+
+**Tidying**
+- `research archive PLAN|EXP`, `research unarchive`, `--all` on lists and the board. Nothing is deleted.
+- The Settings screen went with the TUI; `research config` and `research profile` are the interface.
+
+**Upgrading:** `research supervisor restart` after installing. Existing plans get their file on the first `research plan sync` (or `research start PLAN`).
+
 ## 3.6.1
 
 - **An incomplete deliverable is no longer mistaken for the environment (PRAVAH T-023).** When a verifier finds a required file missing, the supervisor now separates five cases from its own facts, not the agent's word: a file the task owns and never wrote (repair), an upstream file (missing prerequisite), a verifier asked to author a file (role contradiction), evidence a computational run can still deliver (waits), and a genuine environment or permission error (asks you). An agent-reported category that contradicts those facts is overridden **and the reason is recorded** on the attempt (`category_override`: reported, decided, why). An environment error in the output, a permission denial, or a missing metric is never overridden.

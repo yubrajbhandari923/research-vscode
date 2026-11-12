@@ -17,6 +17,44 @@ from research.util import ResearchError, detect_author
 from .commands import MUTATING, agents, chat, decide, flow, git, guide, heal, hpc, job, plans, profile, project, records, site, skills, supervisor
 from .output import dim, red
 
+SHORT_HELP = """research: plan research in YAML, let agents carry it out, read the results.
+
+Run a plan
+    start       research start plans/study.yaml    register or sync the plan file and let the supervisor run it (--unattended for overnight)
+    watch       the plan board, live: what runs, what is stuck, why, and the command when it needs you
+    logs        what agents are doing and did: `research logs` lists attempts, `research logs T-023 -f` follows one
+    plan        status | edit | sync | set | pause | resume | stop      the plan file (plans/<key>.yaml) is the plan: edit it and save
+    background  will it keep running after I log out? check | install (a user service; also survives reboots)
+
+When something stops
+    why         research why T-023     the recorded facts and the next command (--ask adds an agent's diagnosis)
+    bump        research bump T-023    out of attempts: allow more and retry now
+    retry       research retry T-023   try again as it is
+    tell        research tell T-023 "use the cached footprints"     steer a task in words
+    decisions   what is waiting for your answer (`research decide DR-001 KEY`)
+
+Results
+    guide       the Scientist Guide (Quarto): what was found, with figures
+    site        the research website: preview | build | add EXP
+    report      a readable report of the project, a plan or an experiment
+    show        any record by id (EXP-004, RUN-0009, F-001, A-0012)
+    search      everything recorded
+    archive     hide a plan or experiment you are done with (nothing is deleted); unarchive brings it back
+
+Setup
+    init        start a project here
+    doctor      check the project, agents, environment and cluster access
+    config      settings: show | set | explain     (profile apply overnight|interactive switches the common bundles)
+    chat        Discord / Telegram alerts: setup | status | doctor
+    hpc         cluster execution: doctor | init | submit | sync
+    agent       providers, profiles and instructions for the coding agents
+    status      compact project status
+
+Every command (records, promotion, interventions, hooks, skills ...): research commands
+Any command explains itself: research <command> --help
+"""
+
+
 def build_parser() -> argparse.ArgumentParser:
     def _common(suppress: bool) -> argparse.ArgumentParser:
         c = argparse.ArgumentParser(add_help=False)
@@ -114,7 +152,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     if argv and argv[0] in ("checkpoint", "cp") and (len(argv) == 1 or argv[1].startswith("-")) \
             and not any(x in ("-h", "--help") for x in argv[1:]):
         argv.insert(1, "create")
+    if argv in (["-h"], ["--help"], ["help"]):       # the everyday surface; `research commands` lists everything
+        print(SHORT_HELP, end="")
+        if argv != ["help"]:
+            raise SystemExit(0)
+        return 0
+    if not argv:
+        print(SHORT_HELP, end="")
+        return 0
     ap = build_parser()
+    if argv in (["commands"], ["help", "all"], ["--help-all"]):
+        ap.print_help()
+        return 0
     argv, tail = _split_tail(argv)
     a = ap.parse_args(argv)
     if tail is not None:

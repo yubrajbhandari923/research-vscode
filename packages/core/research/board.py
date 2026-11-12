@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from . import archive as AR, planfile as PF, planspec as PS, supervisor as SV
+from . import agentlog as AL, archive as AR, planfile as PF, planspec as PS, supervisor as SV
 from .store import Project
 from .util import ResearchError
 
@@ -50,6 +50,11 @@ def plan(p: Project, ref: str) -> Dict[str, Any]:
         if t.get("reason"):       # one readable line; the "how to continue" tail of a budget stop is shown as a command below instead
             t["reason"] = " ".join(str(t["reason"]).split()).split(" More attempts: `")[0].split(" Raise it: `")[0]
         t["mark"] = MARK.get(t["phase"], "wait")
+        if t["phase"] == "running" and (t.get("execution") or {}).get("id"):      # what the agent is doing right now, from its own live record
+            try:
+                t["activity"] = AL.last_activity(p, t["execution"]["id"])
+            except Exception:    # noqa: BLE001 - a log that cannot be read must not break the board
+                t["activity"] = None
         t["next"] = next_steps(st["plan_key"], t)
         (exps.get(t.get("experiment")) or loose)["tasks"].append(t)
         if t["mark"] == "you":

@@ -258,3 +258,46 @@ def test_a_reviewer_that_exits_without_a_verdict_is_noticed_at_once_and_replaced
     assert len(launched) == 2 and item["review_attempts"] == 2 and "second reviewer" in out["events"][0], "not after review_timeout_minutes: now"
     AP._review(None, item, pol, out)
     assert item["status"] == "paused" and "exited twice without recording a verdict" in item["error"] and "research logs AP-001" in item["error"]
+
+
+# ----------------------------------------------------------------------------------------------- the commands, end to end
+def cli(p, *argv):
+    from research_cli.main import main
+    return main(["--root", p.root, *argv])
+
+
+def test_the_everyday_commands_work_together(proj, capsys, monkeypatch):
+    p = proj
+    from research import background as BG
+    monkeypatch.setattr(BG, "has_systemd_user", lambda: False)
+    path = plan_file(p, [FLAKY, task_yaml("later", "Later", "echo hi > l.txt", deps=["build"], checks=["file:l.txt"])])
+    assert cli(p, "start", path, "--no-daemon") == 0
+    out = capsys.readouterr().out
+    assert "plan demo-plan registered" in out and "plans/demo-plan.yaml" in out and "in sync" in out
+    assert run_until(p, lambda: blocked_on_budget(p))
+    assert cli(p, "plan", "status") == 0
+    out = capsys.readouterr().out
+    assert "HALTED" in out and "research bump T-001" in out and "Needs you (1)" in out and "attempt 2/2" in out
+    assert cli(p, "why", "T-001") == 0
+    out = capsys.readouterr().out
+    assert "attempts 2/2" in out and "attempt 1 (initial, fake)" in out and "research bump T-001" in out and "research logs T-001" in out
+    assert cli(p, "logs") == 0
+    out = capsys.readouterr().out
+    assert "T-001" in out and "attempt 2" in out and "not verified" in out
+    assert cli(p, "logs", "T-001", "--attempt", "1") == 0 and "T-001 attempt 1 of 2" in capsys.readouterr().out
+    assert cli(p, "bump", "T-001") == 0
+    out = capsys.readouterr().out
+    assert "5 attempts allowed (was 2; 2 used)" in out and "queued again" in out
+    assert run_until(p, lambda: SV.status(p, "demo-plan")["state"] == "completed")
+    assert cli(p, "plan", "set", "demo-plan", "execution.max_parallel_agents=3") == 0 and "plans/demo-plan.yaml updated" in capsys.readouterr().out
+    assert cli(p, "plan", "sync", "--check") == 0 and "no changes" in capsys.readouterr().out
+    assert cli(p, "plan", "file", "demo-plan", "--path-only") == 0 and capsys.readouterr().out.strip() == path
+    assert cli(p, "watch", "--once") == 0
+    out = capsys.readouterr().out
+    assert "completed" in out and "2/2 verified" in out and "Nothing needs you." in out
+    assert cli(p, "archive", "demo-plan", "--reason", "done") == 0 and "archived with EXP-001" in capsys.readouterr().out
+    assert cli(p, "plan", "status") == 0 and "1 archived plan(s) hidden" in capsys.readouterr().out
+    assert cli(p, "experiment", "list") == 0 and "EXP-001" not in capsys.readouterr().out
+    assert cli(p, "experiment", "list", "--all") == 0 and "EXP-001" in capsys.readouterr().out
+    assert cli(p, "unarchive", "demo-plan") == 0 and "is back with EXP-001" in capsys.readouterr().out
+    assert cli(p, "background", "check") in (0, 1) and "After you log out" in capsys.readouterr().out
